@@ -1,0 +1,78 @@
+// grok.grok — project-level understanding of the Grok toolchain
+
+grok Grok {
+  why: "Structural integrity engine and language toolchain. Bridges high-level architectural declarations (.grok files) and concrete Go implementations, detecting drift by deep recursive comparison of both ASTs."
+
+  doc "System Architecture": """
+    Classic compiler frontend pipeline integrated with a static analysis engine.
+    Three modules in a strictly layered, unidirectional dependency graph:
+
+      ast (leaf) ← parser ← verifier (top)
+
+    The AST is the single source of truth for the structural model. Data flows
+    linearly: source text → parser → AST → verifier. The verifier bridges two
+    type systems: Grok AST and Go AST (via go/parser, go/ast).
+
+    This decoupled design means the AST can serve future tools (code generation,
+    language servers, .gk compiler) without touching the verifier.
+  """
+
+  doc "End-to-End Verification Workflow": """
+    When a user invokes `grok-verify file.grok`:
+
+    1. Verifier delegates to parser, which lexes and parses into ast.File
+    2. Verifier inspects source: annotations to locate Go files
+    3. Go standard library parser builds Go AST; verifier extracts types into
+       goTypeInfo registry (aggregated across all source files — a type may span
+       multiple files within a package)
+    4. Verifier walks Grok AST, comparing each declaration against Go types:
+       - Normalizes naming (snake_case → PascalCase/camelCase/exact)
+       - Converts Grok types to Go string format (T? → *T, [T] → []T, any ≡ interface{})
+       - Strips package prefixes recursively (*ast.File → *File)
+    5. Produces Result with Finding records at three severity levels:
+       Error (fail build), Warning (encourage completeness), Info (context)
+  """
+
+  doc "GDD Methodology": """
+    Grok exists to support Grok-Driven Development. The .grok file is the primary
+    design artifact — a machine-verifiable understanding of a codebase. The AI
+    writes .grok files as a post-process, the human reviews 100% of them.
+
+    .grok files adopt the implementation language's naming conventions (PascalCase
+    for Go, snake_case for Python, etc.). They capture cross-file public concepts
+    only — internal single-file helpers don't belong.
+
+    The doc and why annotations carry the architectural narrative (the "why").
+    The structural declarations carry the verifiable contract (the "what").
+    Together they form a superset of traditional design documentation.
+  """
+
+  doc "Self-Referential Dogfooding": """
+    Each package in this project has its own .grok file that the verifier checks
+    against the Go source. The parser successfully parses its own .grok file
+    (23 structs, 3 enums, 3 classes, 2 functions). This creates a virtuous cycle:
+    changes to the code that break the .grok contract are caught immediately.
+  """
+
+  doc "Future Roadmap": """
+    - Grok compiler: transpile .gk files to Go first (clean mapping: generics,
+      channels, locks, cascade → defer), LLVM backend later
+    - Expression parsing: requires/ensures as structured AST, not raw strings
+    - Language server: use AST + Span for IDE integration
+    - CI integration: grok-verify as pre-commit hook or CI step
+    - Performance: cache parsed Go types across grok blocks for large projects
+  """
+
+  doc "Module Map": """
+    pkg/ast/       — AST node types. Leaf package, no dependencies. Tagged union
+                     for type expressions (TypeExpr.Kind + Data any).
+    pkg/parser/    — Lexer + recursive descent parser. Two-phase: stateful lexer
+                     handles triple-quoted strings and contextual keywords; parser
+                     uses lookahead with state save/restore for ambiguities.
+    pkg/verifier/  — Structural comparison engine. Aggregates Go types across
+                     files, normalizes naming/types, produces severity-graded findings.
+    cmd/grok-verify/ — CLI entry point. Auto-finds project root via go.mod.
+  """
+
+  source: ["cmd/grok-verify/main.go"]
+}
