@@ -78,7 +78,8 @@ grok Transpiler {
     - Return: `return` with optional value; inserts explicit Go cast when return
       expr type differs from function return type (via currentReturnType)
     - If/ElseIf/Else: direct Go if/else chain
-    - For: `for _, var := range collection` (always discards index)
+    - For: `for _, var := range collection` (discards index by default).
+      When IndexVar is present: `for idx, var := range collection`.
     - While: `for condition { ... }`
     - Match: when match value has enum ResolvedType, emits Go type switch
       (`switch _m := val.(type)`) with variant-typed cases and field extraction
@@ -113,6 +114,8 @@ grok Transpiler {
       For numeric types, uses checkerTypeToGo to resolve the Go type name.
     - Unwrap (expr!): emits `*expr` (Go pointer dereference). Nil dereference
       panics at runtime, matching Rune semantics.
+    - Slice (expr[low:high]): emits Go slice syntax directly. Omitted bounds
+      emit empty (e.g., `xs[:3]`, `xs[1:]`, `xs[:]`).
     - Integer/float literals with ResolvedType: emit typed literals (e.g.,
       `int32(42)`) when checker annotated them, bare literals otherwise
       (unit tests without checker pass produce bare output).

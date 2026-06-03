@@ -209,6 +209,13 @@ grok AST {
     Index:    Expr
   }
 
+  struct SliceExpr {
+    why: "expr[low:high] slice syntax. Low/High are optional (nil = open bound)."
+    Receiver: Expr
+    Low:      Expr?
+    High:     Expr?
+  }
+
   enum UnaryOp  { Neg Not }
   enum BinaryOp {
     Add Sub Mul Div Mod
@@ -328,6 +335,8 @@ grok AST {
 
   struct ForStmt {
     Var:        string
+    IndexVar:   string
+      why: "Optional index variable name for `for i, item in collection` syntax."
     Collection: Expr
     Body:       Block
   }

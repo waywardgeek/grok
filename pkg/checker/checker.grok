@@ -139,7 +139,10 @@ grok Checker {
     - Method call: resolves receiver type, finds method, checks args
     - Field access: resolves receiver type, finds field by name
     - Index: validates receiver is list/map/string, returns element type
+    - Slice (expr[low:high]): validates receiver is list or string, checks
+      bounds are integer types, returns same type as receiver
     - List/tuple/map literals: check element types. Annotates ResolvedType.
+      Empty list [] (TyList with TyUnknown elem) is assignable to any [T].
     - Match-as-expression: checks match value, binds pattern vars, infers result
       type from first arm.
     - Cast (<Type>expr): validates numeric ↔ numeric conversion.
@@ -157,7 +160,8 @@ grok Checker {
     - Return: check value type matches enclosing function's declared return type.
       Skip cast for tuple literals to avoid invalid Go emission.
     - If/ElseIf: check condition is bool, check body blocks
-    - For: resolve collection element type, bind loop var, increment loopDepth
+    - For: resolve collection element type, bind loop var, increment loopDepth.
+      Optional IndexVar binds as platform int (for i, item in collection).
     - While: check condition is bool, increment loopDepth, check body
     - Match: check match value, bindPattern into arm scopes (ident, tuple, variant
       with real field types from registry), check each arm body
