@@ -20,8 +20,8 @@ grok Parser {
 
   struct Pos {
     file:   string
-    line:   u32
-    column: u32
+    line:   int
+    column: int
   }
 
   struct Span {
@@ -58,9 +58,9 @@ grok Parser {
   class Lexer(source: string, filename: string) {
     why: "Converts source text into a stream of tokens."
 
-    pos:    u32
-    line:   u32
-    column: u32
+    pos:    int
+    line:   int
+    column: int
 
     func next(mut self) -> Token
     func peek(self) -> Token
@@ -88,7 +88,7 @@ grok Parser {
   }
 
   struct TupleField {
-    name: string?    // nil for positional
+    name: string     // empty for positional
     type: TypeExpr
   }
 
@@ -117,7 +117,7 @@ grok Parser {
   }
 
   struct Annotations {
-    why:           string?
+    why:           string
     concurrent:    bool?
     requires_lock: [string]
     excludes_lock: [string]
@@ -131,8 +131,8 @@ grok Parser {
   struct Field {
     name:       string
     type:       TypeExpr
-    guarded_by: string?
-    why:        string?
+    guarded_by: string
+    why:        string
     span:       Span
   }
 
@@ -143,14 +143,14 @@ grok Parser {
     implements:     [string]
     fields:         [Field]
     methods:        [FuncDecl]
-    why:            string?
-    source:         [string]?
+    why:            string
+    source:         [string]
     span:           Span
   }
 
   struct TypeParam {
     name:       string      // T
-    constraint: string?     // Integer, Comparable, etc.
+    constraint: string     // Integer, Comparable, etc.
     span:       Span
   }
 
@@ -158,7 +158,7 @@ grok Parser {
     name:        string
     type_params: [TypeParam]
     fields:      [Field]
-    why:         string?
+    why:         string
     span:        Span
   }
 
@@ -172,7 +172,7 @@ grok Parser {
     name:        string
     type_params: [TypeParam]
     variants:    [EnumVariant]
-    why:         string?
+    why:         string
     span:        Span
   }
 
@@ -181,7 +181,7 @@ grok Parser {
     type_params: [TypeParam]
     implements:  [string]          // composed interfaces
     methods:     [FuncDecl]
-    why:         string?
+    why:         string
     span:        Span
   }
 
@@ -189,11 +189,11 @@ grok Parser {
 
   struct RelationSide {
     type_name: string
-    label:     string?
+    label:     string
   }
 
   struct RelationDecl {
-    hint:     string?           // DoublyLinked, ArrayList, Hashed
+    hint:     string           // DoublyLinked, ArrayList, Hashed
     parent:   RelationSide
     kind:     RelationKind
     child:    RelationSide
@@ -209,7 +209,7 @@ grok Parser {
 
   struct InvariantDecl {
     claim:       string
-    verified_at: string?
+    verified_at: string
     span:        Span
   }
 
@@ -221,7 +221,7 @@ grok Parser {
 
   struct GrokBlock {
     name:       string
-    why:        string?
+    why:        string
     imports:    [ImportDecl]
     docs:       [DocBlock]
     invariants: [InvariantDecl]
@@ -231,8 +231,8 @@ grok Parser {
     classes:    [ClassDecl]
     functions:  [FuncDecl]
     relations:  [RelationDecl]
-    source:     [string]?
-    fake:       string?
+    source:     [string]
+    fake:       string
     span:       Span
   }
 

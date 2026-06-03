@@ -34,26 +34,26 @@ grok Verifier {
     findings: [Finding]
 
     func add(mut self, sev: Severity, grok_file: string, go_file: string, msg: string)
-    func error_count(self) -> i32
+    func error_count(self) -> int
   }
 
   // ---- Go type extraction ----
 
   struct goTypeInfo {
     why: "Aggregated type information extracted from Go source files."
-    structs:    map[string]goStructInfo
-    interfaces: map[string]goInterfaceInfo
-    functions:  map[string]goFuncInfo
+    structs:    map[string]goStructInfo?
+    interfaces: map[string]goInterfaceInfo?
+    functions:  map[string]goFuncInfo?
     type_defs:  map[string]bool
   }
 
   struct goStructInfo {
     fields:  map[string]string
-    methods: map[string]goFuncInfo
+    methods: map[string]goFuncInfo?
   }
 
   struct goInterfaceInfo {
-    methods: map[string]goFuncInfo
+    methods: map[string]goFuncInfo?
   }
 
   struct goFuncInfo {

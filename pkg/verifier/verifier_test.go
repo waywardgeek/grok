@@ -3,6 +3,7 @@ package verifier
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -39,6 +40,91 @@ func TestVerifyParserGrok(t *testing.T) {
 			t.Logf("%s", f)
 		}
 	}
+}
+
+func TestTypeDriftDetected(t *testing.T) {
+	// Create a temporary Go file and .grok file with deliberate type mismatches
+	dir := t.TempDir()
+
+	// Write a Go source file
+	goSrc := `package example
+
+type Widget struct {
+	Name    string
+	Count   int
+	Tags    []string
+	Options map[string]bool
+}
+
+func NewWidget(name string, count int) *Widget {
+	return &Widget{Name: name, Count: count}
+}
+`
+	goFile := filepath.Join(dir, "widget.go")
+	if err := os.WriteFile(goFile, []byte(goSrc), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a .grok file with deliberate drift
+	grokSrc := `grok Example {
+  struct Widget {
+    name:    string
+    count:   string
+    tags:    [int]
+    options: map[string]string
+    missing: bool
+  }
+
+  func new_widget(name: string) -> Widget
+
+  source: ["` + goFile + `"]
+}
+`
+	grokFile := filepath.Join(dir, "example.grok")
+	if err := os.WriteFile(grokFile, []byte(grokSrc), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Verify(grokFile, "/")
+	if err != nil {
+		t.Fatalf("Verify failed: %v", err)
+	}
+
+	// Collect error messages
+	var errors []string
+	for _, f := range result.Findings {
+		if f.Severity == Error {
+			errors = append(errors, f.Message)
+		}
+	}
+
+	// Expected errors:
+	// 1. count type mismatch (string vs int)
+	// 2. tags type mismatch ([]int vs []string)
+	// 3. options type mismatch (map[string]string vs map[string]bool)
+	// 4. missing field not in Go
+	// 5. new_widget param count mismatch (1 vs 2)
+	if len(errors) < 5 {
+		t.Errorf("expected at least 5 errors, got %d:", len(errors))
+		for _, e := range errors {
+			t.Logf("  %s", e)
+		}
+	}
+
+	// Verify specific drift was caught
+	assertContains := func(substr string) {
+		for _, e := range errors {
+			if strings.Contains(e, substr) {
+				return
+			}
+		}
+		t.Errorf("expected error containing %q, not found in: %v", substr, errors)
+	}
+
+	assertContains("count")
+	assertContains("type mismatch")
+	assertContains("missing")
+	assertContains("param count mismatch")
 }
 
 func TestSnakeToPascal(t *testing.T) {

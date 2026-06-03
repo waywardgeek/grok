@@ -405,6 +405,136 @@ func typeExprString(expr ast.Expr) string {
 	}
 }
 
+// ---- Grok type → Go type string conversion ----
+
+// grokTypeToGoString converts a grok TypeExpr into the string format that
+// typeExprString produces from Go AST, enabling structural comparison.
+func grokTypeToGoString(t grokast.TypeExpr) string {
+	switch t.Kind {
+	case grokast.TypeNamed:
+		if t.Data == nil {
+			return "?"
+		}
+		nt := t.Data.(grokast.NamedType)
+		name := grokNameToGo(nt.Name)
+		if len(nt.Args) == 0 {
+			return name
+		}
+		// Generic: Stack<T> → Stack[T], Map<K,V> → Map[K, V]
+		var args []string
+		for _, a := range nt.Args {
+			args = append(args, grokTypeToGoString(a))
+		}
+		return name + "[" + strings.Join(args, ", ") + "]"
+
+	case grokast.TypeOptional:
+		if t.Data == nil {
+			return "?"
+		}
+		ot := t.Data.(grokast.OptionalType)
+		// T? in grok → *T in Go
+		return "*" + grokTypeToGoString(ot.Inner)
+
+	case grokast.TypeSequence:
+		if t.Data == nil {
+			return "[]?"
+		}
+		st := t.Data.(grokast.SequenceType)
+		return "[]" + grokTypeToGoString(st.Elem)
+
+	case grokast.TypeMap:
+		if t.Data == nil {
+			return "map[?]?"
+		}
+		mt := t.Data.(grokast.MapType)
+		return "map[" + grokTypeToGoString(mt.Key) + "]" + grokTypeToGoString(mt.Value)
+
+	case grokast.TypeTuple:
+		// Go doesn't have tuples; skip comparison
+		return "?"
+
+	case grokast.TypeFunc:
+		return "func(...)"
+
+	case grokast.TypeChannel:
+		if t.Data == nil {
+			return "chan ?"
+		}
+		ct := t.Data.(grokast.ChannelType)
+		return "chan " + grokTypeToGoString(ct.Elem)
+
+	case grokast.TypeLock:
+		return "sync.Mutex"
+
+	case grokast.TypeUnit:
+		return ""
+
+	default:
+		return "?"
+	}
+}
+
+// grokNameToGo maps grok primitive type names to Go equivalents.
+func grokNameToGo(name string) string {
+	switch name {
+	case "string":
+		return "string"
+	case "bool":
+		return "bool"
+	case "i8":
+		return "int8"
+	case "i16":
+		return "int16"
+	case "i32":
+		return "int32"
+	case "i64":
+		return "int64"
+	case "i128", "i256":
+		return name // no Go equivalent, keep as-is
+	case "u8":
+		return "uint8"
+	case "u16":
+		return "uint16"
+	case "u32":
+		return "uint32"
+	case "u64":
+		return "uint64"
+	case "f32":
+		return "float32"
+	case "f64":
+		return "float64"
+	case "f128":
+		return name
+	case "int":
+		return "int"
+	case "any":
+		return "any"
+	case "error":
+		return "error"
+	default:
+		return name // user-defined types pass through
+	}
+}
+
+// typesMatch compares a grok type string against a Go type string.
+// Returns true if they match or if the grok type is "?" (unknown/unconvertible).
+func typesMatch(grokStr, goStr string) bool {
+	if grokStr == "?" || grokStr == "" {
+		return true // can't compare, don't report false positive
+	}
+	if grokStr == goStr {
+		return true
+	}
+	// Strip Go package prefix: "ast.Span" → "Span" for comparison
+	// since .grok files use unqualified type names
+	if idx := strings.LastIndex(goStr, "."); idx >= 0 {
+		if grokStr == goStr[idx+1:] {
+			return true
+		}
+	}
+	return false
+}
+
 // ---- Verification helpers ----
 
 // findGoName checks if a name exists in a map, trying both PascalCase and camelCase.
@@ -433,8 +563,14 @@ func verifyStruct(s grokast.StructDecl, goInfo *goTypeInfo, grokFile, goFile str
 	}
 
 	for _, grokField := range s.Fields {
-		if !findGoField(grokField.Name, goStruct.Fields) {
+		goType, found := findGoFieldType(grokField.Name, goStruct.Fields)
+		if !found {
 			result.add(Error, grokFile, goFile, fmt.Sprintf("struct %s: field %s not found in Go", s.Name, grokField.Name))
+			continue
+		}
+		grokType := grokTypeToGoString(grokField.Type)
+		if !typesMatch(grokType, goType) {
+			result.add(Error, grokFile, goFile, fmt.Sprintf("struct %s: field %s type mismatch: .grok=%s, Go=%s", s.Name, grokField.Name, grokType, goType))
 		}
 	}
 
@@ -464,8 +600,14 @@ func verifyClass(c grokast.ClassDecl, goInfo *goTypeInfo, grokFile, goFile strin
 	}
 
 	for _, grokField := range c.Fields {
-		if !findGoField(grokField.Name, goStruct.Fields) {
+		goType, found := findGoFieldType(grokField.Name, goStruct.Fields)
+		if !found {
 			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: field %s not found in Go", c.Name, grokField.Name))
+			continue
+		}
+		grokType := grokTypeToGoString(grokField.Type)
+		if !typesMatch(grokType, goType) {
+			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: field %s type mismatch: .grok=%s, Go=%s", c.Name, grokField.Name, grokType, goType))
 		}
 	}
 
@@ -479,11 +621,15 @@ func verifyClass(c grokast.ClassDecl, goInfo *goTypeInfo, grokFile, goFile strin
 	}
 
 	for _, grokMethod := range c.Methods {
-		if _, found := findGoName(grokMethod.Name, goStruct.Methods); !found {
+		goName, found := findGoName(grokMethod.Name, goStruct.Methods)
+		if !found {
 			pascal := snakeToPascal(grokMethod.Name)
 			camel := snakeToCamel(grokMethod.Name)
 			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: method %s (tried Go: %s, %s) not found", c.Name, grokMethod.Name, pascal, camel))
+			continue
 		}
+		goFunc := goStruct.Methods[goName]
+		verifyFuncSignature(fmt.Sprintf("class %s method %s", c.Name, grokMethod.Name), grokMethod, goFunc, grokFile, goFile, result)
 	}
 
 	grokMethodSet := make(map[string]bool)
@@ -533,9 +679,12 @@ func verifyInterface(i grokast.InterfaceDecl, goInfo *goTypeInfo, grokFile, goFi
 
 	for _, grokMethod := range i.Methods {
 		goName := toGoMethodName(grokMethod.Name)
-		if _, ok := goIface.Methods[goName]; !ok {
+		goFunc, ok := goIface.Methods[goName]
+		if !ok {
 			result.add(Error, grokFile, goFile, fmt.Sprintf("interface %s: method %s (Go: %s) not found", i.Name, grokMethod.Name, goName))
+			continue
 		}
+		verifyFuncSignature(fmt.Sprintf("interface %s method %s", i.Name, grokMethod.Name), grokMethod, goFunc, grokFile, goFile, result)
 	}
 }
 
@@ -543,17 +692,21 @@ func verifyFunction(f grokast.FuncDecl, goInfo *goTypeInfo, grokFile, goFile str
 	pascal := snakeToPascal(f.Name)
 	camel := snakeToCamel(f.Name)
 
-	if _, ok := goInfo.Functions[pascal]; ok {
-		return
+	var goFunc *goFuncInfo
+	if fn, ok := goInfo.Functions[pascal]; ok {
+		goFunc = fn
+	} else if fn, ok := goInfo.Functions[camel]; ok {
+		goFunc = fn
+	} else if fn, ok := goInfo.Functions[f.Name]; ok {
+		goFunc = fn
 	}
-	if _, ok := goInfo.Functions[camel]; ok {
-		return
-	}
-	if _, ok := goInfo.Functions[f.Name]; ok {
+
+	if goFunc == nil {
+		result.add(Error, grokFile, goFile, fmt.Sprintf("function %s (tried Go: %s, %s) not found", f.Name, pascal, camel))
 		return
 	}
 
-	result.add(Error, grokFile, goFile, fmt.Sprintf("function %s (tried Go: %s, %s) not found", f.Name, pascal, camel))
+	verifyFuncSignature(fmt.Sprintf("function %s", f.Name), f, goFunc, grokFile, goFile, result)
 }
 
 // ---- Naming convention helpers ----
@@ -565,18 +718,86 @@ func toGoFieldName(name string) string {
 
 // findGoField checks if a field exists, trying PascalCase, camelCase, and exact match.
 func findGoField(name string, fields map[string]string) bool {
+	_, found := findGoFieldType(name, fields)
+	return found
+}
+
+// findGoFieldType returns the Go type string for a field, trying PascalCase, camelCase, and exact match.
+func findGoFieldType(name string, fields map[string]string) (string, bool) {
 	pascal := snakeToPascal(name)
-	if _, ok := fields[pascal]; ok {
-		return true
+	if typ, ok := fields[pascal]; ok {
+		return typ, true
 	}
 	camel := snakeToCamel(name)
-	if _, ok := fields[camel]; ok {
-		return true
+	if typ, ok := fields[camel]; ok {
+		return typ, true
 	}
-	if _, ok := fields[name]; ok {
-		return true
+	if typ, ok := fields[name]; ok {
+		return typ, true
 	}
-	return false
+	return "", false
+}
+
+// verifyFuncSignature checks parameter count and return type of a grok function against Go.
+func verifyFuncSignature(context string, grokFunc grokast.FuncDecl, goFunc *goFuncInfo, grokFile, goFile string, result *Result) {
+	// Count grok params excluding self
+	grokParamCount := 0
+	for _, p := range grokFunc.Params {
+		if !p.IsSelf {
+			grokParamCount++
+		}
+	}
+	goParamCount := len(goFunc.Params)
+
+	if grokParamCount != goParamCount {
+		result.add(Error, grokFile, goFile, fmt.Sprintf("%s: param count mismatch: .grok=%d, Go=%d", context, grokParamCount, goParamCount))
+	} else {
+		// Check param types positionally
+		gi := 0
+		for _, grokParam := range grokFunc.Params {
+			if grokParam.IsSelf {
+				continue
+			}
+			if gi < len(goFunc.Params) {
+				grokType := grokTypeToGoString(grokParam.Type)
+				goType := goFunc.Params[gi].Type
+				if !typesMatch(grokType, goType) {
+					paramName := grokParam.Name
+					if paramName == "" {
+						paramName = fmt.Sprintf("#%d", gi+1)
+					}
+					result.add(Error, grokFile, goFile, fmt.Sprintf("%s: param %s type mismatch: .grok=%s, Go=%s", context, paramName, grokType, goType))
+				}
+			}
+			gi++
+		}
+	}
+
+	// Check return types
+	grokReturnCount := 0
+	var grokReturnStr string
+	if grokFunc.ReturnType != nil {
+		grokReturnStr = grokTypeToGoString(*grokFunc.ReturnType)
+		if grokFunc.ReturnType.Kind == grokast.TypeTuple {
+			if grokFunc.ReturnType.Data != nil {
+				tt := grokFunc.ReturnType.Data.(grokast.TupleType)
+				grokReturnCount = len(tt.Fields)
+			}
+		} else if grokFunc.ReturnType.Kind == grokast.TypeUnit {
+			grokReturnCount = 0
+		} else {
+			grokReturnCount = 1
+		}
+	}
+	goReturnCount := len(goFunc.Returns)
+
+	if grokReturnCount != goReturnCount {
+		result.add(Error, grokFile, goFile, fmt.Sprintf("%s: return count mismatch: .grok=%d, Go=%d", context, grokReturnCount, goReturnCount))
+	} else if grokReturnCount == 1 && goReturnCount == 1 {
+		if !typesMatch(grokReturnStr, goFunc.Returns[0]) {
+			result.add(Error, grokFile, goFile, fmt.Sprintf("%s: return type mismatch: .grok=%s, Go=%s", context, grokReturnStr, goFunc.Returns[0]))
+		}
+	}
 }
 
 func toGoMethodName(name string) string {
