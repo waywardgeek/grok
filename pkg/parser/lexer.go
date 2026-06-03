@@ -53,6 +53,7 @@ const (
 	TFloatLit
 	TStringLit
 	TTripleStringLit // """..."""
+	TFStringLit      // f"...{expr}..." — interpolated string (raw content stored in Text)
 
 	// Punctuation
 	TLParen    // (
@@ -188,7 +189,7 @@ var tokenNames = map[TokenKind]string{
 	TWhile: "while", TMatch: "match", TReturn: "return",
 	TBreak: "break", TContinue: "continue", TCascadeKw: "cascade",
 	TIdent: "ident", TIntLit: "int", TFloatLit: "float",
-	TStringLit: "string", TTripleStringLit: "triple_string",
+	TStringLit: "string", TTripleStringLit: "triple_string", TFStringLit: "fstring",
 	TLParen: "(", TRParen: ")", TLBrace: "{", TRBrace: "}",
 	TLBracket: "[", TRBracket: "]", TComma: ",", TColon: ":",
 	TDot: ".", TArrow: "->", TFatArrow: "=>", TPipe: "|",
@@ -492,6 +493,48 @@ func (l *Lexer) scanString(start ast.Pos) Token {
 	return Token{Kind: TStringLit, Text: buf.String(), Span: ast.Span{Start: start, End: l.currentPos()}}
 }
 
+// scanFString scans f"..." and stores the raw content between quotes.
+// The parser will split on {expr} boundaries for interpolation.
+func (l *Lexer) scanFString(start ast.Pos) Token {
+	l.advance() // opening "
+	var buf strings.Builder
+	depth := 0
+	for l.pos < len(l.source) {
+		r := l.advance()
+		if r == '{' {
+			depth++
+			buf.WriteRune(r)
+		} else if r == '}' {
+			depth--
+			buf.WriteRune(r)
+		} else if r == '"' && depth == 0 {
+			return Token{Kind: TFStringLit, Text: buf.String(), Span: ast.Span{Start: start, End: l.currentPos()}}
+		} else if r == '\\' && depth == 0 {
+			next := l.advance()
+			switch next {
+			case 'n':
+				buf.WriteByte('\n')
+			case 't':
+				buf.WriteByte('\t')
+			case '"':
+				buf.WriteByte('"')
+			case '\\':
+				buf.WriteByte('\\')
+			case '{':
+				buf.WriteByte('{') // escaped brace — literal {
+			case '}':
+				buf.WriteByte('}') // escaped brace — literal }
+			default:
+				buf.WriteByte('\\')
+				buf.WriteRune(next)
+			}
+		} else {
+			buf.WriteRune(r)
+		}
+	}
+	return Token{Kind: TFStringLit, Text: buf.String(), Span: ast.Span{Start: start, End: l.currentPos()}}
+}
+
 func (l *Lexer) scanTripleString(start ast.Pos) Token {
 	var buf strings.Builder
 	for l.pos < len(l.source) {
@@ -550,6 +593,11 @@ func (l *Lexer) scanIdent(start ast.Pos) Token {
 		}
 	}
 	text := buf.String()
+
+	// f-string: f"..." triggers interpolated string scanning
+	if text == "f" && l.pos < len(l.source) && l.peek() == '"' {
+		return l.scanFString(start)
+	}
 
 	// Check keywords first
 	if kind, ok := keywords[text]; ok {

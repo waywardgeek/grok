@@ -449,6 +449,14 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 		return TypeF64
 	case ast.ExprStringLit:
 		return TypeString
+	case ast.ExprStringInterp:
+		interp := expr.Data.(*ast.StringInterpExpr)
+		for i, part := range interp.Parts {
+			if i%2 != 0 {
+				c.checkExpr(&part)
+			}
+		}
+		return TypeString
 	case ast.ExprBoolLit:
 		return TypeBool
 	case ast.ExprNil:

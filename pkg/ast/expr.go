@@ -10,6 +10,7 @@ const (
 	ExprIntLit                    // integer literal
 	ExprFloatLit                  // float literal
 	ExprStringLit                 // string literal
+	ExprStringInterp              // f"hello {name}" — interpolated string
 	ExprBoolLit                   // true/false
 	ExprNil                       // nil
 	ExprCall                      // f(x, y)
@@ -48,6 +49,13 @@ type FloatLitExpr struct {
 
 type StringLitExpr struct {
 	Value string
+}
+
+// StringInterpExpr represents f"hello {name}, you are {age}"
+// Parts alternates: string, expr, string, expr, string
+// Parts always starts and ends with a string (may be empty).
+type StringInterpExpr struct {
+	Parts []Expr // alternating ExprStringLit and other expressions
 }
 
 type BoolLitExpr struct {

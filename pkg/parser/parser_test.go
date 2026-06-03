@@ -382,3 +382,32 @@ func TestParseOwnGrokFile(t *testing.T) {
 		t.Error("expected classes")
 	}
 }
+
+
+func TestLexFString(t *testing.T) {
+	input := `f"hello {name}!"`
+	lex := NewLexer(input, "test.gk")
+	tok := lex.Next()
+	if tok.Kind != TFStringLit {
+		t.Fatalf("expected TFStringLit, got %v", tokenNames[tok.Kind])
+	}
+	if tok.Text != "hello {name}!" {
+		t.Errorf("expected raw text 'hello {name}!', got %q", tok.Text)
+	}
+}
+
+func TestParseFString(t *testing.T) {
+	input := `grok test {
+  func main() {
+    let x = f"hello {name}!"
+  }
+}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	fn := file.Blocks[0].Functions[0]
+	if fn.Body == nil || len(fn.Body.Stmts) == 0 {
+		t.Fatal("expected function body")
+	}
+}

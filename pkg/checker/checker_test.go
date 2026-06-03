@@ -788,3 +788,14 @@ func TestInterfaceSubtypingFails(t *testing.T) {
 }`)
 	expectErrors(t, c, 1) // Cat doesn't implement Greeter
 }
+
+
+func TestFStringTypeChecks(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+  func main() {
+    let name = "world"
+    let greeting = f"hello {name}!"
+  }
+}`)
+	expectNoErrors(t, c)
+}

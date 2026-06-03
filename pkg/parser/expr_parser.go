@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/waywardgeek/grok/pkg/ast"
 )
@@ -262,6 +263,9 @@ func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {
 			Data: &ast.StringLitExpr{Value: tok.Text},
 			Span: tok.Span,
 		}, nil
+	case TFStringLit:
+		p.next()
+		return p.parseFString(tok)
 	case TTrue:
 		p.next()
 		return &ast.Expr{
@@ -988,5 +992,68 @@ func (p *Parser) parseStructLit(nameTok Token) (*ast.Expr, error) {
 		Kind: ast.ExprStructLit,
 		Data: &ast.StructLitExpr{TypeName: nameTok.Text, Fields: fields},
 		Span: ast.Span{Start: nameTok.Span.Start, End: end.Span.End},
+	}, nil
+}
+
+
+// parseFString processes the raw text of an f-string token, splitting on {expr}
+// boundaries into alternating string parts and parsed expressions.
+func (p *Parser) parseFString(tok Token) (*ast.Expr, error) {
+	raw := tok.Text
+	var parts []ast.Expr
+	var buf strings.Builder
+	i := 0
+
+	for i < len(raw) {
+		if raw[i] == '{' {
+			// Emit accumulated string part
+			parts = append(parts, ast.Expr{
+				Kind: ast.ExprStringLit,
+				Data: &ast.StringLitExpr{Value: buf.String()},
+				Span: tok.Span,
+			})
+			buf.Reset()
+
+			// Find matching closing brace
+			i++ // skip opening {
+			depth := 1
+			exprStart := i
+			for i < len(raw) && depth > 0 {
+				if raw[i] == '{' {
+					depth++
+				} else if raw[i] == '}' {
+					depth--
+				}
+				if depth > 0 {
+					i++
+				}
+			}
+			exprText := raw[exprStart:i]
+			i++ // skip closing }
+
+			// Parse the expression text
+			exprParser := &Parser{lex: NewLexer(exprText, tok.Span.Start.File)}
+			expr, err := exprParser.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, *expr)
+		} else {
+			buf.WriteByte(raw[i])
+			i++
+		}
+	}
+
+	// Emit final string part
+	parts = append(parts, ast.Expr{
+		Kind: ast.ExprStringLit,
+		Data: &ast.StringLitExpr{Value: buf.String()},
+		Span: tok.Span,
+	})
+
+	return &ast.Expr{
+		Kind: ast.ExprStringInterp,
+		Data: &ast.StringInterpExpr{Parts: parts},
+		Span: tok.Span,
 	}, nil
 }

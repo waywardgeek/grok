@@ -18,41 +18,65 @@ type Transpiler struct {
 	selfName          string            // receiver name to replace "self" with
 	classes           map[string]bool   // tracks which types are classes (pointer receiver methods)
 	topFuncs          map[string]bool   // tracks top-level function names
+	autoImports       map[string]bool   // auto-detected import requirements (e.g., "fmt" for Sprintf)
 }
 
 // New creates a transpiler targeting the given Go package name.
 func New(pkg string) *Transpiler {
-	return &Transpiler{pkg: pkg, classes: make(map[string]bool), topFuncs: make(map[string]bool)}
+	return &Transpiler{pkg: pkg, classes: make(map[string]bool), topFuncs: make(map[string]bool), autoImports: make(map[string]bool)}
+}
+
+func (t *Transpiler) needsImport(pkg string) {
+	t.autoImports[pkg] = true
 }
 
 // Transpile converts an AST file to Go source code.
 func (t *Transpiler) Transpile(file *ast.File) string {
 	t.buf.Reset()
+	for k := range t.autoImports {
+		delete(t.autoImports, k)
+	}
+
+	// Transpile body first (may discover auto-imports like fmt for f-strings)
+	var bodyBuf strings.Builder
+	for _, block := range file.Blocks {
+		t.transpileBlock(&block)
+	}
+	bodyBuf.WriteString(t.buf.String())
+
+	// Now build final output: package + imports + body
+	t.buf.Reset()
 	t.writef("package %s\n", t.pkg)
 
-	// Collect and emit imports
-	var imports []ast.ImportDecl
+	// Collect all imports: user-declared + auto-detected
+	importSet := make(map[string]string) // path → alias
 	for _, block := range file.Blocks {
-		imports = append(imports, block.Imports...)
+		for _, imp := range block.Imports {
+			importSet[imp.Path] = imp.Alias
+		}
 	}
-	if len(imports) > 0 {
+	for pkg := range t.autoImports {
+		if _, exists := importSet[pkg]; !exists {
+			importSet[pkg] = ""
+		}
+	}
+
+	if len(importSet) > 0 {
 		t.writef("\nimport (\n")
 		t.indent++
-		for _, imp := range imports {
+		for path, alias := range importSet {
 			t.writeIndent()
-			if imp.Alias != "" && imp.Alias != imp.Path {
-				t.writef("%s %q\n", imp.Alias, imp.Path)
+			if alias != "" && alias != path {
+				t.writef("%s %q\n", alias, path)
 			} else {
-				t.writef("%q\n", imp.Path)
+				t.writef("%q\n", path)
 			}
 		}
 		t.indent--
 		t.writef(")\n")
 	}
 
-	for _, block := range file.Blocks {
-		t.transpileBlock(&block)
-	}
+	t.buf.WriteString(bodyBuf.String())
 	return t.buf.String()
 }
 
@@ -610,6 +634,35 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 	case ast.ExprStringLit:
 		lit := expr.Data.(*ast.StringLitExpr)
 		t.writef("%q", lit.Value)
+	case ast.ExprStringInterp:
+		interp := expr.Data.(*ast.StringInterpExpr)
+		// Build fmt.Sprintf call: format string + args
+		var fmtStr strings.Builder
+		var args []ast.Expr
+		for i, part := range interp.Parts {
+			if i%2 == 0 {
+				// String literal part
+				lit := part.Data.(*ast.StringLitExpr)
+				// Escape % in format string
+				fmtStr.WriteString(strings.ReplaceAll(lit.Value, "%", "%%"))
+			} else {
+				// Expression part — add %v placeholder
+				fmtStr.WriteString("%v")
+				args = append(args, part)
+			}
+		}
+		if len(args) == 0 {
+			// No interpolation — just a regular string
+			t.writef("%q", fmtStr.String())
+		} else {
+			t.needsImport("fmt")
+			t.writef("fmt.Sprintf(%q", fmtStr.String())
+			for i := range args {
+				t.writef(", ")
+				t.transpileExpr(&args[i])
+			}
+			t.writef(")")
+		}
 	case ast.ExprBoolLit:
 		lit := expr.Data.(*ast.BoolLitExpr)
 		if lit.Value {
