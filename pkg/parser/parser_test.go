@@ -445,3 +445,82 @@ func TestParseCastExpr(t *testing.T) {
 		t.Errorf("expected IntLit operand, got %v", cast.Operand.Kind)
 	}
 }
+
+func TestParseFuncTypeParams(t *testing.T) {
+	input := `grok Test {
+  func identity<T>(x: T) -> T
+  func clamp<T: Comparable>(value: T, lo: T, hi: T) -> T
+  func transform<T, U>(xs: [T], f: T -> U) -> [U]
+}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	fns := file.Blocks[0].Functions
+	if len(fns) != 3 {
+		t.Fatalf("expected 3 functions, got %d", len(fns))
+	}
+
+	// identity<T>
+	if len(fns[0].TypeParams) != 1 {
+		t.Fatalf("identity: expected 1 type param, got %d", len(fns[0].TypeParams))
+	}
+	if fns[0].TypeParams[0].Name != "T" {
+		t.Errorf("expected T, got %s", fns[0].TypeParams[0].Name)
+	}
+	if fns[0].TypeParams[0].Constraint != "" {
+		t.Errorf("expected no constraint, got %s", fns[0].TypeParams[0].Constraint)
+	}
+
+	// clamp<T: Comparable>
+	if len(fns[1].TypeParams) != 1 {
+		t.Fatalf("clamp: expected 1 type param, got %d", len(fns[1].TypeParams))
+	}
+	if fns[1].TypeParams[0].Constraint != "Comparable" {
+		t.Errorf("expected Comparable, got %s", fns[1].TypeParams[0].Constraint)
+	}
+
+	// transform<T, U>
+	if len(fns[2].TypeParams) != 2 {
+		t.Fatalf("transform: expected 2 type params, got %d", len(fns[2].TypeParams))
+	}
+	if fns[2].TypeParams[0].Name != "T" || fns[2].TypeParams[1].Name != "U" {
+		t.Errorf("expected T, U, got %s, %s", fns[2].TypeParams[0].Name, fns[2].TypeParams[1].Name)
+	}
+}
+
+func TestParseGenericCallSite(t *testing.T) {
+	input := `grok Test {
+  func identity<T>(x: T) -> T {
+    return x
+  }
+  func main() -> unit {
+    let a = identity<i32>(42)
+  }
+}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	fns := file.Blocks[0].Functions
+	mainFn := fns[1]
+	if mainFn.Body == nil || len(mainFn.Body.Stmts) != 1 {
+		t.Fatalf("expected 1 statement in main")
+	}
+	decl := mainFn.Body.Stmts[0].Data.(*ast.VarDeclStmt)
+	if decl.Value.Kind != ast.ExprCall {
+		t.Fatalf("expected ExprCall, got %v", decl.Value.Kind)
+	}
+	call := decl.Value.Data.(*ast.CallExpr)
+	if len(call.TypeArgs) != 1 {
+		t.Fatalf("expected 1 type arg, got %d", len(call.TypeArgs))
+	}
+	ta := call.TypeArgs[0]
+	if ta.Kind != ast.TypeNamed {
+		t.Fatalf("expected TypeNamed, got %v", ta.Kind)
+	}
+	nt := ta.Data.(ast.NamedType)
+	if nt.Name != "i32" {
+		t.Errorf("expected i32, got %s", nt.Name)
+	}
+}

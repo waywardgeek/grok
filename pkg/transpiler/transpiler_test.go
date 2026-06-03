@@ -544,3 +544,36 @@ func TestTupleDestructuring(t *testing.T) {
 		t.Errorf("expected tuple destructuring, got:\n%s", got)
 	}
 }
+
+func TestTranspileGenericFunc(t *testing.T) {
+	src := `grok test {
+		func identity<T>(x: T) -> T {
+			return x
+		}
+		func main() {
+			let a = identity<i32>(42)
+		}
+	}`
+	out := transpileWithChecker(t, src)
+	if !strings.Contains(out, "func Identity[T any](x T) T") {
+		t.Errorf("expected generic func signature, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Identity[int32](") {
+		t.Errorf("expected type arg at call site, got:\n%s", out)
+	}
+}
+
+func TestTranspileGenericFuncWithConstraint(t *testing.T) {
+	src := `grok test {
+		func max<T: Comparable>(a: T, b: T) -> T {
+			if a > b {
+				return a
+			}
+			return b
+		}
+	}`
+	out := transpileWithChecker(t, src)
+	if !strings.Contains(out, "func Max[T cmp.Ordered](a T, b T) T") {
+		t.Errorf("expected constraint mapping, got:\n%s", out)
+	}
+}

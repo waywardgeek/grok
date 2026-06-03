@@ -125,6 +125,7 @@ type Annotations struct {
 // FuncDecl is a function or method declaration.
 type FuncDecl struct {
 	Name       string
+	TypeParams []TypeParam
 	Params     []Param
 	ReturnType *TypeExpr // nil for missing (error in .grok)
 	Where      []WhereClause

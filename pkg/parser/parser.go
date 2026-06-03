@@ -633,6 +633,15 @@ func (p *Parser) parseFunc() (*ast.FuncDecl, error) {
 	}
 	fn := &ast.FuncDecl{Name: name.Text}
 
+	// Optional type parameters: func name<T, U: Constraint>(...)
+	if p.peek().Kind == TLt {
+		params, err := p.parseTypeParams()
+		if err != nil {
+			return nil, err
+		}
+		fn.TypeParams = params
+	}
+
 	// Parameters
 	if _, err := p.expect(TLParen); err != nil {
 		return nil, err

@@ -408,7 +408,11 @@ func (t *Transpiler) transpileFunc(fn *ast.FuncDecl, receiver string) {
 	if (fn.Name == "Main" || fn.Name == "main") && t.pkg == "main" {
 		funcName = "main"
 	}
-	t.writef("%s(", funcName)
+	t.writef("%s", funcName)
+
+	// Type parameters
+	typeParams := t.typeParamList(fn.TypeParams)
+	t.writef("%s(", typeParams)
 
 	// Parameters (skip self)
 	first := true
@@ -855,6 +859,17 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		} else {
 			t.transpileExpr(&call.Func)
 		}
+		// Emit type arguments: func[T, U](...)
+		if len(call.TypeArgs) > 0 {
+			t.writef("[")
+			for i := range call.TypeArgs {
+				if i > 0 {
+					t.writef(", ")
+				}
+				t.writef("%s", t.goType(&call.TypeArgs[i]))
+			}
+			t.writef("]")
+		}
 		t.writef("(")
 		for i := range call.Args {
 			if i > 0 {
@@ -1260,13 +1275,29 @@ func (t *Transpiler) typeParamList(params []ast.TypeParam) string {
 	}
 	parts := make([]string, len(params))
 	for i, p := range params {
-		if p.Constraint != "" {
-			parts[i] = fmt.Sprintf("%s %s", p.Name, p.Constraint)
+		constraint := t.mapConstraint(p.Constraint)
+		if constraint != "" {
+			parts[i] = fmt.Sprintf("%s %s", p.Name, constraint)
 		} else {
 			parts[i] = fmt.Sprintf("%s any", p.Name)
 		}
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// mapConstraint maps Grok constraint names to Go equivalents.
+func (t *Transpiler) mapConstraint(name string) string {
+	switch name {
+	case "":
+		return ""
+	case "Comparable":
+		t.needsImport("cmp")
+		return "cmp.Ordered"
+	case "Equatable", "Hashable":
+		return "comparable"
+	default:
+		return name // pass through user-defined constraints
+	}
 }
 
 // exportName capitalizes the first letter for Go export.

@@ -921,3 +921,52 @@ func TestErrorType(t *testing.T) {
 	}`)
 	expectNoErrors(t, c)
 }
+
+func TestGenericFuncTypeCheck(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func identity<T>(x: T) -> T {
+			return x
+		}
+		func main() {
+			let a = identity<i32>(42)
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestGenericFuncTypeMismatch(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func first<T>(a: T, b: T) -> T {
+			return a
+		}
+		func main() {
+			let a = first<i32>(42, "hello")
+		}
+	}`)
+	expectErrors(t, c, 1) // arg 2: expected i32, got string
+}
+
+func TestGenericFuncWrongTypeArgCount(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func pair<T, U>(a: T, b: U) -> T {
+			return a
+		}
+		func main() {
+			let a = pair<i32>(42, "hello")
+		}
+	}`)
+	expectErrors(t, c, 1) // expected 2 type arguments, got 1
+}
+
+func TestGenericReturnTypeSubstitution(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func identity<T>(x: T) -> T {
+			return x
+		}
+		func main() {
+			let a: i32 = identity<i32>(42)
+			let b: string = identity<string>("hello")
+		}
+	}`)
+	expectNoErrors(t, c)
+}

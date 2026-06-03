@@ -167,7 +167,7 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			// Check for method call: obj.method(args)
+			// Check for method call: obj.method(args) or obj.method<T>(args)
 			if p.peek().Kind == TLParen {
 				p.next()
 				args, end, err := p.parseArgList()
@@ -179,12 +179,60 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 					Data: &ast.MethodCallExpr{Receiver: *expr, Method: name.Text, Args: args},
 					Span: ast.Span{Start: expr.Span.Start, End: end},
 				}
+			} else if p.peek().Kind == TLt {
+				// Try method<TypeArgs>(args)
+				saved := *p.lex
+				savedErrors := len(p.errors)
+				typeArgs, ok := p.tryParseTypeArgs()
+				if ok && p.peek().Kind == TLParen {
+					p.next()
+					args, end, err := p.parseArgList()
+					if err != nil {
+						return nil, err
+					}
+					expr = &ast.Expr{
+						Kind: ast.ExprMethodCall,
+						Data: &ast.MethodCallExpr{Receiver: *expr, Method: name.Text, TypeArgs: typeArgs, Args: args},
+						Span: ast.Span{Start: expr.Span.Start, End: end},
+					}
+				} else {
+					*p.lex = saved
+					p.errors = p.errors[:savedErrors]
+					expr = &ast.Expr{
+						Kind: ast.ExprFieldAccess,
+						Data: &ast.FieldAccessExpr{Receiver: *expr, Field: name.Text},
+						Span: ast.Span{Start: expr.Span.Start, End: name.Span.End},
+					}
+				}
 			} else {
 				expr = &ast.Expr{
 					Kind: ast.ExprFieldAccess,
 					Data: &ast.FieldAccessExpr{Receiver: *expr, Field: name.Text},
 					Span: ast.Span{Start: expr.Span.Start, End: name.Span.End},
 				}
+			}
+		case TLt:
+			// Try to parse generic call: expr<TypeArgs>(args)
+			// Save lexer state for backtracking if this is actually a comparison
+			saved := *p.lex
+			savedErrors := len(p.errors)
+			typeArgs, ok := p.tryParseTypeArgs()
+			if ok && p.peek().Kind == TLParen {
+				p.next() // consume '('
+				args, end, err := p.parseArgList()
+				if err != nil {
+					return nil, err
+				}
+				expr = &ast.Expr{
+					Kind: ast.ExprCall,
+					Data: &ast.CallExpr{Func: *expr, TypeArgs: typeArgs, Args: args},
+					Span: ast.Span{Start: expr.Span.Start, End: end},
+				}
+			} else {
+				// Not a generic call — restore and let binary handle it
+				*p.lex = saved
+				p.errors = p.errors[:savedErrors]
+				return expr, nil
 			}
 		case TLParen:
 			p.next()
@@ -1117,4 +1165,27 @@ func (p *Parser) parseFString(tok Token) (*ast.Expr, error) {
 		Data: &ast.StringInterpExpr{Parts: parts},
 		Span: tok.Span,
 	}, nil
+}
+
+// tryParseTypeArgs attempts to parse <TypeExpr, TypeExpr, ...> and consume the '>'.
+// Returns the parsed type args and true on success. On failure, the caller must
+// restore the lexer state — this function does NOT backtrack on its own.
+func (p *Parser) tryParseTypeArgs() ([]ast.TypeExpr, bool) {
+	p.next() // consume '<'
+	var typeArgs []ast.TypeExpr
+	for p.peek().Kind != TGt && p.peek().Kind != TEOF {
+		te, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, false
+		}
+		typeArgs = append(typeArgs, *te)
+		if p.peek().Kind == TComma {
+			p.next()
+		}
+	}
+	if p.peek().Kind != TGt {
+		return nil, false
+	}
+	p.next() // consume '>'
+	return typeArgs, true
 }

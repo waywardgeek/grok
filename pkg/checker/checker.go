@@ -35,15 +35,16 @@ const (
 
 // Type represents a resolved type.
 type Type struct {
-	Kind TypeKind
-	Name string  // for named types (struct, class, enum, type vars)
-	Bits int     // for int/uint/float (8, 16, 32, 64, 128, 256)
-	Elem *Type   // for list, optional, channel
-	Key  *Type   // for map
-	Val  *Type   // for map
-	Fields []TypeField // for tuple
-	Params []*Type     // for func: param types
-	Return *Type       // for func: return type
+	Kind           TypeKind
+	Name           string  // for named types (struct, class, enum, type vars)
+	Bits           int     // for int/uint/float (8, 16, 32, 64, 128, 256)
+	Elem           *Type   // for list, optional, channel
+	Key            *Type   // for map
+	Val            *Type   // for map
+	Fields         []TypeField // for tuple
+	Params         []*Type     // for func: param types
+	Return         *Type       // for func: return type
+	TypeParamNames []string    // for func: generic type parameter names
 }
 
 // TypeField is a named or positional field in a tuple/struct.
@@ -431,7 +432,11 @@ func (c *Checker) resolveNamedType(name string, args []ast.TypeExpr) *Type {
 		if info := c.registry.Lookup(name); info != nil {
 			return info.Type
 		}
-		// Could be a type variable
+		// Check scope for type variables (generics)
+		if t := c.scope.Lookup(name); t != nil && t.Kind == TyVar {
+			return t
+		}
+		// Unknown type — could be an error, but return TyVar for .grok compatibility
 		return &Type{Kind: TyVar, Name: name}
 	}
 }
@@ -441,6 +446,10 @@ func (c *Checker) resolveNamedType(name string, args []ast.TypeExpr) *Type {
 // methods satisfies an interface (structural subtyping).
 func (c *Checker) assignableTo(from, to *Type) bool {
 	if from.Equal(to) {
+		return true
+	}
+	// Type variables are compatible with anything (constraints checked by Go)
+	if from.Kind == TyVar || to.Kind == TyVar {
 		return true
 	}
 	// nil (TyUnknown) is assignable to optional and interface types
@@ -502,6 +511,40 @@ func (c *Checker) assignableTo(from, to *Type) bool {
 		return true
 	}
 	return false
+}
+
+// substituteType replaces type variables in a type according to a substitution map.
+func substituteType(t *Type, subst map[string]*Type) *Type {
+	if t == nil {
+		return nil
+	}
+	switch t.Kind {
+	case TyVar:
+		if concrete, ok := subst[t.Name]; ok {
+			return concrete
+		}
+		return t
+	case TyList:
+		return ListType(substituteType(t.Elem, subst))
+	case TyMap:
+		return MapType(substituteType(t.Key, subst), substituteType(t.Val, subst))
+	case TyOptional:
+		return OptionalType(substituteType(t.Elem, subst))
+	case TyTuple:
+		fields := make([]TypeField, len(t.Fields))
+		for i, f := range t.Fields {
+			fields[i] = TypeField{Name: f.Name, Type: substituteType(f.Type, subst)}
+		}
+		return &Type{Kind: TyTuple, Fields: fields}
+	case TyFunc:
+		params := make([]*Type, len(t.Params))
+		for i, p := range t.Params {
+			params[i] = substituteType(p, subst)
+		}
+		return &Type{Kind: TyFunc, Params: params, Return: substituteType(t.Return, subst), Name: t.Name}
+	default:
+		return t
+	}
 }
 
 // --- Expression type inference ---
@@ -597,6 +640,19 @@ func (c *Checker) checkBinary(expr *ast.Expr) *Type {
 	left := c.checkExpr(&b.Left)
 	right := c.checkExpr(&b.Right)
 
+	// Type variables: allow all operations, defer constraint checking to Go
+	if left.Kind == TyVar || right.Kind == TyVar {
+		switch b.Op {
+		case ast.OpAnd, ast.OpOr, ast.OpEq, ast.OpNeq, ast.OpLt, ast.OpLe, ast.OpGt, ast.OpGe:
+			return TypeBool
+		default:
+			if left.Kind == TyVar {
+				return left
+			}
+			return right
+		}
+	}
+
 	switch b.Op {
 	case ast.OpAdd, ast.OpSub, ast.OpMul, ast.OpDiv, ast.OpMod:
 		if left.IsNumeric() && right.IsNumeric() {
@@ -663,22 +719,47 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 		c.error(expr.Span, "cannot call non-function type %s", fnType)
 		return TypeError
 	}
-	if fnType.Params == nil {
+
+	// Handle generic type arguments: build substitution map
+	var subst map[string]*Type
+	if len(call.TypeArgs) > 0 {
+		if len(call.TypeArgs) != len(fnType.TypeParamNames) {
+			c.error(expr.Span, "expected %d type arguments, got %d", len(fnType.TypeParamNames), len(call.TypeArgs))
+		} else {
+			subst = make(map[string]*Type)
+			for i, name := range fnType.TypeParamNames {
+				subst[name] = c.resolveTypeExpr(&call.TypeArgs[i])
+			}
+		}
+	}
+
+	// Apply substitution to param and return types
+	paramTypes := fnType.Params
+	retType := fnType.Return
+	if subst != nil {
+		paramTypes = make([]*Type, len(fnType.Params))
+		for i, p := range fnType.Params {
+			paramTypes[i] = substituteType(p, subst)
+		}
+		retType = substituteType(fnType.Return, subst)
+	}
+
+	if paramTypes == nil {
 		// Variadic/builtin — just check each arg is valid
 		for i := range call.Args {
 			c.checkExpr(&call.Args[i])
 		}
-	} else if len(call.Args) != len(fnType.Params) {
-		c.error(expr.Span, "expected %d arguments, got %d", len(fnType.Params), len(call.Args))
+	} else if len(call.Args) != len(paramTypes) {
+		c.error(expr.Span, "expected %d arguments, got %d", len(paramTypes), len(call.Args))
 	} else {
 		for i := range call.Args {
 			argType := c.checkExpr(&call.Args[i])
-			if !c.assignableTo(argType, fnType.Params[i]) && argType.Kind != TyUnknown && fnType.Params[i].Kind != TyVar {
-				c.error(call.Args[i].Span, "argument %d: expected %s, got %s", i+1, fnType.Params[i], argType)
+			if !c.assignableTo(argType, paramTypes[i]) && argType.Kind != TyUnknown {
+				c.error(call.Args[i].Span, "argument %d: expected %s, got %s", i+1, paramTypes[i], argType)
 			}
 		}
 	}
-	return fnType.Return
+	return retType
 }
 
 func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
@@ -1155,6 +1236,11 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 		Fields:  make(map[string]*Type),
 		Methods: make(map[string]*Type),
 	}
+	// Register type params as type variables in a temporary scope for resolving field/method types
+	c.pushScope()
+	for _, tp := range cls.TypeParams {
+		c.scope.Define(tp.Name, &Type{Kind: TyVar, Name: tp.Name})
+	}
 	// Ctor params become struct fields
 	for _, p := range cls.CtorParams {
 		info.Fields[p.Name] = c.resolveTypeExpr(&p.Type)
@@ -1165,6 +1251,7 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 	for _, m := range cls.Methods {
 		info.Methods[m.Name] = c.funcDeclToType(&m)
 	}
+	c.popScope()
 	c.registry.Register(cls.Name, info)
 }
 
@@ -1284,12 +1371,21 @@ func (c *Checker) funcDeclToType(fn *ast.FuncDecl) *Type {
 	if fn.ReturnType != nil {
 		ret = c.resolveTypeExpr(fn.ReturnType)
 	}
-	return &Type{Kind: TyFunc, Params: params, Return: ret}
+	var typeParamNames []string
+	for _, tp := range fn.TypeParams {
+		typeParamNames = append(typeParamNames, tp.Name)
+	}
+	return &Type{Kind: TyFunc, Params: params, Return: ret, TypeParamNames: typeParamNames}
 }
 
 func (c *Checker) checkFuncBody(fn *ast.FuncDecl) {
 	c.pushScope()
 	defer c.popScope()
+
+	// Register type parameters as type variables
+	for _, tp := range fn.TypeParams {
+		c.scope.Define(tp.Name, &Type{Kind: TyVar, Name: tp.Name})
+	}
 
 	// Set expected return type
 	prevReturn := c.currentReturn
