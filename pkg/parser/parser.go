@@ -1,0 +1,1222 @@
+package parser
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/waywardgeek/grok/pkg/ast"
+)
+
+// ParseError is a syntax error with source position.
+type ParseError struct {
+	Message string
+	Span    ast.Span
+}
+
+func (e *ParseError) Error() string {
+	return fmt.Sprintf("%s:%d:%d: %s", e.Span.Start.File, e.Span.Start.Line, e.Span.Start.Column, e.Message)
+}
+
+// Parser is a PEG parser for .grok files.
+type Parser struct {
+	lex    *Lexer
+	errors []error
+}
+
+// ParseFile parses a .grok or .gk file into an AST.
+func ParseFile(source, filename string) (*ast.File, error) {
+	lex := NewLexer(source, filename)
+	p := &Parser{lex: lex}
+	return p.parseFile()
+}
+
+// ParseString parses from a string, using "<string>" as the filename.
+func ParseString(source string) (*ast.File, error) {
+	return ParseFile(source, "<string>")
+}
+
+func (p *Parser) peek() Token  { return p.lex.Peek() }
+func (p *Parser) next() Token  { return p.lex.Next() }
+
+func (p *Parser) skipNewlines() {
+	for p.peek().Kind == TNewline {
+		p.next()
+	}
+}
+
+// isWhyAnnotation peeks ahead to determine if the current `why` token is an annotation
+// (why: "string literal") vs a field name (why: TypeExpr). Returns true for annotation form.
+func (p *Parser) isWhyAnnotation() bool {
+	// Save lexer state
+	saved := *p.lex
+	p.next()         // consume 'why'
+	p.next()         // consume ':'
+	tok := p.peek()  // look at what follows
+	*p.lex = saved   // restore
+	return tok.Kind == TStringLit || tok.Kind == TTripleStringLit
+}
+
+func (p *Parser) expect(kind TokenKind) (Token, error) {
+	tok := p.next()
+	if tok.Kind != kind {
+		return tok, &ParseError{
+			Message: fmt.Sprintf("expected %s, got %s (%q)", tokenNames[kind], tokenNames[tok.Kind], tok.Text),
+			Span:    tok.Span,
+		}
+	}
+	return tok, nil
+}
+
+// expectIdentLike accepts TIdent or any annotation keyword that could be used as a name.
+func (p *Parser) expectIdentLike() (Token, error) {
+	tok := p.next()
+	if tok.Kind == TIdent {
+		return tok, nil
+	}
+	// Keywords and annotation keywords can be used as field/param names
+	if _, ok := annotationKeywords[tok.Text]; ok {
+		tok.Kind = TIdent
+		return tok, nil
+	}
+	if _, ok := keywords[tok.Text]; ok {
+		tok.Kind = TIdent
+		return tok, nil
+	}
+	return tok, &ParseError{
+		Message: fmt.Sprintf("expected identifier, got %s (%q)", tokenNames[tok.Kind], tok.Text),
+		Span:    tok.Span,
+	}
+}
+
+func (p *Parser) parseFile() (*ast.File, error) {
+	file := &ast.File{Filename: p.lex.filename}
+	start := p.peek().Span.Start
+	p.skipNewlines()
+
+	for p.peek().Kind != TEOF {
+		p.skipNewlines()
+		if p.peek().Kind == TEOF {
+			break
+		}
+		block, err := p.parseGrokBlock()
+		if err != nil {
+			return nil, err
+		}
+		file.Blocks = append(file.Blocks, *block)
+		p.skipNewlines()
+	}
+
+	file.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End}
+	return file, nil
+}
+
+func (p *Parser) parseGrokBlock() (*ast.GrokBlock, error) {
+	start := p.peek().Span.Start
+	if _, err := p.expect(TGrok); err != nil {
+		return nil, err
+	}
+
+	nameTok, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	block := &ast.GrokBlock{Name: nameTok.Text}
+
+	if _, err := p.expect(TLBrace); err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+
+	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
+		if err := p.parseGrokItem(block); err != nil {
+			return nil, err
+		}
+		p.skipNewlines()
+	}
+
+	if _, err := p.expect(TRBrace); err != nil {
+		return nil, err
+	}
+
+	block.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End}
+	return block, nil
+}
+
+func (p *Parser) parseGrokItem(block *ast.GrokBlock) error {
+	tok := p.peek()
+	switch tok.Kind {
+	case TWhy:
+		why, err := p.parseWhy()
+		if err != nil {
+			return err
+		}
+		block.Why = why
+	case TDoc:
+		doc, err := p.parseDoc()
+		if err != nil {
+			return err
+		}
+		block.Docs = append(block.Docs, *doc)
+	case TInvariant:
+		inv, err := p.parseInvariant()
+		if err != nil {
+			return err
+		}
+		block.Invariants = append(block.Invariants, *inv)
+	case TImport:
+		imp, err := p.parseImport()
+		if err != nil {
+			return err
+		}
+		block.Imports = append(block.Imports, *imp)
+	case TStruct:
+		s, err := p.parseStruct()
+		if err != nil {
+			return err
+		}
+		block.Structs = append(block.Structs, *s)
+	case TEnum:
+		e, err := p.parseEnum()
+		if err != nil {
+			return err
+		}
+		block.Enums = append(block.Enums, *e)
+	case TInterface:
+		iface, err := p.parseInterface()
+		if err != nil {
+			return err
+		}
+		block.Interfaces = append(block.Interfaces, *iface)
+	case TClass:
+		cls, err := p.parseClass()
+		if err != nil {
+			return err
+		}
+		block.Classes = append(block.Classes, *cls)
+	case TFunc:
+		fn, err := p.parseFunc()
+		if err != nil {
+			return err
+		}
+		block.Functions = append(block.Functions, *fn)
+	case TRelation:
+		rel, err := p.parseRelation()
+		if err != nil {
+			return err
+		}
+		block.Relations = append(block.Relations, *rel)
+	case TSource:
+		src, err := p.parseSource()
+		if err != nil {
+			return err
+		}
+		block.Source = src
+	case TFake:
+		fake, err := p.parseFake()
+		if err != nil {
+			return err
+		}
+		block.Fake = fake
+	default:
+		return &ParseError{
+			Message: fmt.Sprintf("unexpected token %s (%q) in grok block", tokenNames[tok.Kind], tok.Text),
+			Span:    tok.Span,
+		}
+	}
+	return nil
+}
+
+// parseWhy parses: why: "..."
+func (p *Parser) parseWhy() (string, error) {
+	p.next() // consume 'why'
+	if _, err := p.expect(TColon); err != nil {
+		return "", err
+	}
+	tok, err := p.expect(TStringLit)
+	if err != nil {
+		return "", err
+	}
+	return tok.Text, nil
+}
+
+// parseDoc parses: doc "Section": """..."""
+func (p *Parser) parseDoc() (*ast.DocBlock, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'doc'
+	section, err := p.expect(TStringLit)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TColon); err != nil {
+		return nil, err
+	}
+	content, err := p.expect(TTripleStringLit)
+	if err != nil {
+		return nil, err
+	}
+	return &ast.DocBlock{
+		Section: section.Text,
+		Content: content.Text,
+		Span:    ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: content.Span.End},
+	}, nil
+}
+
+// parseInvariant parses: invariant: "claim" [verified_at: "hash"]
+func (p *Parser) parseInvariant() (*ast.InvariantDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'invariant'
+	if _, err := p.expect(TColon); err != nil {
+		return nil, err
+	}
+	claim, err := p.expect(TStringLit)
+	if err != nil {
+		return nil, err
+	}
+	inv := &ast.InvariantDecl{
+		Claim: claim.Text,
+		Span:  ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: claim.Span.End},
+	}
+	// Check for optional verified_at
+	p.skipNewlines()
+	if p.peek().Kind == TVerifiedAt {
+		p.next()
+		if _, err := p.expect(TColon); err != nil {
+			return nil, err
+		}
+		hash, err := p.expect(TStringLit)
+		if err != nil {
+			return nil, err
+		}
+		inv.VerifiedAt = hash.Text
+		inv.Span.End = hash.Span.End
+	}
+	return inv, nil
+}
+
+// parseImport parses: import alias from "path"
+func (p *Parser) parseImport() (*ast.ImportDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'import'
+	alias, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TFrom); err != nil {
+		return nil, err
+	}
+	path, err := p.expect(TStringLit)
+	if err != nil {
+		return nil, err
+	}
+	return &ast.ImportDecl{
+		Alias: alias.Text,
+		Path:  path.Text,
+		Span:  ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: path.Span.End},
+	}, nil
+}
+
+// parseStruct parses: struct Name[<TypeParams>] { fields }
+func (p *Parser) parseStruct() (*ast.StructDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'struct'
+	name, err := p.expectIdentLike()
+	if err != nil {
+		return nil, err
+	}
+	s := &ast.StructDecl{Name: name.Text}
+
+	// Optional type params
+	if p.peek().Kind == TLt {
+		params, err := p.parseTypeParams()
+		if err != nil {
+			return nil, err
+		}
+		s.TypeParams = params
+	}
+
+	if _, err := p.expect(TLBrace); err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+
+	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
+		if p.peek().Kind == TWhy && p.isWhyAnnotation() {
+			why, err := p.parseWhy()
+			if err != nil {
+				return nil, err
+			}
+			s.Why = why
+		} else {
+			field, err := p.parseField()
+			if err != nil {
+				return nil, err
+			}
+			s.Fields = append(s.Fields, *field)
+		}
+		p.skipNewlines()
+	}
+
+	end, err := p.expect(TRBrace)
+	if err != nil {
+		return nil, err
+	}
+	s.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End}
+	return s, nil
+}
+
+// parseEnum parses: enum Name[<TypeParams>] { Variants }
+func (p *Parser) parseEnum() (*ast.EnumDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'enum'
+	name, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	e := &ast.EnumDecl{Name: name.Text}
+
+	if p.peek().Kind == TLt {
+		params, err := p.parseTypeParams()
+		if err != nil {
+			return nil, err
+		}
+		e.TypeParams = params
+	}
+
+	if _, err := p.expect(TLBrace); err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+
+	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
+		if p.peek().Kind == TWhy && p.isWhyAnnotation() {
+			why, err := p.parseWhy()
+			if err != nil {
+				return nil, err
+			}
+			e.Why = why
+		} else {
+			variant, err := p.parseEnumVariant()
+			if err != nil {
+				return nil, err
+			}
+			e.Variants = append(e.Variants, *variant)
+		}
+		p.skipNewlines()
+	}
+
+	end, err := p.expect(TRBrace)
+	if err != nil {
+		return nil, err
+	}
+	e.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End}
+	return e, nil
+}
+
+func (p *Parser) parseEnumVariant() (*ast.EnumVariant, error) {
+	start := p.peek().Span.Start
+	name, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	v := &ast.EnumVariant{Name: name.Text}
+
+	// Optional payload
+	if p.peek().Kind == TLParen {
+		p.next()
+		for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
+			field, err := p.parseTupleField()
+			if err != nil {
+				return nil, err
+			}
+			v.Fields = append(v.Fields, *field)
+			if p.peek().Kind == TComma {
+				p.next()
+			}
+		}
+		if _, err := p.expect(TRParen); err != nil {
+			return nil, err
+		}
+	}
+
+	v.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End}
+	return v, nil
+}
+
+func (p *Parser) parseTupleField() (*ast.TupleField, error) {
+	// Could be "name: Type" or just "Type"
+	// Try name: Type first
+	if p.peek().Kind == TIdent {
+		saved := *p.lex // save state
+		name := p.next()
+		if p.peek().Kind == TColon {
+			p.next()
+			typ, err := p.parseTypeExpr()
+			if err != nil {
+				return nil, err
+			}
+			return &ast.TupleField{Name: name.Text, Type: *typ}, nil
+		}
+		// Restore — it was just a type name
+		*p.lex = saved
+	}
+	typ, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.TupleField{Type: *typ}, nil
+}
+
+// parseInterface parses: interface Name[<TypeParams>] { methods }
+func (p *Parser) parseInterface() (*ast.InterfaceDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'interface'
+	name, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	iface := &ast.InterfaceDecl{Name: name.Text}
+
+	if p.peek().Kind == TLt {
+		params, err := p.parseTypeParams()
+		if err != nil {
+			return nil, err
+		}
+		iface.TypeParams = params
+	}
+
+	if _, err := p.expect(TLBrace); err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+
+	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
+		if p.peek().Kind == TWhy {
+			why, err := p.parseWhy()
+			if err != nil {
+				return nil, err
+			}
+			iface.Why = why
+		} else if p.peek().Kind == TImplements {
+			p.next()
+			imp, err := p.expect(TIdent)
+			if err != nil {
+				return nil, err
+			}
+			iface.Implements = append(iface.Implements, imp.Text)
+		} else if p.peek().Kind == TFunc {
+			fn, err := p.parseFunc()
+			if err != nil {
+				return nil, err
+			}
+			iface.Methods = append(iface.Methods, *fn)
+		} else {
+			return nil, &ParseError{
+				Message: fmt.Sprintf("unexpected %s in interface body", tokenNames[p.peek().Kind]),
+				Span:    p.peek().Span,
+			}
+		}
+		p.skipNewlines()
+	}
+
+	end, err := p.expect(TRBrace)
+	if err != nil {
+		return nil, err
+	}
+	iface.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End}
+	return iface, nil
+}
+
+// parseClass parses: class Name[<TypeParams>](ctor_params) [implements I1, I2] { fields, methods }
+func (p *Parser) parseClass() (*ast.ClassDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'class'
+	name, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	cls := &ast.ClassDecl{Name: name.Text}
+
+	// Optional type params
+	if p.peek().Kind == TLt {
+		params, err := p.parseTypeParams()
+		if err != nil {
+			return nil, err
+		}
+		cls.TypeParams = params
+	}
+
+	// Constructor params
+	if _, err := p.expect(TLParen); err != nil {
+		return nil, err
+	}
+	for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
+		param, err := p.parseParam()
+		if err != nil {
+			return nil, err
+		}
+		cls.CtorParams = append(cls.CtorParams, *param)
+		if p.peek().Kind == TComma {
+			p.next()
+		}
+	}
+	if _, err := p.expect(TRParen); err != nil {
+		return nil, err
+	}
+
+	// Optional implements
+	if p.peek().Kind == TImplements {
+		p.next()
+		for {
+			imp, err := p.expect(TIdent)
+			if err != nil {
+				return nil, err
+			}
+			cls.Implements = append(cls.Implements, imp.Text)
+			if p.peek().Kind == TComma {
+				p.next()
+			} else {
+				break
+			}
+		}
+	}
+
+	if _, err := p.expect(TLBrace); err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+
+	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
+		if p.peek().Kind == TWhy {
+			why, err := p.parseWhy()
+			if err != nil {
+				return nil, err
+			}
+			cls.Why = why
+		} else if p.peek().Kind == TSource {
+			src, err := p.parseSource()
+			if err != nil {
+				return nil, err
+			}
+			cls.Source = src
+		} else if p.peek().Kind == TFunc {
+			fn, err := p.parseFunc()
+			if err != nil {
+				return nil, err
+			}
+			cls.Methods = append(cls.Methods, *fn)
+		} else {
+			// Must be a field
+			field, err := p.parseField()
+			if err != nil {
+				return nil, err
+			}
+			cls.Fields = append(cls.Fields, *field)
+		}
+		p.skipNewlines()
+	}
+
+	end, err := p.expect(TRBrace)
+	if err != nil {
+		return nil, err
+	}
+	cls.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End}
+	return cls, nil
+}
+
+// parseFunc parses a function/method declaration with annotations.
+func (p *Parser) parseFunc() (*ast.FuncDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'func'
+	name, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	fn := &ast.FuncDecl{Name: name.Text}
+
+	// Parameters
+	if _, err := p.expect(TLParen); err != nil {
+		return nil, err
+	}
+	for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
+		param, err := p.parseParam()
+		if err != nil {
+			return nil, err
+		}
+		fn.Params = append(fn.Params, *param)
+		if p.peek().Kind == TComma {
+			p.next()
+		}
+	}
+	if _, err := p.expect(TRParen); err != nil {
+		return nil, err
+	}
+
+	// Optional return type
+	if p.peek().Kind == TArrow {
+		p.next()
+		ret, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, err
+		}
+		fn.ReturnType = ret
+	}
+
+	// Optional where clause
+	p.skipNewlines()
+	for p.peek().Kind == TWhere {
+		p.next()
+		for {
+			wc, err := p.parseWhereClause()
+			if err != nil {
+				return nil, err
+			}
+			fn.Where = append(fn.Where, *wc)
+			if p.peek().Kind == TComma {
+				p.next()
+			} else {
+				break
+			}
+		}
+		p.skipNewlines()
+	}
+
+	// Annotations
+	fn.Annotations = p.parseAnnotations()
+
+	fn.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End}
+	return fn, nil
+}
+
+func (p *Parser) parseWhereClause() (*ast.WhereClause, error) {
+	start := p.peek().Span.Start
+	variable, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TColon); err != nil {
+		return nil, err
+	}
+	constraint, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	return &ast.WhereClause{
+		Variable:   variable.Text,
+		Constraint: constraint.Text,
+		Span:       ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: constraint.Span.End},
+	}, nil
+}
+
+func (p *Parser) parseAnnotations() ast.Annotations {
+	var ann ast.Annotations
+	for {
+		tok := p.peek()
+		switch tok.Kind {
+		case TWhy:
+			why, _ := p.parseWhy()
+			ann.Why = why
+		case TConcurrent:
+			p.next()
+			if _, err := p.expect(TColon); err == nil {
+				val := p.next()
+				b := val.Text == "true"
+				ann.Concurrent = &b
+			}
+		case TRequiresLock:
+			p.next()
+			if _, err := p.expect(TLParen); err == nil {
+				name, _ := p.expect(TIdent)
+				ann.RequiresLock = append(ann.RequiresLock, name.Text)
+				p.expect(TRParen)
+			}
+		case TExcludesLock:
+			p.next()
+			if _, err := p.expect(TLParen); err == nil {
+				name, _ := p.expect(TIdent)
+				ann.ExcludesLock = append(ann.ExcludesLock, name.Text)
+				p.expect(TRParen)
+			}
+		case TRaises:
+			p.next()
+			if _, err := p.expect(TColon); err == nil {
+				for {
+					name, err := p.expect(TIdent)
+					if err != nil {
+						break
+					}
+					ann.Raises = append(ann.Raises, name.Text)
+					if p.peek().Kind == TComma {
+						p.next()
+					} else {
+						break
+					}
+				}
+			}
+		case TRequires:
+			p.next()
+			if _, err := p.expect(TColon); err == nil {
+				ann.Requires = append(ann.Requires, p.parseExprText())
+			}
+		case TEnsures:
+			p.next()
+			if _, err := p.expect(TColon); err == nil {
+				ann.Ensures = append(ann.Ensures, p.parseExprText())
+			}
+		case TSpawns:
+			p.next()
+			if _, err := p.expect(TColon); err == nil {
+				// spawns: has no value — it's just a marker
+			}
+			ann.Spawns = true
+		case TPure:
+			p.next()
+			if _, err := p.expect(TColon); err == nil {
+				// pure: has no value — it's just a marker
+			}
+			ann.Pure = true
+		default:
+			return ann
+		}
+		p.skipNewlines()
+	}
+}
+
+// parseExprText reads tokens until newline/EOF and returns them as text.
+// Used for requires:/ensures: expressions.
+func (p *Parser) parseExprText() string {
+	var parts []string
+	for p.peek().Kind != TNewline && p.peek().Kind != TEOF {
+		tok := p.next()
+		parts = append(parts, tok.Text)
+	}
+	return strings.Join(parts, " ")
+}
+
+// parseField parses: name: Type [guarded_by(lock)] [// why: "..."]
+func (p *Parser) parseField() (*ast.Field, error) {
+	start := p.peek().Span.Start
+	name, err := p.expectIdentLike()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TColon); err != nil {
+		return nil, err
+	}
+	typ, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	field := &ast.Field{
+		Name: name.Text,
+		Type: *typ,
+		Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: typ.Span.End},
+	}
+
+	// Optional guarded_by
+	if p.peek().Kind == TGuardedBy {
+		p.next()
+		if _, err := p.expect(TLParen); err != nil {
+			return nil, err
+		}
+		lock, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		field.GuardedBy = lock.Text
+		if _, err := p.expect(TRParen); err != nil {
+			return nil, err
+		}
+	}
+
+	return field, nil
+}
+
+// parseParam parses a function parameter: [mut] name: Type or [mut] self
+func (p *Parser) parseParam() (*ast.Param, error) {
+	start := p.peek().Span.Start
+	isMut := false
+	if p.peek().Kind == TMut {
+		isMut = true
+		p.next()
+	}
+
+	// Check for self first
+	if p.peek().Kind == TSelf {
+		tok := p.next()
+		return &ast.Param{
+			Name:   "self",
+			IsMut:  isMut,
+			IsSelf: true,
+			Span:   ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: tok.Span.End},
+		}, nil
+	}
+
+	name, err := p.expectIdentLike()
+	if err != nil {
+		return nil, err
+	}
+
+	if name.Text == "self" {
+		return &ast.Param{
+			Name:   "self",
+			IsMut:  isMut,
+			IsSelf: true,
+			Span:   ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: name.Span.End},
+		}, nil
+	}
+
+	if _, err := p.expect(TColon); err != nil {
+		return nil, err
+	}
+	typ, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Param{
+		Name:  name.Text,
+		Type:  *typ,
+		IsMut: isMut,
+		Span:  ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: typ.Span.End},
+	}, nil
+}
+
+// parseTypeExpr parses a type expression.
+func (p *Parser) parseTypeExpr() (*ast.TypeExpr, error) {
+	start := p.peek().Span.Start
+	left, err := p.parseBaseType()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check for optional (?)
+	if p.peek().Kind == TQuestion {
+		p.next()
+		return &ast.TypeExpr{
+			Kind: ast.TypeOptional,
+			Data: ast.OptionalType{Inner: *left},
+			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End},
+		}, nil
+	}
+
+	// Check for union (|)
+	if p.peek().Kind == TPipe {
+		variants := []ast.TypeExpr{*left}
+		for p.peek().Kind == TPipe {
+			p.next()
+			right, err := p.parseBaseType()
+			if err != nil {
+				return nil, err
+			}
+			variants = append(variants, *right)
+		}
+		return &ast.TypeExpr{
+			Kind: ast.TypeUnion,
+			Data: ast.UnionType{Variants: variants},
+			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End},
+		}, nil
+	}
+
+	// Check for function type (->)
+	if p.peek().Kind == TArrow {
+		p.next()
+		ret, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.TypeExpr{
+			Kind: ast.TypeFunc,
+			Data: ast.FuncType{Params: []ast.TypeExpr{*left}, Return: *ret},
+			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: ret.Span.End},
+		}, nil
+	}
+
+	return left, nil
+}
+
+func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
+	start := p.peek().Span.Start
+	tok := p.peek()
+
+	switch tok.Kind {
+	case TLBracket:
+		// [T] — sequence
+		p.next()
+		elem, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, err
+		}
+		end, err := p.expect(TRBracket)
+		if err != nil {
+			return nil, err
+		}
+		return &ast.TypeExpr{
+			Kind: ast.TypeSequence,
+			Data: ast.SequenceType{Elem: *elem},
+			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End},
+		}, nil
+
+	case TLParen:
+		// Tuple: (T, U) or (x: T, y: U)
+		p.next()
+		var fields []ast.TupleField
+		for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
+			field, err := p.parseTupleField()
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, *field)
+			if p.peek().Kind == TComma {
+				p.next()
+			}
+		}
+		end, err := p.expect(TRParen)
+		if err != nil {
+			return nil, err
+		}
+		return &ast.TypeExpr{
+			Kind: ast.TypeTuple,
+			Data: ast.TupleType{Fields: fields},
+			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End},
+		}, nil
+
+	case TIdent:
+		name := p.next()
+
+		// Special case: map[K]V
+		if name.Text == "map" && p.peek().Kind == TLBracket {
+			p.next() // [
+			key, err := p.parseTypeExpr()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := p.expect(TRBracket); err != nil {
+				return nil, err
+			}
+			val, err := p.parseTypeExpr()
+			if err != nil {
+				return nil, err
+			}
+			return &ast.TypeExpr{
+				Kind: ast.TypeMap,
+				Data: ast.MapType{Key: *key, Value: *val},
+				Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: val.Span.End},
+			}, nil
+		}
+
+		// Special case: channel<T>
+		if name.Text == "channel" && p.peek().Kind == TLt {
+			p.next() // <
+			elem, err := p.parseTypeExpr()
+			if err != nil {
+				return nil, err
+			}
+			end, err := p.expect(TGt)
+			if err != nil {
+				return nil, err
+			}
+			return &ast.TypeExpr{
+				Kind: ast.TypeChannel,
+				Data: ast.ChannelType{Elem: *elem},
+				Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End},
+			}, nil
+		}
+
+		// Special case: lock
+		if name.Text == "lock" {
+			return &ast.TypeExpr{
+				Kind: ast.TypeLock,
+				Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: name.Span.End},
+			}, nil
+		}
+
+		// Special case: unit
+		if name.Text == "unit" {
+			return &ast.TypeExpr{
+				Kind: ast.TypeUnit,
+				Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: name.Span.End},
+			}, nil
+		}
+
+		// Named type with optional type args: Foo<T, U>
+		// Also handle dotted names: database.ToolUse
+		typeName := name.Text
+		if p.peek().Kind == TDot {
+			p.next()
+			sub, err := p.expect(TIdent)
+			if err != nil {
+				return nil, err
+			}
+			typeName = typeName + "." + sub.Text
+		}
+
+		var args []ast.TypeExpr
+		if p.peek().Kind == TLt {
+			p.next()
+			for p.peek().Kind != TGt && p.peek().Kind != TEOF {
+				arg, err := p.parseTypeExpr()
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, *arg)
+				if p.peek().Kind == TComma {
+					p.next()
+				}
+			}
+			if _, err := p.expect(TGt); err != nil {
+				return nil, err
+			}
+		}
+
+		return &ast.TypeExpr{
+			Kind: ast.TypeNamed,
+			Data: ast.NamedType{Name: typeName, Args: args},
+			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End},
+		}, nil
+
+	default:
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected type, got %s (%q)", tokenNames[tok.Kind], tok.Text),
+			Span:    tok.Span,
+		}
+	}
+}
+
+// parseTypeParams parses: <T> or <T: Comparable> or <T, U> etc.
+func (p *Parser) parseTypeParams() ([]ast.TypeParam, error) {
+	if _, err := p.expect(TLt); err != nil {
+		return nil, err
+	}
+	var params []ast.TypeParam
+	for p.peek().Kind != TGt && p.peek().Kind != TEOF {
+		start := p.peek().Span.Start
+		name, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		tp := ast.TypeParam{Name: name.Text}
+		if p.peek().Kind == TColon {
+			p.next()
+			constraint, err := p.expect(TIdent)
+			if err != nil {
+				return nil, err
+			}
+			tp.Constraint = constraint.Text
+		}
+		tp.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End}
+		params = append(params, tp)
+		if p.peek().Kind == TComma {
+			p.next()
+		}
+	}
+	if _, err := p.expect(TGt); err != nil {
+		return nil, err
+	}
+	return params, nil
+}
+
+// parseRelation parses: relation [hint] Parent[:label] owns|refs [Child[:label]]
+func (p *Parser) parseRelation() (*ast.RelationDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'relation'
+
+	rel := &ast.RelationDecl{}
+
+	// First token could be hint or parent name
+	// If it's a known hint (DoublyLinked, ArrayList, Hashed) or if next-next is a known relation keyword
+	first := p.next()
+
+	// Look ahead: if the next meaningful token is owns/refs, first is parent
+	// Otherwise first is hint and next is parent
+	if p.peek().Kind == TOwns || p.peek().Kind == TRefs || p.peek().Kind == TColon {
+		// first is parent
+		rel.Parent = p.parseRelationSideFrom(first)
+	} else {
+		// first is hint
+		rel.Hint = first.Text
+		parent := p.next()
+		rel.Parent = p.parseRelationSideFrom(parent)
+	}
+
+	// owns or refs
+	kindTok := p.next()
+	switch kindTok.Kind {
+	case TOwns:
+		rel.Kind = ast.Owns
+	case TRefs:
+		rel.Kind = ast.Refs
+	default:
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected 'owns' or 'refs', got %s", tokenNames[kindTok.Kind]),
+			Span:    kindTok.Span,
+		}
+	}
+
+	// Child — may be [Child] for one-to-many
+	if p.peek().Kind == TLBracket {
+		p.next()
+		rel.IsMany = true
+		child := p.next()
+		rel.Child = p.parseRelationSideFrom(child)
+		if _, err := p.expect(TRBracket); err != nil {
+			return nil, err
+		}
+	} else {
+		child := p.next()
+		rel.Child = p.parseRelationSideFrom(child)
+	}
+
+	rel.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End}
+	return rel, nil
+}
+
+func (p *Parser) parseRelationSideFrom(nameTok Token) ast.RelationSide {
+	side := ast.RelationSide{TypeName: nameTok.Text}
+	// Check for :label
+	if p.peek().Kind == TColon {
+		p.next()
+		if p.peek().Kind == TIdent {
+			label := p.next()
+			side.Label = label.Text
+		}
+	}
+	return side
+}
+
+// parseSource parses: source: ["file1.go", "file2.go"]
+func (p *Parser) parseSource() ([]string, error) {
+	p.next() // consume 'source'
+	if _, err := p.expect(TColon); err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TLBracket); err != nil {
+		return nil, err
+	}
+	var files []string
+	for p.peek().Kind != TRBracket && p.peek().Kind != TEOF {
+		f, err := p.expect(TStringLit)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f.Text)
+		if p.peek().Kind == TComma {
+			p.next()
+		}
+	}
+	if _, err := p.expect(TRBracket); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+// parseFake parses: fake: "file.go"
+func (p *Parser) parseFake() (string, error) {
+	p.next() // consume 'fake'
+	if _, err := p.expect(TColon); err != nil {
+		return "", err
+	}
+	tok, err := p.expect(TStringLit)
+	if err != nil {
+		return "", err
+	}
+	return tok.Text, nil
+}

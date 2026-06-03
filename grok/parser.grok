@@ -1,0 +1,280 @@
+// parser.grok — the Grok parser's own understanding
+
+grok Parser {
+  why: "PEG parser for .grok and .gk files. Produces a typed AST."
+
+  doc "Architecture": """
+    Two-phase parsing: lexer produces tokens, parser consumes tokens
+    via PEG combinators. The grammar is defined declaratively as PEG
+    rules. .grok files use the declaration-only subset; .gk files
+    extend with function bodies and control flow.
+  """
+
+  doc "Key Decisions": """
+    PEG over LALR: no ambiguity, ordered choice, composable.
+    Single AST for both .grok and .gk: .grok is a strict subset.
+    Positions tracked on every node for error reporting.
+  """
+
+  // ---- Source positions ----
+
+  struct Pos {
+    file:   string
+    line:   u32
+    column: u32
+  }
+
+  struct Span {
+    start: Pos
+    end:   Pos
+  }
+
+  // ---- Token layer ----
+
+  enum TokenKind {
+    // Keywords
+    Grok Func Class Struct Enum Interface Relation Import
+    Implements Where Owns Refs Mut Self
+    // Literals
+    Ident IntLit FloatLit StringLit
+    // Punctuation
+    LParen RParen LBrace RBrace LBracket RBracket
+    Comma Colon ColonColon Dot Arrow FatArrow Pipe Question
+    Lt Gt
+    // Annotations
+    Why Doc Invariant Requires Ensures Raises
+    Concurrent RequiresLock ExcludesLock GuardedBy
+    Spawns Pure Source Fake VerifiedAt
+    // Special
+    Newline EOF
+  }
+
+  struct Token {
+    kind: TokenKind
+    text: string
+    span: Span
+  }
+
+  class Lexer(source: string, filename: string) {
+    why: "Converts source text into a stream of tokens."
+
+    pos:    u32
+    line:   u32
+    column: u32
+
+    func next(mut self) -> Token
+    func peek(self) -> Token
+  }
+
+  // ---- AST nodes ----
+
+  struct TypeExpr {
+    why: "All type expressions: named, optional, union, sequence, map, tuple, function, channel."
+    span: Span
+    kind: TypeExprKind
+  }
+
+  enum TypeExprKind {
+    Named(name: string, args: [TypeExpr])           // T, Stack<T>, map[K]V
+    Optional(inner: TypeExpr)                        // T?
+    Union(variants: [TypeExpr])                      // T | U
+    Sequence(elem: TypeExpr)                         // [T]
+    MapType(key: TypeExpr, value: TypeExpr)           // map[K]V
+    Tuple(fields: [TupleField])                      // (T, U) or (x: T, y: U)
+    FuncType(params: [TypeExpr], ret: TypeExpr)      // T -> U, (T, U) -> V
+    Channel(elem: TypeExpr)                          // channel<T>
+    Lock                                             // lock
+    Unit                                             // unit
+  }
+
+  struct TupleField {
+    name: string?    // nil for positional
+    type: TypeExpr
+  }
+
+  struct Param {
+    name:    string
+    type:    TypeExpr
+    is_mut:  bool      // true for `mut self`
+    is_self: bool
+    span:    Span
+  }
+
+  struct WhereClause {
+    variable:   string      // T
+    constraint: string      // Integer, Comparable, etc.
+    span:       Span
+  }
+
+  struct FuncDecl {
+    name:        string
+    params:      [Param]
+    return_type: TypeExpr?
+    where:       [WhereClause]
+    annotations: Annotations
+    body:        Block?       // nil in .grok files, present in .gk
+    span:        Span
+  }
+
+  struct Annotations {
+    why:           string?
+    concurrent:    bool?
+    requires_lock: [string]
+    excludes_lock: [string]
+    raises:        [string]
+    requires:      [string]     // precondition expressions
+    ensures:       [string]     // postcondition expressions
+    spawns:        bool
+    pure:          bool
+  }
+
+  struct Field {
+    name:       string
+    type:       TypeExpr
+    guarded_by: string?
+    why:        string?
+    span:       Span
+  }
+
+  struct ClassDecl {
+    name:           string
+    type_params:    [TypeParam]
+    ctor_params:    [Param]
+    implements:     [string]
+    fields:         [Field]
+    methods:        [FuncDecl]
+    why:            string?
+    source:         [string]?
+    span:           Span
+  }
+
+  struct TypeParam {
+    name:       string      // T
+    constraint: string?     // Integer, Comparable, etc.
+    span:       Span
+  }
+
+  struct StructDecl {
+    name:        string
+    type_params: [TypeParam]
+    fields:      [Field]
+    why:         string?
+    span:        Span
+  }
+
+  struct EnumVariant {
+    name:   string
+    fields: [TupleField]
+    span:   Span
+  }
+
+  struct EnumDecl {
+    name:        string
+    type_params: [TypeParam]
+    variants:    [EnumVariant]
+    why:         string?
+    span:        Span
+  }
+
+  struct InterfaceDecl {
+    name:        string
+    type_params: [TypeParam]
+    implements:  [string]          // composed interfaces
+    methods:     [FuncDecl]
+    why:         string?
+    span:        Span
+  }
+
+  enum RelationKind { Owns Refs }
+
+  struct RelationSide {
+    type_name: string
+    label:     string?
+  }
+
+  struct RelationDecl {
+    hint:     string?           // DoublyLinked, ArrayList, Hashed
+    parent:   RelationSide
+    kind:     RelationKind
+    child:    RelationSide
+    is_many:  bool              // [Child] vs Child
+    span:     Span
+  }
+
+  struct DocBlock {
+    section: string             // "Architecture", "Key Decisions", etc.
+    content: string
+    span:    Span
+  }
+
+  struct InvariantDecl {
+    claim:       string
+    verified_at: string?
+    span:        Span
+  }
+
+  struct ImportDecl {
+    alias:  string
+    path:   string
+    span:   Span
+  }
+
+  struct GrokBlock {
+    name:       string
+    why:        string?
+    imports:    [ImportDecl]
+    docs:       [DocBlock]
+    invariants: [InvariantDecl]
+    types:      [StructDecl]
+    enums:      [EnumDecl]
+    interfaces: [InterfaceDecl]
+    classes:    [ClassDecl]
+    functions:  [FuncDecl]
+    relations:  [RelationDecl]
+    source:     [string]?
+    fake:       string?
+    span:       Span
+  }
+
+  struct File {
+    why: "Top-level AST node. A file contains one or more grok blocks plus top-level imports."
+    filename: string
+    blocks:   [GrokBlock]
+    span:     Span
+  }
+
+  // ---- Parser ----
+
+  class Parser(lexer: Lexer) {
+    why: "PEG parser. Consumes tokens, produces AST."
+
+    func parse(mut self) -> (File, error)
+      raises: ParseError
+
+    func parse_grok_block(mut self) -> (GrokBlock, error)
+    func parse_class(mut self) -> (ClassDecl, error)
+    func parse_struct(mut self) -> (StructDecl, error)
+    func parse_enum(mut self) -> (EnumDecl, error)
+    func parse_interface(mut self) -> (InterfaceDecl, error)
+    func parse_func(mut self) -> (FuncDecl, error)
+    func parse_relation(mut self) -> (RelationDecl, error)
+    func parse_type_expr(mut self) -> (TypeExpr, error)
+    func parse_annotations(mut self) -> Annotations
+  }
+
+  // ---- Error reporting ----
+
+  class ParseError(message: string, span: Span) implements error {
+    func message(self) -> string
+  }
+
+  // ---- Public API ----
+
+  func parse_file(source: string, filename: string) -> (File, error)
+    why: "Entry point. Parses a .grok or .gk file into an AST."
+
+  func parse_string(source: string) -> (File, error)
+    why: "Convenience. Uses '<string>' as filename."
+
+  source: ["pkg/parser/lexer.go", "pkg/parser/parser.go", "pkg/parser/ast.go"]
+}
