@@ -525,14 +525,46 @@ func typesMatch(grokStr, goStr string) bool {
 	if grokStr == goStr {
 		return true
 	}
-	// Strip Go package prefix: "ast.Span" → "Span" for comparison
+	// Strip Go package prefix: "ast.Span" → "Span", "*ast.File" → "*File"
 	// since .grok files use unqualified type names
-	if idx := strings.LastIndex(goStr, "."); idx >= 0 {
-		if grokStr == goStr[idx+1:] {
-			return true
-		}
+	stripped := stripPackagePrefix(goStr)
+	if grokStr == stripped {
+		return true
 	}
 	return false
+}
+
+// stripPackagePrefix removes Go package qualifiers from a type string.
+// Handles nested cases like "*ast.File", "[]ast.Node", "map[string]*ast.File".
+func stripPackagePrefix(goType string) string {
+	// Handle pointer prefix
+	if strings.HasPrefix(goType, "*") {
+		return "*" + stripPackagePrefix(goType[1:])
+	}
+	// Handle slice prefix
+	if strings.HasPrefix(goType, "[]") {
+		return "[]" + stripPackagePrefix(goType[2:])
+	}
+	// Handle map
+	if strings.HasPrefix(goType, "map[") {
+		// Find the ] that closes the key
+		depth := 1
+		i := 4
+		for i < len(goType) && depth > 0 {
+			if goType[i] == '[' {
+				depth++
+			} else if goType[i] == ']' {
+				depth--
+			}
+			i++
+		}
+		return "map[" + stripPackagePrefix(goType[4:i-1]) + "]" + stripPackagePrefix(goType[i:])
+	}
+	// Strip package prefix from qualified name: "ast.File" → "File"
+	if idx := strings.LastIndex(goType, "."); idx >= 0 {
+		return goType[idx+1:]
+	}
+	return goType
 }
 
 // ---- Verification helpers ----

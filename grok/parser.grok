@@ -56,14 +56,10 @@ grok Parser {
   }
 
   class Lexer(source: string, filename: string) {
-    why: "Converts source text into a stream of tokens."
+    why: "Converts source text into a stream of tokens. Used by Parser."
 
-    pos:    int
-    line:   int
-    column: int
-
-    func next(mut self) -> Token
-    func peek(self) -> Token
+    func Next(mut self) -> Token
+    func Peek(self) -> Token
   }
 
   // ---- AST nodes ----
@@ -95,8 +91,8 @@ grok Parser {
   struct Param {
     name:    string
     type:    TypeExpr
-    is_mut:  bool      // true for `mut self`
-    is_self: bool
+    IsMut:  bool      // true for `mut self`
+    IsSelf: bool
     span:    Span
   }
 
@@ -109,7 +105,7 @@ grok Parser {
   struct FuncDecl {
     name:        string
     params:      [Param]
-    return_type: TypeExpr?
+    ReturnType: TypeExpr?
     where:       [WhereClause]
     annotations: Annotations
     // body: Block?       // future: present in .gk files, not yet in Go AST
@@ -119,8 +115,8 @@ grok Parser {
   struct Annotations {
     why:           string
     concurrent:    bool?
-    requires_lock: [string]
-    excludes_lock: [string]
+    RequiresLock: [string]
+    ExcludesLock: [string]
     raises:        [string]
     requires:      [string]     // precondition expressions
     ensures:       [string]     // postcondition expressions
@@ -131,15 +127,15 @@ grok Parser {
   struct Field {
     name:       string
     type:       TypeExpr
-    guarded_by: string
+    GuardedBy: string
     why:        string
     span:       Span
   }
 
   struct ClassDecl {
     name:           string
-    type_params:    [TypeParam]
-    ctor_params:    [Param]
+    TypeParams:    [TypeParam]
+    CtorParams:    [Param]
     implements:     [string]
     fields:         [Field]
     methods:        [FuncDecl]
@@ -156,7 +152,7 @@ grok Parser {
 
   struct StructDecl {
     name:        string
-    type_params: [TypeParam]
+    TypeParams: [TypeParam]
     fields:      [Field]
     why:         string
     span:        Span
@@ -170,7 +166,7 @@ grok Parser {
 
   struct EnumDecl {
     name:        string
-    type_params: [TypeParam]
+    TypeParams: [TypeParam]
     variants:    [EnumVariant]
     why:         string
     span:        Span
@@ -178,7 +174,7 @@ grok Parser {
 
   struct InterfaceDecl {
     name:        string
-    type_params: [TypeParam]
+    TypeParams: [TypeParam]
     implements:  [string]          // composed interfaces
     methods:     [FuncDecl]
     why:         string
@@ -188,7 +184,7 @@ grok Parser {
   enum RelationKind { Owns Refs }
 
   struct RelationSide {
-    type_name: string
+    TypeName: string
     label:     string
   }
 
@@ -197,7 +193,7 @@ grok Parser {
     parent:   RelationSide
     kind:     RelationKind
     child:    RelationSide
-    is_many:  bool              // [Child] vs Child
+    IsMany:  bool              // [Child] vs Child
     span:     Span
   }
 
@@ -209,7 +205,7 @@ grok Parser {
 
   struct InvariantDecl {
     claim:       string
-    verified_at: string
+    VerifiedAt: string
     span:        Span
   }
 
@@ -244,36 +240,24 @@ grok Parser {
   }
 
   // ---- Parser ----
-
-  class Parser(lexer: Lexer) {
-    why: "PEG parser. Consumes tokens, produces AST."
-
-    func parse_file(mut self) -> (File, error)
-      raises: ParseError
-
-    func parse_grok_block(mut self) -> (GrokBlock, error)
-    func parse_class(mut self) -> (ClassDecl, error)
-    func parse_struct(mut self) -> (StructDecl, error)
-    func parse_enum(mut self) -> (EnumDecl, error)
-    func parse_interface(mut self) -> (InterfaceDecl, error)
-    func parse_func(mut self) -> (FuncDecl, error)
-    func parse_relation(mut self) -> (RelationDecl, error)
-    func parse_type_expr(mut self) -> (TypeExpr, error)
-    func parse_annotations(mut self) -> Annotations
-  }
-
   // ---- Error reporting ----
 
-  class ParseError(message: string, span: Span) implements error {
-    func error(self) -> string
+  // ---- Parser ----
+
+  class Parser(lex: Lexer) {
+    why: "PEG parser. Consumes tokens from Lexer, produces AST. Internal methods are unexported."
+  }
+
+  class ParseError(Message: string, Span: Span) implements error {
+    func Error(self) -> string
   }
 
   // ---- Public API ----
 
-  func parse_file(source: string, filename: string) -> (File, error)
+  func ParseFile(source: string, filename: string) -> (File?, error)
     why: "Entry point. Parses a .grok or .gk file into an AST."
 
-  func parse_string(source: string) -> (File, error)
+  func ParseString(source: string) -> (File?, error)
     why: "Convenience. Uses '<string>' as filename."
 
   source: ["pkg/parser/lexer.go", "pkg/parser/parser.go", "pkg/ast/ast.go"]
