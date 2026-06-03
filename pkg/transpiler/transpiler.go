@@ -479,9 +479,13 @@ func (t *Transpiler) transpileMatch(stmt *ast.Stmt) {
 	t.writef(" {\n")
 	for _, arm := range matchStmt.Arms {
 		t.writeIndent()
-		t.writef("case ")
-		t.transpilePattern(&arm.Pattern)
-		t.writef(":\n")
+		if arm.Pattern.Kind == ast.PatWildcard {
+			t.writef("default:\n")
+		} else {
+			t.writef("case ")
+			t.transpilePattern(&arm.Pattern)
+			t.writef(":\n")
+		}
 		t.indent++
 		t.transpileStmts(arm.Body.Stmts)
 		t.indent--
@@ -637,9 +641,13 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		t.writef("; _m {\n")
 		for _, arm := range m.Arms {
 			t.writeIndent()
-			t.writef("case ")
-			t.transpilePattern(&arm.Pattern)
-			t.writef(":\n")
+			if arm.Pattern.Kind == ast.PatWildcard {
+				t.writef("default:\n")
+			} else {
+				t.writef("case ")
+				t.transpilePattern(&arm.Pattern)
+				t.writef(":\n")
+			}
 			t.indent++
 			// Last statement in arm body is the result — emit as return
 			if len(arm.Body.Stmts) > 0 {
