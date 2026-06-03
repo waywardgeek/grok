@@ -243,5 +243,5 @@ grok AST {
     span:     Span
   }
 
-  source: ["pkg/ast/ast.go"]
+  source: ["ast.go"]
 }

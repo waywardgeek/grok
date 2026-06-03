@@ -81,7 +81,7 @@ func (r *Result) ErrorCount() int {
 // Verify parses a .grok file and compares it against the Go source files
 // referenced in source: annotations. baseDir is the project root used to
 // resolve relative source paths.
-func Verify(grokPath, baseDir string) (*Result, error) {
+func Verify(grokPath string) (*Result, error) {
 	src, err := os.ReadFile(grokPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", grokPath, err)
@@ -93,6 +93,8 @@ func Verify(grokPath, baseDir string) (*Result, error) {
 	}
 
 	result := &Result{}
+
+	grokDir := filepath.Dir(grokPath)
 
 	for _, block := range grokFile.Blocks {
 		if len(block.Source) == 0 {
@@ -109,7 +111,8 @@ func Verify(grokPath, baseDir string) (*Result, error) {
 		}
 
 		for _, srcPath := range block.Source {
-			goFullPath := filepath.Join(baseDir, srcPath)
+			// Resolve source paths relative to the .grok file's directory
+			goFullPath := filepath.Join(grokDir, srcPath)
 			info, err := os.Stat(goFullPath)
 			if err != nil {
 				if os.IsNotExist(err) {

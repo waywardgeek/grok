@@ -260,5 +260,5 @@ grok Parser {
   func ParseString(source: string) -> (File?, error)
     why: "Convenience. Uses '<string>' as filename."
 
-  source: ["pkg/parser/lexer.go", "pkg/parser/parser.go", "pkg/ast/ast.go"]
+  source: ["lexer.go", "parser.go", "../ast/ast.go"]
 }

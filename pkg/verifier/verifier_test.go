@@ -28,8 +28,8 @@ func findProjectRoot(t *testing.T) string {
 func TestVerifyParserGrok(t *testing.T) {
 	dir := findProjectRoot(t)
 
-	grokFile := filepath.Join(dir, "grok", "parser.grok")
-	result, err := Verify(grokFile, dir)
+	grokFile := filepath.Join(dir, "pkg", "parser", "parser.grok")
+	result, err := Verify(grokFile)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -48,8 +48,8 @@ func TestVerifyParserGrok(t *testing.T) {
 
 func TestVerifyAstGrok(t *testing.T) {
 	dir := findProjectRoot(t)
-	grokFile := filepath.Join(dir, "grok", "ast.grok")
-	result, err := Verify(grokFile, dir)
+	grokFile := filepath.Join(dir, "pkg", "ast", "ast.grok")
+	result, err := Verify(grokFile)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -100,7 +100,7 @@ func NewWidget(name string, count int) *Widget {
 
   func new_widget(name: string) -> Widget
 
-  source: ["` + goFile + `"]
+  source: ["widget.go"]
 }
 `
 	grokFile := filepath.Join(dir, "example.grok")
@@ -108,7 +108,7 @@ func NewWidget(name string, count int) *Widget {
 		t.Fatal(err)
 	}
 
-	result, err := Verify(grokFile, "/")
+	result, err := Verify(grokFile)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}

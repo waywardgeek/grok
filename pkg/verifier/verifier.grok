@@ -40,8 +40,8 @@ grok Verifier {
 
   // ---- Public API ----
 
-  func Verify(grokPath: string, baseDir: string) -> (Result?, error)
+  func Verify(grokPath: string) -> (Result?, error)
     why: "Entry point. Parses .grok, finds source files, compares structurally."
 
-  source: ["pkg/verifier/verifier.go"]
+  source: ["verifier.go"]
 }
