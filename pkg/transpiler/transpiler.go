@@ -668,7 +668,23 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		t.writef(" {\n")
 		t.indent++
 		if lam.Body != nil {
-			t.transpileStmts(lam.Body.Stmts)
+			stmts := lam.Body.Stmts
+			// If lambda has a return type and last stmt is an expr stmt,
+			// emit it as a return statement
+			if lam.ReturnType != nil && len(stmts) > 0 {
+				last := stmts[len(stmts)-1]
+				if last.Kind == ast.StmtExpr {
+					t.transpileStmts(stmts[:len(stmts)-1])
+					t.writeIndent()
+					t.writef("return ")
+					t.transpileExpr(&last.Data.(*ast.ExprStmt).Expr)
+					t.writef("\n")
+				} else {
+					t.transpileStmts(stmts)
+				}
+			} else {
+				t.transpileStmts(stmts)
+			}
 		}
 		t.indent--
 		t.writeIndent()

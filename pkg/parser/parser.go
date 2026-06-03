@@ -926,15 +926,26 @@ func (p *Parser) parseTypeExpr() (*ast.TypeExpr, error) {
 	}
 
 	// Check for function type (->)
+	// If left is a tuple like (T, U), unwrap fields as params: (T, U) -> V
+	// If left is a single type like T, treat as single param: T -> U
 	if p.peek().Kind == TArrow {
 		p.next()
 		ret, err := p.parseTypeExpr()
 		if err != nil {
 			return nil, err
 		}
+		var params []ast.TypeExpr
+		if left.Kind == ast.TypeTuple {
+			tt := left.Data.(ast.TupleType)
+			for _, f := range tt.Fields {
+				params = append(params, f.Type)
+			}
+		} else {
+			params = []ast.TypeExpr{*left}
+		}
 		return &ast.TypeExpr{
 			Kind: ast.TypeFunc,
-			Data: ast.FuncType{Params: []ast.TypeExpr{*left}, Return: *ret},
+			Data: ast.FuncType{Params: params, Return: *ret},
 			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: ret.Span.End},
 		}, nil
 	}

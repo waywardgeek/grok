@@ -76,7 +76,9 @@ grok Transpiler {
       available, else `map[any]any{...}`
     - Tuple literals: emit comma-separated (works for multi-return)
     - Struct literals: `TypeName{Field: val}` with exportName
-    - Lambdas: `func(params) retType { body }`
+    - Lambdas: `func(params) retType { body }`. When a return type is present
+      and the last statement is an expression, it is implicitly emitted as a
+      `return` statement (expression-body lambdas).
     - Match-as-expression: IIFE pattern `func() T { switch _m := val; _m { ... } }()`
       Return type is inferred from checker's ResolvedType on the match expr.
       Wildcard arms emit `default:`; fallback default uses typed zero value.

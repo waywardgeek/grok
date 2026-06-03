@@ -108,17 +108,20 @@ grok Parser {
   doc "Recursive Type Parsing": """
     parseTypeExpr handles Grok's full recursive type system: sequences [T],
     tuples (T, U), maps map[K]V, channels channel<T>, optionals T?, unions A | B,
-    function types A -> B. Uses a "base type" approach to handle precedence:
-    parse base → check for ? suffix → check for | infix → check for -> infix.
+    function types T -> U and (T, U) -> V. Uses a "base type" approach to handle
+    precedence: parse base → check for ? suffix → check for | infix → check for
+    -> infix. When -> follows a tuple, the tuple fields are unwrapped as individual
+    function params (not a single tuple param).
   """
 
   doc "Technical Debt": """
     - Error recovery: currently fail-fast (first error). Synchronizing on next
       grok block would improve IDE/bulk-processing experience.
-    - Struct literal syntax: `Point{X: 3.0}` not yet supported in expression parser
     - Multi-line arrays: source: [...] must be single-line (parser limitation)
     - requires/ensures: capture raw text strings, not parsed expressions
     - For-loop index: no syntax for `for i, x in collection`
+    - Lambda param types: uses parseBaseType to avoid | ambiguity with union types,
+      so lambda params cannot have union types (use a type alias instead)
   """
 
   // ---- Token layer ----

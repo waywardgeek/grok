@@ -45,6 +45,16 @@ grok advanced {
         return total
     }
 
+    // Higher-order function with function type param
+    func Apply(f: (i32) -> i32, x: i32) -> i32 {
+        return f(x)
+    }
+
+    // Multi-param function type
+    func ApplyBinOp(f: (i32, i32) -> i32, a: i32, b: i32) -> i32 {
+        return f(a, b)
+    }
+
     func Main() {
         // Class usage
         let mut ctr = Counter{Count: 0}
@@ -62,5 +72,12 @@ grok advanced {
         let _ = SumList(nums)
         let scores = map[string]i32{"alice": 100, "bob": 95}
         let _ = scores
+
+        // Lambda / function type usage
+        let _ = Apply(Abs, 42)
+        let double = |x: i32| -> i32 { x * 2 }
+        let _ = Apply(double, 5)
+        let add = |a: i32, b: i32| -> i32 { a + b }
+        let _ = ApplyBinOp(add, 3, 4)
     }
 }

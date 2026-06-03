@@ -431,3 +431,59 @@ func TestEmptyStructLiteral(t *testing.T) {
 		t.Errorf("expected 0 fields, got %d", len(sl.Fields))
 	}
 }
+
+func TestLambdaExpr(t *testing.T) {
+	fn := parseFuncBody(t, `func test() {
+		let double = |x: i32| -> i32 { x * 2 }
+		let _ = double
+	}`)
+	if fn.Body == nil || len(fn.Body.Stmts) < 1 {
+		t.Fatal("expected at least 1 statement")
+	}
+}
+
+func TestLambdaMultiParam(t *testing.T) {
+	fn := parseFuncBody(t, `func test() {
+		let add = |a: i32, b: i32| -> i32 { a + b }
+		let _ = add
+	}`)
+	if fn.Body == nil || len(fn.Body.Stmts) < 1 {
+		t.Fatal("expected at least 1 statement")
+	}
+}
+
+func TestLambdaNoReturnType(t *testing.T) {
+	fn := parseFuncBody(t, `func test() {
+		let greet = |x: string| { let _ = x }
+		let _ = greet
+	}`)
+	if fn.Body == nil || len(fn.Body.Stmts) < 1 {
+		t.Fatal("expected at least 1 statement")
+	}
+}
+
+func TestFuncTypeMultiParam(t *testing.T) {
+	// (i32, i32) -> i32 should parse as a function type, not a tuple
+	fn := parseFuncBody(t, `func apply(f: (i32, i32) -> i32, a: i32, b: i32) -> i32 {
+		return f(a, b)
+	}`)
+	if len(fn.Params) != 3 {
+		t.Fatalf("expected 3 params, got %d", len(fn.Params))
+	}
+	if fn.Params[0].Type.Kind != ast.TypeFunc {
+		t.Errorf("expected first param to be TypeFunc, got %v", fn.Params[0].Type.Kind)
+	}
+}
+
+func TestFuncTypeSingleParam(t *testing.T) {
+	fn := parseFuncBody(t, `func apply(f: (i32) -> i32, x: i32) -> i32 {
+		return f(x)
+	}`)
+	if fn.Params[0].Type.Kind != ast.TypeFunc {
+		t.Errorf("expected first param to be TypeFunc, got %v", fn.Params[0].Type.Kind)
+	}
+	ft := fn.Params[0].Type.Data.(ast.FuncType)
+	if len(ft.Params) != 1 {
+		t.Errorf("expected 1 func param, got %d", len(ft.Params))
+	}
+}

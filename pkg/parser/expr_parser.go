@@ -374,6 +374,8 @@ func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {
 		}, nil
 	case TMatch:
 		return p.parseMatchExpr()
+	case TPipe:
+		return p.parseLambdaExpr()
 	default:
 		return nil, &ParseError{
 			Message: fmt.Sprintf("expected expression, got %s (%q)", tokenNames[tok.Kind], tok.Text),
@@ -459,6 +461,76 @@ func (p *Parser) parseMatchExpr() (*ast.Expr, error) {
 		Kind: ast.ExprMatch,
 		Data: &ast.MatchStmt{Value: *value, Arms: stmt},
 		Span: ast.Span{Start: start, End: end},
+	}, nil
+}
+
+// parseLambdaExpr parses |params| -> ReturnType { body } or |params| { body }
+func (p *Parser) parseLambdaExpr() (*ast.Expr, error) {
+	start := p.peek().Span.Start
+	p.next() // consume opening |
+
+	// Parse params: name: Type, ...
+	// We can't reuse parseParam because parseTypeExpr would consume | as union.
+	// Instead, parse manually: name: BaseType (no union/func types in lambda params).
+	var params []ast.Param
+	for p.peek().Kind != TPipe && p.peek().Kind != TEOF {
+		nameTok, err := p.expectIdentLike()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(TColon); err != nil {
+			return nil, err
+		}
+		typ, err := p.parseBaseType()
+		if err != nil {
+			return nil, err
+		}
+		// Allow optional ? after base type
+		if p.peek().Kind == TQuestion {
+			p.next()
+			typ = &ast.TypeExpr{
+				Kind: ast.TypeOptional,
+				Data: ast.OptionalType{Inner: *typ},
+				Span: typ.Span,
+			}
+		}
+		params = append(params, ast.Param{
+			Name: nameTok.Text,
+			Type: *typ,
+		})
+		if p.peek().Kind == TComma {
+			p.next()
+		}
+	}
+	if _, err := p.expect(TPipe); err != nil {
+		return nil, err
+	}
+
+	// Optional return type: -> Type
+	var retType *ast.TypeExpr
+	if p.peek().Kind == TArrow {
+		p.next()
+		rt, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, err
+		}
+		retType = rt
+	}
+
+	// Body block
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ast.Expr{
+		Kind: ast.ExprLambda,
+		Data: &ast.LambdaExpr{
+			Params:     params,
+			ReturnType: retType,
+			Body:       body,
+		},
+		Span: ast.Span{Start: start, End: body.Span.End},
 	}, nil
 }
 
