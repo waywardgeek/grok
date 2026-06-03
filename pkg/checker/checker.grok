@@ -66,9 +66,9 @@ grok Checker {
 
   doc "Statement Checking": """
     checkStmt dispatches on StmtKind:
-    - VarDecl: infer or check type, define in current scope
-    - Assign: check target is defined, check value type matches
-    - Return: check value type (no return-type checking against function sig yet)
+    - VarDecl: infer or check type, define in current scope (DefineMut for let mut)
+    - Assign: check target is defined and mutable, check value type matches
+    - Return: check value type matches enclosing function's declared return type
     - If/ElseIf: check condition is bool, check body blocks
     - For: resolve collection element type, bind loop var, check body
     - While: check condition is bool, check body
@@ -78,10 +78,7 @@ grok Checker {
   """
 
   doc "Known Limitations": """
-    - Return type checking: doesn't verify return expressions match the function's
-      declared return type (needs function context propagation)
     - Generic type instantiation: TypeVar exists but no constraint solving
-    - Mutability: let vs let mut parsed but not enforced
     - Pattern variable binding: match arm patterns don't bind variables in scope
     - Numeric coercion: i32 literal doesn't auto-widen to i64
     - Loop depth tracking: break/continue validity not checked
@@ -118,11 +115,17 @@ grok Checker {
 
   class Scope(parent: Scope?) {
     why: "Lexical scope with nested lookup. Push for block entry, pop on exit."
-    vars: map[string]Type?
+    vars:     map[string]Type?
+    mutables: map[string]bool
+      why: "Tracks which variables were declared with 'let mut'."
 
     func Define(mut self, name: string, typ: Type?)
+    func DefineMut(mut self, name: string, typ: Type?)
+      why: "Defines a mutable variable — adds to both vars and mutables maps."
     func Lookup(self, name: string) -> Type?
       why: "Walks parent chain until found or nil."
+    func IsMutable(self, name: string) -> bool
+      why: "Walks parent chain to check mutability."
   }
 
   // ---- Type registry ----
@@ -153,9 +156,11 @@ grok Checker {
 
   class Checker() {
     why: "Stateful checker. Call CheckFile to validate an entire AST."
-    scope:    Scope?
-    registry: Registry?
-    errors:   [error]
+    scope:         Scope?
+    registry:      Registry?
+    errors:        [error]
+    currentReturn: Type?
+      why: "Expected return type of the function currently being checked. Nil for void/unit functions."
 
     func CheckFile(mut self, file: File?)
       why: "Primary entry point. Registers all types, then checks all function bodies."
