@@ -1,23 +1,28 @@
-// stdlib.gk — tests Go stdlib import and usage, including type casts
+// stdlib.gk — tests built-in methods and Go stdlib interop
 grok stdlib_test {
-  import fmt from "fmt"
-  import strings from "strings"
   import strconv from "strconv"
 
   func main() {
-    // String operations
-    let greeting = strings.ToUpper("hello, grok!")
-    fmt.Println(greeting)
+    // String methods replace direct stdlib imports
+    let greeting = "hello, grok!"
+    println(greeting.to_upper())
 
     // String conversion — strconv.Itoa expects Go's int, so cast from i32
     let num = 42
     let s = strconv.Itoa(<int>num)
-    fmt.Println("The answer is " + s)
+    println("The answer is " + s)
 
     // Numeric casts between Grok types
     let x: i32 = 100
     let y: i64 = <i64>x
     let z: i32 = <i32>y
-    fmt.Println(f"x={x}, y={y}, z={z}")
+    println(f"x={x}, y={y}, z={z}")
+
+    // String methods
+    let csv = "alice,bob,carol"
+    let names = csv.split(",")
+    println(f"names: {names.join(", ")}")
+    println(f"has bob: {csv.contains("bob")}")
+    println(f"starts with alice: {csv.has_prefix("alice")}")
   }
 }
