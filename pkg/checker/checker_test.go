@@ -879,3 +879,45 @@ func TestEnumVariantPatternTyped(t *testing.T) {
 }`)
 	expectNoErrors(t, c)
 }
+
+func TestTupleReturnType(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func divide(a: i32, b: i32) -> (i32, error) {
+			return (0, nil)
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestTupleDestructuring(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func getTwo() -> (i32, string) {
+			return (42, "hello")
+		}
+		func main() {
+			let (x, y) = getTwo()
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestTupleReturnMismatch(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func bad() -> (i32, string) {
+			return (true, 42)
+		}
+	}`)
+	expectErrors(t, c, 1) // tuple type mismatch
+}
+
+func TestErrorType(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func mayFail() -> (i32, error) {
+			if true {
+				return (0, nil)
+			}
+			return (42, nil)
+		}
+	}`)
+	expectNoErrors(t, c)
+}

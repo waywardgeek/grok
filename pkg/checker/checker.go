@@ -85,6 +85,15 @@ func (t *Type) String() string {
 		return fmt.Sprintf("channel<%s>", t.Elem)
 	case TyStruct, TyClass, TyEnum, TyInterface:
 		return t.Name
+	case TyTuple:
+		s := "("
+		for i, f := range t.Fields {
+			if i > 0 {
+				s += ", "
+			}
+			s += f.Type.String()
+		}
+		return s + ")"
 	case TyVar:
 		return t.Name
 	case TyFunc:
@@ -302,6 +311,11 @@ func New() *Checker {
 	// println(...) — variadic, accepts any types, returns unit
 	c.scope.Define("println", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "println"})
 	c.scope.Define("print", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "print"})
+	// Register builtin types
+	// error — Go's error interface, used in (T, error) return patterns
+	c.registry.Register("error", &TypeInfo{
+		Type: &Type{Kind: TyInterface, Name: "error"},
+	})
 	return c
 }
 
@@ -347,6 +361,14 @@ func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type {
 		key := c.resolveTypeExpr(&mt.Key)
 		val := c.resolveTypeExpr(&mt.Value)
 		return MapType(key, val)
+	case ast.TypeTuple:
+		tt := te.Data.(ast.TupleType)
+		var fields []TypeField
+		for _, f := range tt.Fields {
+			ft := c.resolveTypeExpr(&f.Type)
+			fields = append(fields, TypeField{Name: f.Name, Type: ft})
+		}
+		return &Type{Kind: TyTuple, Fields: fields}
 	case ast.TypeUnit:
 		return TypeUnit
 	case ast.TypeFunc:
@@ -421,6 +443,10 @@ func (c *Checker) assignableTo(from, to *Type) bool {
 	if from.Equal(to) {
 		return true
 	}
+	// nil (TyUnknown) is assignable to optional and interface types
+	if from.Kind == TyUnknown && (to.Kind == TyOptional || to.Kind == TyInterface) {
+		return true
+	}
 	// Numeric widening (e.g., int → i32, i32 → i64)
 	if numericWidens(from, to) {
 		return true
@@ -439,6 +465,15 @@ func (c *Checker) assignableTo(from, to *Type) bool {
 		case TyOptional:
 			if from.Elem != nil && to.Elem != nil {
 				return c.assignableTo(from.Elem, to.Elem)
+			}
+		case TyTuple:
+			if len(from.Fields) == len(to.Fields) {
+				for i := range from.Fields {
+					if !c.assignableTo(from.Fields[i].Type, to.Fields[i].Type) {
+						return false
+					}
+				}
+				return true
 			}
 		}
 	}
@@ -833,6 +868,38 @@ func (c *Checker) checkStmt(stmt *ast.Stmt) {
 
 func (c *Checker) checkVarDecl(stmt *ast.Stmt) {
 	decl := stmt.Data.(*ast.VarDeclStmt)
+
+	// Tuple destructuring: let (a, b) = expr
+	if len(decl.Names) > 0 {
+		if decl.Value != nil {
+			valType := c.checkExpr(decl.Value)
+			if valType.Kind == TyTuple && len(valType.Fields) == len(decl.Names) {
+				for i, name := range decl.Names {
+					if decl.IsMut {
+						c.scope.DefineMut(name, valType.Fields[i].Type)
+					} else {
+						c.scope.Define(name, valType.Fields[i].Type)
+					}
+				}
+			} else if valType.Kind != TyUnknown {
+				c.error(stmt.Span, "cannot destructure %s into %d variables", valType, len(decl.Names))
+				for _, name := range decl.Names {
+					c.scope.Define(name, TypeError)
+				}
+			} else {
+				for _, name := range decl.Names {
+					c.scope.Define(name, TypeUnknown)
+				}
+			}
+		} else {
+			c.error(stmt.Span, "tuple destructuring requires an initializer")
+			for _, name := range decl.Names {
+				c.scope.Define(name, TypeError)
+			}
+		}
+		return
+	}
+
 	var declaredType *Type
 	if decl.Type != nil {
 		declaredType = c.resolveTypeExpr(decl.Type)

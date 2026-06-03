@@ -512,6 +512,15 @@ func (t *Transpiler) transpileStmt(stmt *ast.Stmt) {
 func (t *Transpiler) transpileVarDecl(stmt *ast.Stmt) {
 	decl := stmt.Data.(*ast.VarDeclStmt)
 	t.writeIndent()
+
+	// Tuple destructuring: let (a, b) = expr → a, b := expr
+	if len(decl.Names) > 0 {
+		t.writef("%s := ", strings.Join(decl.Names, ", "))
+		t.transpileExpr(decl.Value)
+		t.writef("\n")
+		return
+	}
+
 	if decl.Value != nil {
 		if decl.Type != nil {
 			t.writef("var %s %s = ", decl.Name, t.goType(decl.Type))
@@ -544,7 +553,8 @@ func (t *Transpiler) transpileReturn(stmt *ast.Stmt) {
 	if ret.Value != nil {
 		t.writef("return ")
 		// Insert cast if return value type differs from function return type
-		if t.currentReturnType != "" {
+		// Skip for tuple literals — they emit comma-separated values naturally
+		if t.currentReturnType != "" && ret.Value.Kind != ast.ExprTupleLit {
 			if rt, ok := ret.Value.ResolvedType.(*checker.Type); ok {
 				exprGoType := checkerTypeToGo(rt)
 				if exprGoType != "" && exprGoType != t.currentReturnType {
@@ -1142,6 +1152,22 @@ func checkerTypeToGo(ct *checker.Type) string {
 			return "*" + checkerTypeToGo(ct.Elem)
 		}
 		return "*any"
+	case checker.TyTuple:
+		parts := make([]string, len(ct.Fields))
+		for i, f := range ct.Fields {
+			parts[i] = checkerTypeToGo(f.Type)
+		}
+		return "(" + strings.Join(parts, ", ") + ")"
+	case checker.TyInterface:
+		if ct.Name != "" {
+			return ct.Name
+		}
+		return "interface{}"
+	case checker.TyClass, checker.TyStruct:
+		if ct.Name != "" {
+			return ct.Name
+		}
+		return ""
 	default:
 		return ""
 	}

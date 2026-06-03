@@ -514,3 +514,33 @@ func TestTranspileEnumMatchTypeSwitch(t *testing.T) {
 		t.Errorf("expected ShapeEmpty case, got:\n%s", output)
 	}
 }
+
+func TestTupleReturn(t *testing.T) {
+	src := `grok test {
+		func divide(a: i32, b: i32) -> (i32, error) {
+			return (a / b, nil)
+		}
+	}`
+	got := transpileWithChecker(t, src)
+	if !strings.Contains(got, "func Divide(a int32, b int32) (int32, error)") {
+		t.Errorf("expected tuple return type signature, got:\n%s", got)
+	}
+	if !strings.Contains(got, "return a / b, nil") {
+		t.Errorf("expected multi-value return, got:\n%s", got)
+	}
+}
+
+func TestTupleDestructuring(t *testing.T) {
+	src := `grok test {
+		func getTwo() -> (i32, string) {
+			return (42, "hello")
+		}
+		func main() {
+			let (x, y) = getTwo()
+		}
+	}`
+	got := transpileWithChecker(t, src)
+	if !strings.Contains(got, "x, y := GetTwo()") {
+		t.Errorf("expected tuple destructuring, got:\n%s", got)
+	}
+}

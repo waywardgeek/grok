@@ -201,6 +201,7 @@ type Block struct {
 
 type VarDeclStmt struct {
 	Name  string
+	Names []string  // for tuple destructuring: let (a, b) = expr
 	Type  *TypeExpr // nil if inferred
 	IsMut bool
 	Value *Expr // nil if uninitialized

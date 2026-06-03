@@ -636,6 +636,40 @@ func (p *Parser) parseVarDecl() (*ast.Stmt, error) {
 		isMut = true
 		p.next()
 	}
+
+	// Check for tuple destructuring: let (a, b) = expr
+	if p.peek().Kind == TLParen {
+		p.next() // consume '('
+		var names []string
+		for {
+			name, err := p.expectIdentLike()
+			if err != nil {
+				return nil, err
+			}
+			names = append(names, name.Text)
+			if p.peek().Kind == TComma {
+				p.next()
+			} else {
+				break
+			}
+		}
+		if _, err := p.expect(TRParen); err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(TAssign); err != nil {
+			return nil, err
+		}
+		val, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.Stmt{
+			Kind: ast.StmtVarDecl,
+			Data: &ast.VarDeclStmt{Names: names, IsMut: isMut, Value: val},
+			Span: ast.Span{Start: start, End: p.peek().Span.Start},
+		}, nil
+	}
+
 	name, err := p.expectIdentLike()
 	if err != nil {
 		return nil, err
