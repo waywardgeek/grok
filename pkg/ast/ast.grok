@@ -174,9 +174,10 @@ grok AST {
 
   struct Expr {
     why: "Tagged union for all expression types. Kind discriminates; Data holds typed payload."
-    Kind: ExprKind
-    Data: any
-    Span: Span
+    Kind:         ExprKind
+    Data:         any
+    Span:         Span
+    ResolvedType: any     // set by checker: *checker.Type (avoids import cycle via any)
   }
 
   struct IdentExpr     { Name: string }
@@ -186,13 +187,15 @@ grok AST {
   struct BoolLitExpr   { Value: bool }
 
   struct CallExpr {
-    Func: Expr
-    Args: [Expr]
+    Func:     Expr
+    TypeArgs: [TypeExpr]   // explicit type arguments, e.g. f<i32>(x)
+    Args:     [Expr]
   }
 
   struct MethodCallExpr {
     Receiver: Expr
     Method:   string
+    TypeArgs: [TypeExpr]   // explicit type arguments, e.g. obj.method<T>(x)
     Args:     [Expr]
   }
 
@@ -235,6 +238,21 @@ grok AST {
 
   struct MapLitExpr { Entries: [MapEntry] }
 
+  struct StructLitField {
+    Name:  string
+    Value: Expr
+  }
+
+  struct StructLitExpr {
+    TypeName: string
+    Fields:   [StructLitField]
+  }
+
+  struct StringInterpExpr {
+    why: "f\"hello {name}\" — Parts alternates: string, expr, string, expr, string."
+    Parts: [Expr]
+  }
+
   struct LambdaExpr {
     Params:     [Param]
     ReturnType: TypeExpr?
@@ -265,6 +283,7 @@ grok AST {
   struct Block {
     why: "Sequence of statements. Body of functions, loops, if-branches, match arms."
     Stmts: [Stmt]
+    Span:  Span
   }
 
   struct VarDeclStmt {
@@ -299,6 +318,7 @@ grok AST {
   struct ElseIf {
     Condition: Expr
     Body:      Block
+    Span:      Span
   }
 
   struct ForStmt {
@@ -381,8 +401,9 @@ grok AST {
   }
 
   struct FuncDecl {
-    why: "Function or method declaration. Body is nil for .grok files; holds *Block for .gk."
+    why: "Function or method declaration. TypeParams holds generic type parameters (<T: Constraint>). Body is nil for .grok files; holds *Block for .gk."
     Name:        string
+    TypeParams:  [TypeParam]
     Params:      [Param]
     ReturnType:  TypeExpr?
     Where:       [WhereClause]

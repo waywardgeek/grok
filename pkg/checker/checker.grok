@@ -19,9 +19,16 @@ grok Checker {
        field variants as TyFunc constructors (fields → enum type). This enables
        both variant construction (Circle(5.0)) and typed pattern binding in match.
 
+       Classes: registerClass pushes a temporary scope, registers TypeParams as
+       TyVar in that scope so field/method types can reference the type parameters,
+       then pops after registration.
+
     2. Checking Phase: walks function bodies (statements and expressions),
        performing type inference and validation. Each expression returns its
        inferred *Type; each statement is checked for type consistency.
+
+       For generic functions, checkFuncBody registers TypeParams as TyVar in the
+       function's scope before checking the body.
 
     3. Annotation: checkExpr annotates each AST Expr node with ResolvedType
        (stored as `any` to avoid import cycles). The transpiler reads these
@@ -39,28 +46,62 @@ grok Checker {
     Primitive kinds: TyInt, TyUint, TyFloat (with Bits for width), TyBool, TyString.
     Composite kinds: TyList (Elem), TyMap (Key, Val), TyTuple (Fields), TyOptional
     (Elem), TyChannel (Elem), TyStruct/TyClass/TyEnum/TyInterface (Name + Fields
-    for member access), TyFunc (Params, Returns, Name).
-    Special: TyUnit (no value), TyAny (top type), TyTypeVar (for future generics).
+    for member access), TyFunc (Params, Return, TypeParamNames).
+    Generic: TyVar (type variable, Name carries the variable name e.g. "T").
+    Special: TyUnit (no value), TyUnknown (nil/unresolved), TyError (sentinel).
 
     Type equality is structural via Equal(): two types match if Kind, Bits, Name,
-    and recursive sub-types all match. assignableTo() extends Equal() with interface
-    subtyping: a class/struct satisfies an interface if it has all required methods
-    with matching signatures (structural subtyping). Also handles: numeric widening,
-    recursive composite type matching (list/map/optional/tuple element types), and
-    nil (TyUnknown) assignability to optional and interface types.
-    IsNumeric() and IsInteger() helpers simplify arithmetic checking.
+    and recursive sub-types all match. assignableTo() extends Equal() with:
+    - Interface subtyping: class/struct satisfies interface if all methods match
+    - Numeric widening: same-sign integers/floats widen to larger bit widths
+    - Recursive composite matching: list/map/optional/tuple element types
+    - nil (TyUnknown) assignable to optional and interface types
+    - TyVar compatible with anything (constraints deferred to Go for now)
+  """
+
+  doc "Generics": """
+    Generic functions declare type parameters via <T: Constraint> syntax. The
+    generics implementation has three parts:
+
+    1. Type Variable Scoping: When checking a function body, TypeParams from
+       FuncDecl are registered as TyVar in the function's scope. When registering
+       a class, TypeParams are registered in a temporary scope so field/method
+       types can reference them. resolveNamedType creates TyVar only for names
+       that are registered as type variables in scope — unknown names that aren't
+       type variables fall through as TyVar for .grok compatibility (future: error).
+
+    2. Call-Site Substitution: When a generic function is called with explicit
+       type arguments (e.g. identity<i32>(42)), checkCall:
+       a) Validates type arg count matches TypeParamNames count
+       b) Resolves each type arg to a concrete type
+       c) Builds substitution map: {"T": i32, "U": string}
+       d) Applies substituteType to all formal param types and return type
+       e) Checks actual args against substituted (concrete) param types
+
+    3. Binary Operator Passthrough: When either operand of a binary expression
+       is TyVar, the checker allows the operation (constraints will be enforced
+       by the target language). Returns TypeBool for comparisons/logical ops,
+       or the TyVar type for arithmetic/bitwise.
+
+    No type inference at call sites — the caller always provides explicit type
+    arguments. Future: first-arg-wins heuristic may make type args optional.
+
+    substituteType is recursive: it walks the type structure replacing TyVar
+    nodes that appear in the substitution map with their concrete types. Handles
+    List, Map, Optional, Tuple, and Func composite types.
   """
 
   doc "Type Inference": """
     Variable types are inferred from initializers: `let x = 42` infers i32 (default
     integer type), `let s = "hello"` infers string. When an explicit type annotation
-    is present, the initializer type is checked against it.
+    is present, the initializer type is checked against it. Declared types propagate
+    to initializer ResolvedType when compatible (e.g. `let y: i64 = 100` → literal
+    gets i64 not i32).
 
-    Integer literals default to i32, float literals to f64. Numeric widening is
-    supported: i32 widens to i64, f32 to f64, etc. Same-sign integers and floats
-    widen to larger bit widths. No cross-kind coercion (int→float requires explicit
-    cast). No narrowing (i64→i32 is an error). Widening applies in assignments,
-    returns, function arguments, binary arithmetic, and comparisons.
+    Integer literals default to i32, float literals to f64. Numeric widening:
+    same-sign integers and floats widen to larger bit widths. No cross-kind coercion
+    (int→float requires explicit cast). No narrowing. Widening applies in
+    assignments, returns, function arguments, binary arithmetic, and comparisons.
 
     For-loop element inference: `for x in collection` infers x's type from the
     collection's Elem type (list → element, map → key).
@@ -82,65 +123,75 @@ grok Checker {
   doc "Expression Checking": """
     checkExpr dispatches on ExprKind:
     - Literals: return their natural type (IntLit → i32, FloatLit → f64, etc.)
-    - Idents: scope lookup
-    - Binary: validates operand types match and operator is valid for the type
-      (arithmetic for numerics, comparison returns bool, logical for bools,
-      equality for any matching pair with numeric widening, bitwise for integers,
-      shifts for integers)
+    - Idents: scope lookup; unit variants return their enum type
+    - Binary: validates operand types match and operator is valid for the type.
+      TyVar operands pass through (see Generics doc). Arithmetic for numerics
+      with coercion, comparison returns bool, logical for bools, equality for
+      any matching pair with numeric widening, bitwise/shift for integers.
     - Unary: neg requires numeric, not requires bool
-    - Call: looks up function in scope/registry, checks arg count and types.
-      Uses assignableTo() for argument compatibility (supports interface subtyping,
-      numeric widening, and recursive composite type compatibility).
+    - Call: looks up function, checks arg count and types. For generic calls with
+      TypeArgs, builds substitution map and checks against substituted types.
     - Method call: resolves receiver type, finds method, checks args
     - Field access: resolves receiver type, finds field by name
     - Index: validates receiver is list/map/string, returns element type
-    - List/tuple/map literals: check element types for homogeneity (lists) or
-      key/value consistency (maps). Annotates ResolvedType for typed emit.
-    - Match-as-expression (ExprMatch): checks match value, binds pattern vars,
-      infers result type from first arm's last expression.
-    - Cast (<Type>expr): resolves target type, checks inner expr, validates
-      conversion is supported (numeric ↔ numeric). Returns target type.
+    - List/tuple/map literals: check element types. Annotates ResolvedType.
+    - Match-as-expression: checks match value, binds pattern vars, infers result
+      type from first arm.
+    - Cast (<Type>expr): validates numeric ↔ numeric conversion.
+    - Lambda: checks body, infers return type
+    - Struct literal: resolves type from registry, checks field types
+    - String interpolation: checks each interpolated expression
   """
 
   doc "Statement Checking": """
     checkStmt dispatches on StmtKind:
-    - VarDecl: infer or check type, define in current scope (DefineMut for let mut)
+    - VarDecl: infer or check type, define in current scope (DefineMut for let mut).
+      Tuple destructuring via Names field.
     - Assign: check target is defined and mutable, check value type matches
-    - Return: check value type matches enclosing function's declared return type
+    - Return: check value type matches enclosing function's declared return type.
+      Skip cast for tuple literals to avoid invalid Go emission.
     - If/ElseIf: check condition is bool, check body blocks
-    - For: resolve collection element type, bind loop var, increment loopDepth, check body
+    - For: resolve collection element type, bind loop var, increment loopDepth
     - While: check condition is bool, increment loopDepth, check body
-    - Match: check match value, bind pattern variables into arm scopes, check each arm body
+    - Match: check match value, bindPattern into arm scopes (ident, tuple, variant
+      with real field types from registry), check each arm body
     - Break/Continue: error if loopDepth == 0
     - Block: push scope, check stmts, pop scope
     - Cascade/Expr: check inner expression(s)
   """
 
   doc "Known Limitations": """
-    - Generic type instantiation: TypeVar exists but no constraint solving
+    - Constraint satisfaction not checked in checker — deferred to Go. TyVar
+      operands in binary expressions pass through unchecked.
     - No error recovery: first error stops checking that branch
-    - Cast only supports numeric ↔ numeric; string conversion etc. not yet modeled
+    - Cast only supports numeric ↔ numeric
+    - resolveNamedType falls through to TyVar for unknown names (should error
+      when not a registered type variable, but kept for .grok compatibility)
   """
 
   // ---- Type system ----
 
   enum TypeKind {
-    TyInt TyUint TyFloat TyBool TyString TyUnit TyAny
+    TyInt TyUint TyFloat TyBool TyString TyUnit
     TyList TyMap TyTuple TyOptional TyChannel
-    TyStruct TyClass TyEnum TyInterface TyFunc TyTypeVar
+    TyStruct TyClass TyEnum TyInterface TyFunc
+    TyVar       // type variable (for generics)
+    TyUnknown   // not yet resolved
+    TyError     // error sentinel
   }
 
   struct Type {
     why: "Recursive type representation. Kind discriminates; sub-fields used per kind."
-    Kind:    TypeKind
-    Bits:    int          // for TyInt/TyUint/TyFloat
-    Name:    string       // for TyStruct/TyClass/TyEnum/TyFunc/TyTypeVar
-    Elem:    Type?        // for TyList/TyOptional/TyChannel
-    Key:     Type?        // for TyMap
-    Val:     Type?        // for TyMap
-    Params:  [Type?]      // for TyFunc
-    Return:  Type?        // for TyFunc
-    Fields:  [TypeField]  // for TyStruct/TyClass
+    Kind:           TypeKind
+    Bits:           int            // for TyInt/TyUint/TyFloat
+    Name:           string         // for named types and TyVar
+    Elem:           Type?          // for TyList/TyOptional/TyChannel
+    Key:            Type?          // for TyMap
+    Val:            Type?          // for TyMap
+    Params:         [Type?]        // for TyFunc: parameter types
+    Return:         Type?          // for TyFunc: return type
+    Fields:         [TypeField]    // for TyTuple
+    TypeParamNames: [string]       // for TyFunc: generic type parameter names
   }
 
   struct TypeField {
@@ -178,11 +229,11 @@ grok Checker {
     Fields:   map[string]Type?
     Methods:  map[string]Type?
     Variants: map[string]VariantInfo?
-      why: "Enum variants: variant name → field info. Enables typed variant construction and pattern binding."
+      why: "Enum variants: variant name → field info."
   }
 
   class Registry() {
-    why: "Named type definitions. Structs, classes, enums, interfaces, and functions registered during the first pass."
+    why: "Named type definitions. Structs, classes, enums, interfaces registered during first pass."
     types: map[string]TypeInfo?
 
     func Register(mut self, name: string, info: TypeInfo?)
@@ -205,20 +256,22 @@ grok Checker {
     registry:      Registry?
     errors:        [error]
     currentReturn: Type?
-      why: "Expected return type of the function currently being checked. Nil for void/unit functions."
+      why: "Expected return type of the function currently being checked."
     loopDepth: int
       why: "Tracks nesting depth inside loops for break/continue validation."
 
     func CheckFile(mut self, file: File?)
       why: "Primary entry point. Registers all types, then checks all function bodies."
-
     func Errors(self) -> [error]
   }
 
-  // ---- Convenience constructors ----
+  // ---- Standalone functions ----
 
   func New() -> Checker?
-    why: "Creates a Checker with fresh scope and registry."
+    why: "Creates a Checker with fresh scope and registry. Registers built-in type 'error' as interface."
+
+  func substituteType(t: Type?, subst: map[string]Type?) -> Type?
+    why: "Recursively replaces TyVar nodes in a type tree according to a substitution map. Handles List, Map, Optional, Tuple, Func composite types."
 
   func IntType(bits: int) -> Type?
   func UintType(bits: int) -> Type?

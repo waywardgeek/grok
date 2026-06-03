@@ -15,6 +15,10 @@ grok Parser {
        (parseStruct, parseFunc, parseEnum, etc.). Largely LL(1) with state
        save/restore lookahead for ambiguous cases.
 
+       parseTypeParams() is shared by all generic declarations — classes, structs,
+       enums, interfaces, and functions all parse `<T, U: Constraint>` the same way.
+       parseFunc checks for `<` after the function name to parse optional type params.
+
     3. Expression/Statement Parsing (expr_parser.go): Pratt/precedence-climbing
        parser for .gk function bodies. Activated when parseFunc detects a `{` after
        annotations — same function handles both .grok signatures and .gk bodies.
@@ -51,6 +55,11 @@ grok Parser {
     - isWhyAnnotation(): distinguishes `why: "desc"` annotation from `why: TypeExpr`
       field by looking ahead for string vs type
     - Tuple field labels: determines if (x: T, y: U) has labels or is positional
+    - Generic call-site disambiguation: tryParseTypeArgs() attempts to parse
+      <TypeExpr, ...> followed by `(`. If `>` isn't followed by `(`, backtracks
+      and treats `<` as a comparison operator. Same pattern used for method calls.
+    - Struct literal detection: lookahead for `{` after identifier in expression
+      context.
     Cost is negligible — Lexer is a small struct, and ambiguities are rare.
   """
 
@@ -75,7 +84,13 @@ grok Parser {
     Primary expressions: identifiers, all literal types (int, float, string, bool,
     nil), parenthesized expressions, list literals [a, b], map literals map[K]V{...},
     lambda |params| -> RetType { body }, match expressions, cast expressions
-    <Type>expr, and .gk keywords used as identifiers (true, false, nil, map).
+    <Type>expr, f-string interpolation f"text {expr}", and .gk keywords used as
+    identifiers (true, false, nil, map).
+
+    Postfix operations include generic call disambiguation: when a postfix `<` is
+    encountered, tryParseTypeArgs() saves lexer state, attempts to parse type args,
+    and checks for a following `(`. On failure, backtracks and exits the postfix
+    loop so the `<` is treated as a binary comparison operator.
   """
 
   doc "Statement Parsing": """

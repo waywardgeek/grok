@@ -1,20 +1,23 @@
 // grok.grok — project-level understanding of the Grok toolchain
 
 grok Grok {
-  why: "Structural integrity engine and language toolchain. Bridges high-level architectural declarations (.grok files) and concrete Go implementations, detecting drift by deep recursive comparison of both ASTs."
+  why: "Language toolchain and structural integrity engine. Bridges high-level architectural declarations (.grok files) and concrete Go implementations. The toolchain has two modes: verification (detect drift between .grok and Go source) and compilation (.gk files → Go source via checker + transpiler)."
 
   doc "System Architecture": """
-    Classic compiler frontend pipeline integrated with a static analysis engine.
-    Three modules in a strictly layered, unidirectional dependency graph:
+    Compiler frontend pipeline integrated with a static analysis engine.
+    Five modules in a strictly layered, unidirectional dependency graph:
 
-      ast (leaf) ← parser ← verifier (top)
+      ast (leaf) ← parser ← checker ← transpiler
+                          ← verifier
 
     The AST is the single source of truth for the structural model. Data flows
-    linearly: source text → parser → AST → verifier. The verifier bridges two
-    type systems: Grok AST and Go AST (via go/parser, go/ast).
+    linearly: source text → parser → AST → {checker → transpiler | verifier}.
 
-    This decoupled design means the AST can serve future tools (code generation,
-    language servers, .gk compiler) without touching the verifier.
+    Two workflows share the same AST:
+    1. Verification: .grok file → parser → AST → verifier ← Go source (go/ast)
+       Compares Grok declarations against Go implementation, reports drift.
+    2. Compilation: .gk file → parser → AST → checker → transpiler → Go source
+       Type-checks Grok code, then emits idiomatic Go. End-to-end compilation.
   """
 
   doc "End-to-End Verification Workflow": """
@@ -33,33 +36,67 @@ grok Grok {
        Error (fail build), Warning (encourage completeness), Info (context)
   """
 
+  doc "End-to-End Compilation Workflow": """
+    When a user invokes `grok-compile file.gk`:
+
+    1. Parser lexes and parses into ast.File (same AST as .grok, but with
+       FuncDecl.Body populated with Blocks/Stmts/Exprs)
+    2. Checker performs semantic analysis: type inference, scope validation,
+       operator checking, generic type substitution. Annotates AST Expr nodes
+       with ResolvedType for the transpiler.
+    3. Transpiler walks the annotated AST, emitting idiomatic Go:
+       - Enums → interface + variant structs (tagged union pattern)
+       - Classes → struct + NewX() constructor + pointer-receiver methods
+       - Generics → Go 1.18+ type parameters with constraint mapping
+       - Cascade → defer func(){}()
+       - Match → switch/type switch
+       - F-strings → fmt.Sprintf
+       - Builtins (println/print) → fmt.Println/fmt.Print with auto-import
+    4. Output is a valid .go file, ready for `go build`.
+  """
+
+  doc "Generics Design": """
+    Explicit type parameters on declarations and at call sites (KISS principle):
+
+    Declaration: func max<T: Comparable>(a: T, b: T) -> T
+    Call site:   max<i32>(x, y)
+
+    No type inference at call sites — the caller always provides explicit type
+    arguments. Future: first-arg-wins heuristic may make them optional.
+
+    Constraint mapping to Go: Comparable → cmp.Ordered, Equatable/Hashable →
+    comparable, others pass through as user-defined constraint interfaces.
+
+    Parser uses backtracking to disambiguate `<` as generic type args vs.
+    comparison operator: saves lexer state, tries parsing type args, checks
+    for following `(`. On failure, backtracks.
+  """
+
   doc "Contracts": """
-    The system relies on concrete data structures rather than Go interfaces, but
-    three critical contracts govern module interactions:
+    Three critical contracts govern module interactions:
 
     1. ast.File — the primary structural contract. Parser is the sole producer;
-       verifier is the primary consumer. Any future tool (codegen, LSP) consumes
-       this same contract without touching parser or verifier.
+       checker, transpiler, and verifier are consumers. Any future tool (codegen,
+       LSP) consumes this same contract without touching parser or verifier.
     2. Result/Finding — the verifier's output contract. Consumed by CLI, CI
-       pipelines, and future IDE integrations. Severity-graded findings with
-       file locations and descriptive messages.
-    3. go/ast and go/parser — the verifier acts as a client to the Go compiler's
-       frontend, relying on these external interfaces to build its internal
-       representation of the implementation's reality.
+       pipelines, and future IDE integrations.
+    3. checker.Type + ResolvedType — the checker's type annotations on AST Expr
+       nodes. Consumed by the transpiler for typed literal emission and cast
+       insertion. Uses `any` type to avoid import cycles between ast and checker.
+    4. go/ast and go/parser — the verifier acts as a client to the Go compiler's
+       frontend for extracting implementation types.
   """
 
   doc "Dependency Constraints": """
-    The dependency graph is strictly layered and unidirectional — no circular
-    or upward dependencies. This is an enforced architectural constraint, not
-    an accident:
+    Strictly layered and unidirectional — no circular or upward dependencies:
 
-      ast (leaf, stdlib only) ← parser (depends on ast) ← verifier (depends on both + go/ast)
+      ast (leaf, stdlib only) ← parser ← checker ← transpiler
+                                       ← verifier (depends on parser + go/ast)
 
     The AST has no knowledge of how it is parsed. The parser has no knowledge of
-    how the AST will be verified. This information flow containment means each
-    module can evolve independently: adding a new AST node doesn't touch the
-    verifier unless you want to verify it; adding a new verification rule doesn't
-    touch the parser.
+    how the AST will be checked or verified. The checker has no knowledge of the
+    transpiler. This information flow containment means each module can evolve
+    independently.
   """
 
   doc "GDD Methodology": """
@@ -68,8 +105,8 @@ grok Grok {
     writes .grok files as a post-process, the human reviews 100% of them.
 
     .grok files adopt the implementation language's naming conventions (PascalCase
-    for Go, snake_case for Python, etc.). They capture cross-file public concepts
-    only — internal single-file helpers don't belong.
+    for Go). They capture cross-file public concepts only — internal single-file
+    helpers don't belong.
 
     The doc and why annotations carry the architectural narrative (the "why").
     The structural declarations carry the verifiable contract (the "what").
@@ -78,30 +115,34 @@ grok Grok {
 
   doc "Self-Referential Dogfooding": """
     Each package in this project has its own .grok file that the verifier checks
-    against the Go source. The parser successfully parses its own .grok file
-    (23 structs, 3 enums, 3 classes, 2 functions). This creates a virtuous cycle:
-    changes to the code that break the .grok contract are caught immediately.
-  """
-
-  doc "Future Roadmap": """
-    - Grok compiler: transpile .gk files to Go first (clean mapping: generics,
-      channels, locks, cascade → defer), LLVM backend later
-    - Expression parsing: requires/ensures as structured AST, not raw strings
-    - Language server: use AST + Span for IDE integration
-    - CI integration: grok-verify as pre-commit hook or CI step
-    - Performance: cache parsed Go types across grok blocks for large projects
+    against the Go source. The parser successfully parses its own .grok file.
+    This creates a virtuous cycle: changes to the code that break the .grok
+    contract are caught immediately.
   """
 
   doc "Module Map": """
-    pkg/ast/       — AST node types. Leaf package, no dependencies. Tagged union
-                     for type expressions (TypeExpr.Kind + Data any).
-    pkg/parser/    — Lexer + recursive descent parser. Two-phase: stateful lexer
-                     handles triple-quoted strings and contextual keywords; parser
-                     uses lookahead with state save/restore for ambiguities.
-    pkg/verifier/  — Structural comparison engine. Aggregates Go types across
-                     files, normalizes naming/types, produces severity-graded findings.
-    cmd/grok-verify/ — CLI entry point. Auto-finds project root via go.mod.
+    pkg/ast/         — AST node types. Leaf package, no dependencies. Tagged union
+                       for type expressions, expressions, and statements.
+    pkg/parser/      — Lexer + recursive descent/Pratt parser. Handles .grok
+                       (declarations) and .gk (full implementation) files.
+    pkg/checker/     — Type checker. Infers types, validates expressions, checks
+                       generics. Annotates AST with ResolvedType.
+    pkg/transpiler/  — Go code generator. Emits idiomatic Go from type-checked AST.
+                       Handles enums, classes, generics, f-strings, builtins.
+    pkg/verifier/    — Structural comparison engine. Compares .grok declarations
+                       against Go source, reports drift with severity levels.
+    cmd/grok-compile/ — CLI entry point for .gk → .go compilation.
+    cmd/grok-verify/  — CLI entry point for .grok drift detection.
   """
 
-  source: ["cmd/grok-verify/main.go"]
+  doc "Future Roadmap": """
+    - Checker-side constraint satisfaction (validate constraints ourselves, not Go)
+    - First-arg-wins type inference heuristic for generic call sites
+    - Expression parsing for requires/ensures annotations
+    - Language server: use AST + Span for IDE integration
+    - LLVM backend (long-term, after Go transpiler is mature)
+    - CI integration: grok-verify as pre-commit hook
+  """
+
+  source: ["cmd/grok-verify/main.go", "cmd/grok-compile/main.go"]
 }

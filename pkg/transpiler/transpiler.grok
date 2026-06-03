@@ -40,14 +40,15 @@ grok Transpiler {
   doc "Declaration Transpilation": """
     Interfaces: Go interface type with method signatures. Self params are skipped.
     Composed interfaces (implements) are embedded. Method names are exported.
+    Type parameters emit Go 1.18+ constraint syntax: [T Constraint].
 
-    Structs: struct fields with exportName() capitalization.
+    Structs: struct fields with exportName() capitalization. Type parameters emitted.
 
     Classes: emit struct (ctor params + fields), NewX() constructor returning
     pointer, and pointer-receiver methods. Class struct literals emit with &
     prefix (pointer) since methods use pointer receivers. The receiver name
     defaults to "r". The selfName field tracks the current receiver name so
-    `self` in expressions emits the correct Go name.
+    `self` in expressions emits the correct Go name. Type parameters emitted.
 
     Enums: tagged union pattern — interface with private marker method, variant
     structs implementing it. Unnamed variant fields get positional names (V0, V1).
@@ -58,9 +59,16 @@ grok Transpiler {
     - Match type switches: switch _m := s.(type) { case ShapeCircle: r := _m.Radius ... }
 
     Functions: regular Go funcs. Self params skipped from parameter list.
-    Type parameters emit Go 1.18+ constraint syntax (default: any).
+    Type parameters emit Go 1.18+ constraint syntax via typeParamList().
     Special case: main/Main→main for package main entry point.
     Function calls export top-level function names but leave local variables as-is.
+
+    Generic functions: TypeParams on FuncDecl emit `[T any]` or `[T cmp.Ordered]`
+    via typeParamList(). Call-site TypeArgs on CallExpr emit `[int32, string]`.
+    Constraint mapping via mapConstraint():
+    - Comparable → cmp.Ordered (auto-imports "cmp")
+    - Equatable, Hashable → comparable
+    - Others → pass through verbatim (user-defined constraint interfaces)
   """
 
   doc "Statement Transpilation": """
@@ -156,6 +164,8 @@ grok Transpiler {
       why: "Maps variant name → {enumName, fieldNames}. Enables variant constructor calls to emit struct literals."
     unitVariants:      map[string]string
       why: "Maps unit variant name → enum name. Enables identifier refs to emit ShapeEmpty{} instead of Empty."
+    autoImports:       map[string]bool
+      why: "Auto-detected import requirements. Populated during body transpilation (e.g. 'fmt' for Sprintf, 'cmp' for Ordered), merged with user imports in header. Two-pass: body first (discovers imports), then package+imports."
 
     func Transpile(mut self, file: File?) -> string
       why: "Primary entry point. Emits package declaration then all blocks."
@@ -176,6 +186,12 @@ grok Transpiler {
     why: "Converts checker.Type to Go type string. Handles composites recursively: TyList→[]T, TyMap→map[K]V, TyOptional→*T."
 
   func binaryOpString(op: BinaryOp) -> string
+
+  func mapConstraint(self, name: string) -> string
+    why: "Maps Grok constraint names to Go equivalents. Comparable→cmp.Ordered (with auto-import), Equatable/Hashable→comparable, others pass through."
+
+  func typeParamList(self, params: [TypeParam]) -> string
+    why: "Emits Go type parameter list [T any, U cmp.Ordered]. Unconstrained params get 'any'. Returns empty string when params is empty."
 
   source: ["transpiler.go"]
 }
