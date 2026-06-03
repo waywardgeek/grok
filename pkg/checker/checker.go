@@ -3,6 +3,7 @@ package checker
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/waywardgeek/grok/pkg/ast"
 )
@@ -957,6 +958,10 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 		Fields:  make(map[string]*Type),
 		Methods: make(map[string]*Type),
 	}
+	// Ctor params become struct fields
+	for _, p := range cls.CtorParams {
+		info.Fields[p.Name] = c.resolveTypeExpr(&p.Type)
+	}
 	for _, f := range cls.Fields {
 		info.Fields[f.Name] = c.resolveTypeExpr(&f.Type)
 	}
@@ -1032,7 +1037,14 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 	}
 	for _, f := range sl.Fields {
 		valType := c.checkExpr(&f.Value)
-		if fieldType, ok := info.Fields[f.Name]; ok {
+		// Try both the literal field name and lowercase version (Grok uses lowercase,
+		// struct literals may use Go-exported names)
+		fieldType, ok := info.Fields[f.Name]
+		if !ok {
+			lower := strings.ToLower(f.Name[:1]) + f.Name[1:]
+			fieldType, ok = info.Fields[lower]
+		}
+		if ok {
 			if !fieldType.Equal(valType) && valType.Kind != TyUnknown && fieldType.Kind != TyUnknown {
 				c.error(expr.Span, "field %s: expected %s, got %s", f.Name, fieldType, valType)
 			}

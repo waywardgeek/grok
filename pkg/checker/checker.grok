@@ -7,9 +7,9 @@ grok Checker {
     The checker performs a single forward pass over the AST:
 
     1. Registration Phase: walks all structs, classes, enums, and top-level functions
-       in each GrokBlock, registering them into a type Registry. This makes all
-       user-defined types available before checking function bodies — forward
-       references work naturally.
+       in each GrokBlock, registering them into a type Registry. Class ctor params
+       are registered as fields (alongside explicit Fields), enabling struct literal
+       validation. Case-insensitive field lookup handles Grok→Go name capitalization.
 
     2. Checking Phase: walks function bodies (statements and expressions),
        performing type inference and validation. Each expression returns its
