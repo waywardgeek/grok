@@ -1,33 +1,74 @@
 // parser.grok — the Grok parser's own understanding
 
 grok Parser {
-  why: "PEG parser for .grok and .gk files. Produces a typed AST."
+  why: "Frontend of the Grok toolchain. Transforms raw Grok source into a structured AST via a two-phase pipeline: hand-written stateful lexer + recursive descent parser following PEG principles."
 
   doc "Architecture": """
-    Two-phase parsing: lexer produces tokens, parser consumes tokens
-    via PEG combinators. The grammar is defined declaratively as PEG
-    rules. .grok files use the declaration-only subset; .gk files
-    extend with function bodies and control flow.
+    Linear pipeline: raw text → Lexer (tokens) → Parser (AST).
+
+    1. Lexical Analysis: Lexer scans char-by-char producing Token objects. Stateful:
+       tracks line/column for source mapping, handles triple-quoted strings, collapses
+       multiple newlines into single TNewline tokens.
+    2. Syntactic Analysis: Parser consumes token stream via recursive descent. Each
+       major construct has a corresponding method (parseStruct, parseFunc, etc.).
+       Largely LL(1) but uses lookahead with state save/restore for ambiguous cases.
+    3. AST Construction: Parser instantiates nodes from pkg/ast. Every node gets a
+       Span for precise source location. Output is ast.File.
   """
 
   doc "Key Decisions": """
-    PEG over LALR: no ambiguity, ordered choice, composable.
-    Single AST for both .grok and .gk: .grok is a strict subset.
-    Positions tracked on every node for error reporting.
+    PEG over LALR: no ambiguity, ordered choice, composable. Rejected tree-sitter
+    (external dependency, incremental parsing not needed for verification use case)
+    and parser generators (hand-written gives full control over error messages).
+
+    Single AST for both .grok and .gk: .grok is the declaration-only subset.
+    FuncDecl.Body is nil for .grok files.
+
+    Positions tracked on every node via Span — memory cost accepted for
+    high-quality error reporting and future IDE integration.
   """
 
-  // ---- Source positions ----
+  doc "Contextual Keywords": """
+    Grok uses many keywords that are also common identifiers: why, doc, source,
+    requires, ensures, concurrent, etc. The lexer tokenizes them as distinct
+    TokenKinds, but the parser's expectIdentLike() accepts keyword tokens as
+    identifiers when in field/param position. This is essential for self-referential
+    .grok files where fields are named "source", "where", "requires", etc.
+  """
 
-  struct Pos {
-    file:   string
-    line:   int
-    column: int
-  }
+  doc "Lookahead and State Restoration": """
+    For constructs that aren't LL(1), the parser saves the entire Lexer state
+    (simple struct copy), performs a trial parse, and restores on failure. Used for:
+    - isWhyAnnotation(): distinguishes `why: "desc"` annotation from `why: TypeExpr`
+      field by looking ahead for string vs type
+    - Tuple field labels: determines if (x: T, y: U) has labels or is positional
+    Cost is negligible — Lexer is a small struct, and ambiguities are rare.
+  """
 
-  struct Span {
-    start: Pos
-    end:   Pos
-  }
+  doc "Recursive Type Parsing": """
+    parseTypeExpr handles Grok's full recursive type system: sequences [T],
+    tuples (T, U), maps map[K]V, channels channel<T>, optionals T?, unions A | B,
+    function types A -> B. Uses a "base type" approach to handle precedence:
+    parse base → check for ? suffix → check for | infix → check for -> infix.
+  """
+
+  doc "Relation Parsing": """
+    Unique syntax: `relation [hint] Parent[:label] owns|refs [Child[:label]]`
+    Hint is optional (DoublyLinked, ArrayList, Hashed). Brackets around child type
+    indicate one-to-many (IsMany). Labels on both sides support named navigation
+    paths (Node:outEdges owns [Edge:fromNode]).
+  """
+
+  doc "Technical Debt": """
+    - Error recovery: currently fail-fast (first error). Synchronizing on next
+      grok block would improve IDE/bulk-processing experience.
+    - Expression parsing: requires/ensures capture raw text strings. Full expression
+      parser needed for formal verification of preconditions/postconditions.
+    - Function bodies: signatures only — no statements/expressions yet for .gk.
+    - Multi-line arrays: source: [...] must be single-line (parser limitation).
+    - Performance: state-restoration lookahead is simple but could be optimized
+      for extremely large files if parsing becomes a bottleneck.
+  """
 
   // ---- Token layer ----
 
@@ -41,7 +82,7 @@ grok Parser {
     LParen RParen LBrace RBrace LBracket RBracket
     Comma Colon ColonColon Dot Arrow FatArrow Pipe Question
     Lt Gt
-    // Annotations
+    // Annotations — tokenized separately but accepted as idents via expectIdentLike()
     Why Doc Invariant Requires Ensures Raises
     Concurrent RequiresLock ExcludesLock GuardedBy
     Spawns Pure Source Fake VerifiedAt
@@ -56,209 +97,29 @@ grok Parser {
   }
 
   class Lexer(source: string, filename: string) {
-    why: "Converts source text into a stream of tokens. Used by Parser."
+    why: "Stateful scanner. Handles triple-quoted strings (auto-trims leading/trailing whitespace lines), collapses newline sequences, tracks line/column. State is copyable for parser lookahead save/restore."
 
     func Next(mut self) -> Token
     func Peek(self) -> Token
   }
 
-  // ---- AST nodes ----
-
-  struct TypeExpr {
-    why: "All type expressions: named, optional, union, sequence, map, tuple, function, channel."
-    span: Span
-    kind: TypeExprKind
+  struct ParseError {
+    why: "Implements Go error interface. Includes Span for filename:line:column error messages."
+    Message: string
+    Span:    Span
   }
-
-  enum TypeExprKind {
-    Named(name: string, args: [TypeExpr])           // T, Stack<T>, map[K]V
-    Optional(inner: TypeExpr)                        // T?
-    Union(variants: [TypeExpr])                      // T | U
-    Sequence(elem: TypeExpr)                         // [T]
-    MapType(key: TypeExpr, value: TypeExpr)           // map[K]V
-    Tuple(fields: [TupleField])                      // (T, U) or (x: T, y: U)
-    FuncType(params: [TypeExpr], ret: TypeExpr)      // T -> U, (T, U) -> V
-    Channel(elem: TypeExpr)                          // channel<T>
-    Lock                                             // lock
-    Unit                                             // unit
-  }
-
-  struct TupleField {
-    name: string     // empty for positional
-    type: TypeExpr
-  }
-
-  struct Param {
-    name:    string
-    type:    TypeExpr
-    IsMut:  bool      // true for `mut self`
-    IsSelf: bool
-    span:    Span
-  }
-
-  struct WhereClause {
-    variable:   string      // T
-    constraint: string      // Integer, Comparable, etc.
-    span:       Span
-  }
-
-  struct FuncDecl {
-    name:        string
-    params:      [Param]
-    ReturnType: TypeExpr?
-    where:       [WhereClause]
-    annotations: Annotations
-    // body: Block?       // future: present in .gk files, not yet in Go AST
-    span:        Span
-  }
-
-  struct Annotations {
-    why:           string
-    concurrent:    bool?
-    RequiresLock: [string]
-    ExcludesLock: [string]
-    raises:        [string]
-    requires:      [string]     // precondition expressions
-    ensures:       [string]     // postcondition expressions
-    spawns:        bool
-    pure:          bool
-  }
-
-  struct Field {
-    name:       string
-    type:       TypeExpr
-    GuardedBy: string
-    why:        string
-    span:       Span
-  }
-
-  struct ClassDecl {
-    name:           string
-    TypeParams:    [TypeParam]
-    CtorParams:    [Param]
-    implements:     [string]
-    fields:         [Field]
-    methods:        [FuncDecl]
-    why:            string
-    source:         [string]
-    span:           Span
-  }
-
-  struct TypeParam {
-    name:       string      // T
-    constraint: string     // Integer, Comparable, etc.
-    span:       Span
-  }
-
-  struct StructDecl {
-    name:        string
-    TypeParams: [TypeParam]
-    fields:      [Field]
-    why:         string
-    span:        Span
-  }
-
-  struct EnumVariant {
-    name:   string
-    fields: [TupleField]
-    span:   Span
-  }
-
-  struct EnumDecl {
-    name:        string
-    TypeParams: [TypeParam]
-    variants:    [EnumVariant]
-    why:         string
-    span:        Span
-  }
-
-  struct InterfaceDecl {
-    name:        string
-    TypeParams: [TypeParam]
-    implements:  [string]          // composed interfaces
-    methods:     [FuncDecl]
-    why:         string
-    span:        Span
-  }
-
-  enum RelationKind { Owns Refs }
-
-  struct RelationSide {
-    TypeName: string
-    label:     string
-  }
-
-  struct RelationDecl {
-    hint:     string           // DoublyLinked, ArrayList, Hashed
-    parent:   RelationSide
-    kind:     RelationKind
-    child:    RelationSide
-    IsMany:  bool              // [Child] vs Child
-    span:     Span
-  }
-
-  struct DocBlock {
-    section: string             // "Architecture", "Key Decisions", etc.
-    content: string
-    span:    Span
-  }
-
-  struct InvariantDecl {
-    claim:       string
-    VerifiedAt: string
-    span:        Span
-  }
-
-  struct ImportDecl {
-    alias:  string
-    path:   string
-    span:   Span
-  }
-
-  struct GrokBlock {
-    name:       string
-    why:        string
-    imports:    [ImportDecl]
-    docs:       [DocBlock]
-    invariants: [InvariantDecl]
-    structs:    [StructDecl]
-    enums:      [EnumDecl]
-    interfaces: [InterfaceDecl]
-    classes:    [ClassDecl]
-    functions:  [FuncDecl]
-    relations:  [RelationDecl]
-    source:     [string]
-    fake:       string
-    span:       Span
-  }
-
-  struct File {
-    why: "Top-level AST node. A file contains one or more grok blocks plus top-level imports."
-    filename: string
-    blocks:   [GrokBlock]
-    span:     Span
-  }
-
-  // ---- Parser ----
-  // ---- Error reporting ----
-
-  // ---- Parser ----
 
   class Parser(lex: Lexer) {
-    why: "PEG parser. Consumes tokens from Lexer, produces AST. Internal methods are unexported."
-  }
-
-  class ParseError(Message: string, Span: Span) implements error {
-    func Error(self) -> string
+    why: "Recursive descent parser. Consumes tokens from Lexer, produces ast.File. Internal methods (parseStruct, parseFunc, parseTypeExpr, etc.) are unexported — only ParseFile/ParseString are public entry points."
   }
 
   // ---- Public API ----
 
   func ParseFile(source: string, filename: string) -> (File?, error)
-    why: "Entry point. Parses a .grok or .gk file into an AST."
+    why: "Primary entry point. Manages lexer/parser lifecycle, returns AST or ParseError."
 
   func ParseString(source: string) -> (File?, error)
-    why: "Convenience. Uses '<string>' as filename."
+    why: "Convenience wrapper using '<string>' as filename. Ideal for tests and dynamic snippets."
 
-  source: ["lexer.go", "parser.go", "../ast/ast.go"]
+  source: ["lexer.go", "parser.go"]
 }

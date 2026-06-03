@@ -1,13 +1,60 @@
 // ast.grok — the Grok AST's own understanding
 
 grok AST {
-  why: "Defines all AST node types for the Grok language. Both .grok and .gk files parse into these types."
+  why: "Foundational data model for the Grok language. Defines the Abstract Syntax Tree shared by both .grok (declaration-only) and .gk (full implementation) files. A leaf package with no internal dependencies — pure data structures consumed by parser and verifier."
 
   doc "Architecture": """
-    Single AST for both .grok (declaration-only) and .gk (full code).
-    .grok is a strict subset: FuncDecl.Body is nil.
-    Positions tracked on every node via Span for error reporting.
-    TypeExpr uses a tagged-union pattern: Kind discriminates, Data holds the payload.
+    The AST is a strict hierarchy rooted in File. A File contains one or more
+    GrokBlock nodes, each representing a logical grouping within a grok { ... }
+    block. This allows a single source file to contain multiple architectural
+    modules or namespaces.
+
+    Data flows in from the parser, which transforms raw source text into this tree.
+    Once constructed, the AST becomes the source of truth for the entire toolchain.
+    The verifier traverses it to compare against Go source; future tools (code
+    generation, language servers) will consume it too.
+
+    .grok is a strict subset of .gk: FuncDecl.Body is nil for .grok files.
+  """
+
+  doc "Tagged Union Pattern": """
+    TypeExpr uses a tagged union: Kind discriminates (TypeExprKind enum), Data holds
+    the typed payload (any). This avoids a deep interface hierarchy while supporting
+    deeply recursive types like map[string][(int, bool)?]. The tradeoff: Data is
+    untyped (any) so consumers must type-assert based on Kind. This is a pragmatic
+    choice for Go, which lacks native sum types — the Grok language itself would
+    express this as an enum with associated data.
+  """
+
+  doc "Positions and Error Reporting": """
+    Every major AST node carries a Span (start Pos, end Pos). This is a deliberate
+    memory-for-diagnostics tradeoff: it doubles the metadata per node but enables
+    precise error messages with filename, line, and column. Required for both the
+    verifier's drift reports and future IDE integration (language server).
+  """
+
+  doc "Annotations as First-Class AST": """
+    The Annotations struct captures Grok's safety and concurrency metadata: pure,
+    spawns, RequiresLock, ExcludesLock, GuardedBy, requires (preconditions), ensures
+    (postconditions). These are not comments — they are first-class AST members
+    intended for formal verification. Currently requires/ensures capture raw text
+    strings; a future expression parser will structure them.
+  """
+
+  doc "Relations": """
+    RelationDecl models explicit ownership and reference relationships between types.
+    Two kinds: Owns (lifetime control, implies cascade delete) and Refs (no lifetime
+    control). Supports cardinality (IsMany via [Child] brackets), labeled sides
+    (Node:outEdges owns [Edge:fromNode]), and implementation hints (DoublyLinked,
+    ArrayList, Hashed). Relations auto-generate destructors in the language spec,
+    eliminating memory safety bugs.
+  """
+
+  doc "Technical Debt": """
+    - FuncDecl.Body: no field yet for function bodies (.gk support)
+    - No semantic validation: no checks for circular interface inheritance or duplicate fields
+    - No serialization: no JSON/protobuf support for external tooling or caching
+    - No Visitor pattern: as node types grow, traversal logic in verifier will get unwieldy
   """
 
   // ---- Source positions ----
@@ -26,7 +73,7 @@ grok AST {
   // ---- Type expressions ----
 
   struct TypeExpr {
-    why: "All type expressions. Kind discriminates; Data holds the typed payload."
+    why: "All type expressions. Kind discriminates; Data holds the typed payload (any — see Tagged Union Pattern doc)."
     kind: TypeExprKind
     data: any
     span: Span
@@ -108,6 +155,7 @@ grok AST {
   }
 
   struct Annotations {
+    why: "Safety and concurrency metadata — first-class AST members, not comments."
     why:           string
     concurrent:    bool?
     RequiresLock: [string]
@@ -120,6 +168,7 @@ grok AST {
   }
 
   struct FuncDecl {
+    why: "Function or method declaration. Body is nil for .grok files; will hold *Block for .gk."
     name:        string
     params:      [Param]
     ReturnType: TypeExpr?
@@ -137,6 +186,7 @@ grok AST {
   }
 
   struct ClassDecl {
+    why: "Complex objects with fields, methods, constructor params, and interface satisfaction."
     name:        string
     TypeParams: [TypeParam]
     CtorParams: [Param]
@@ -149,6 +199,7 @@ grok AST {
   }
 
   struct StructDecl {
+    why: "Named records or tuples. No behavior, no identity — cannot be relation targets."
     name:        string
     TypeParams: [TypeParam]
     fields:      [Field]
@@ -171,6 +222,7 @@ grok AST {
   }
 
   struct InterfaceDecl {
+    why: "Method signatures with composition (implements). No inheritance — satisfaction only."
     name:        string
     TypeParams: [TypeParam]
     implements:  [string]
@@ -189,6 +241,7 @@ grok AST {
   }
 
   struct RelationDecl {
+    why: "Explicit ownership/reference relationship. See Relations doc."
     hint:     string
     parent:   RelationSide
     kind:     RelationKind
@@ -220,6 +273,7 @@ grok AST {
   // ---- Top-level ----
 
   struct GrokBlock {
+    why: "Primary container for declarations. A single file can hold multiple blocks for separate architectural modules."
     name:       string
     why:        string
     imports:    [ImportDecl]
@@ -237,7 +291,7 @@ grok AST {
   }
 
   struct File {
-    why: "Top-level AST node."
+    why: "Root AST node. Entry point for any parsed Grok source."
     filename: string
     blocks:   [GrokBlock]
     span:     Span

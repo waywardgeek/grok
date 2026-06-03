@@ -1,0 +1,37 @@
+{
+  "initial_expert_pass": {
+    "pkg/ast": true,
+    "pkg/parser": true,
+    "pkg/verifier": true
+  },
+  "scout_pass": true,
+  "final_expert_pass": {
+    "pkg/ast": true,
+    "pkg/parser": true,
+    "pkg/verifier": true
+  },
+  "file_hashes": {
+    "pkg/ast": {
+      "ast.go": "f887452b5bd890287504f2d1ce2ffbb217f8bc202729b16d731aaeb599c693e8"
+    },
+    "pkg/parser": {
+      "lexer.go": "dec255915d506d50a5c4eee459593e3369a7b964acb9fb697d6a20ab252cd8db",
+      "lexer_test.go": "410d81f55fe3d9b9cf4880e1fb23df9e7de7c1f34dcb8228fecb65996ca6bf9d",
+      "parser.go": "8edb3f0df07df23cfdcf242058fb5338b885c795df9ca6bf3d0460b1091e9e74",
+      "parser_test.go": "17e034b9d3e06c830381f78e0a6b5f4c303407ecd83fa922ad084bfe94e765ec"
+    },
+    "pkg/verifier": {
+      "verifier.go": "c5751c59a8431eb1516c854f4cce1151f4008348e4b2ef18e683649e9ca9d6f3",
+      "verifier_test.go": "0224225bb7651a0aef4093bd60e739536bf494a835df4dec61a4a4e8f9bed177"
+    }
+  },
+  "processed_files": [
+    "[initial] /Users/bill/projects/grok/pkg/ast/design.md",
+    "[initial] /Users/bill/projects/grok/pkg/parser/design.md",
+    "[initial] /Users/bill/projects/grok/pkg/verifier/design.md",
+    "[synthesis] project-design.md",
+    "[refined] /Users/bill/projects/grok/pkg/ast/design.md",
+    "[refined] /Users/bill/projects/grok/pkg/parser/design.md",
+    "[refined] /Users/bill/projects/grok/pkg/verifier/design.md"
+  ]
+}

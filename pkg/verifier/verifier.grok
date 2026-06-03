@@ -1,22 +1,86 @@
 // verifier.grok — the Grok verifier's own understanding
 
 grok Verifier {
-  why: "Compares .grok understanding files against Go source code, reporting structural drift."
+  why: "Structural integrity engine. Detects architectural drift by performing deep, recursive comparison between .grok AST and Go source AST. Bridges two distinct type systems to ensure the developer's mental model stays synchronized with the codebase."
 
   doc "Architecture": """
-    Parse .grok file → AST (via pkg/parser). For each source: annotation,
-    parse the Go file(s) with go/ast. Aggregate all Go types, then compare
-    structurally: structs, classes, enums, interfaces, functions.
-    Deep type comparison: field types, param counts, return types.
-    Package-prefix stripping for cross-package type references.
+    Multi-stage analysis pipeline, stateless between calls but maintains significant
+    internal state during a single verification run:
+
+    1. Grok Parsing: delegates to pkg/parser to produce ast.File from .grok source
+    2. Go Source Discovery: inspects source: annotations in each grok block to locate
+       Go files. Paths are relative to the .grok file's directory.
+    3. Go Type Extraction: uses go/parser and go/ast to parse Go source, populates
+       goTypeInfo — a comprehensive registry of all structs, interfaces, functions,
+       and type definitions across all specified source files.
+    4. Structural Comparison: recursively walks the Grok AST, comparing each
+       declaration against aggregated Go types. Normalizes naming conventions and
+       type expressions on the fly. Accumulates findings into Result.
+
+    Critical design choice: aggregate ALL source files before comparing (not per-file).
+    A grok block's types may span multiple Go files within the same package.
   """
 
-  doc "Key Decisions": """
-    Aggregate all source files before comparing (not per-file).
-    Three severity levels: Error (missing/wrong type), Warning (extra fields), Info (undocumented Go methods).
-    Enums check for typedef, struct, and interface forms in Go.
-    Classes map to Go structs with methods; ctor params checked as fields.
-    Grok T? maps to Go *T; Go zero-value optionals (string) should be string not string?.
+  doc "Type Mapping and Comparison": """
+    Bridging Grok to Go requires sophisticated normalization:
+
+    Name mapping (three-way): snakeToPascal (exported Go fields/methods),
+    snakeToCamel (unexported), and exact match. The verifier tries all three
+    when matching field/method names.
+
+    Type normalization via grokTypeToGoString(): recursively converts Grok TypeExpr
+    nodes into Go type string equivalents:
+      T?        → *T         (optional = pointer)
+      [T]       → []T        (sequence = slice)
+      map[K]V   → map[K]V    (direct)
+      (T, U)    → (T, U)     (tuple = multi-return)
+      any       ≡ interface{} (Go 1.18+ equivalence)
+
+    Package-prefix stripping is recursive: *ast.File → *File, []ast.Node → []Node,
+    map[string]*ast.File → map[string]*File. This allows .grok files to use
+    unqualified type names while Go source uses cross-package references.
+
+    typesMatch() returns true for unconvertible "?" types (graceful fallback —
+    don't report false positives for types the converter can't handle).
+  """
+
+  doc "Verification Rules": """
+    Partitioned by declaration type, each with specific rules:
+
+    Structs: check field existence and type compatibility. Extra Go fields not in
+    .grok are warnings (encourage documentation). Missing .grok fields are errors.
+
+    Classes: same as structs, plus constructor params checked as fields, plus
+    method signature verification (param count, positional type matching).
+    Grok's `self` param is excluded from positional count when comparing against
+    Go's receiver-based methods.
+
+    Interfaces: every method in Grok interface must exist in Go with matching
+    signature (params + returns).
+
+    Enums: checks three Go forms — typedef (type X int), struct, and interface.
+
+    Functions: positional param comparison and return type matching. Multi-return
+    in Go maps to tuple returns in Grok, compared element-wise.
+  """
+
+  doc "Severity Levels": """
+    Error:   fundamental mismatch — missing type, wrong field type, signature mismatch.
+             These should fail a build/CI.
+    Warning: minor drift — extra Go fields not documented in .grok, constructor
+             parameter mismatches. Encourages completeness.
+    Info:    context — additional Go methods not in .grok interface. Expected and
+             correct for .grok files that capture cross-file public concepts only.
+  """
+
+  doc "Technical Debt": """
+    - Expression verification: requires/ensures are raw strings, not parsed expressions
+    - Pointer nuances: basic T? → *T works but complex indirection causes false positives
+    - Import resolution: stripPackagePrefix is heuristic — doesn't verify that Grok's
+      File actually refers to the same ast.File used in Go code
+    - Performance: re-parses Go files for every grok block — needs cache for large projects
+    - func types: map[string]func(...) can't be expressed in Grok (typed as any, causes
+      known false-positive errors)
   """
 
   // ---- Severity ----
@@ -26,6 +90,7 @@ grok Verifier {
   // ---- Findings ----
 
   struct Finding {
+    why: "Single discrepancy record with severity, file locations, and descriptive message."
     Severity: Severity
     GrokFile: string
     GoFile:   string
@@ -33,6 +98,7 @@ grok Verifier {
   }
 
   class Result() {
+    why: "Container for verification findings. ErrorCount() determines if drift should fail a build."
     Findings: [Finding]
 
     func ErrorCount(self) -> int
@@ -41,7 +107,7 @@ grok Verifier {
   // ---- Public API ----
 
   func Verify(grokPath: string) -> (Result?, error)
-    why: "Entry point. Parses .grok, finds source files, compares structurally."
+    why: "Primary entry point. Orchestrates the full pipeline: parse .grok → discover Go sources → extract types → compare structurally → return findings."
 
   source: ["verifier.go"]
 }
