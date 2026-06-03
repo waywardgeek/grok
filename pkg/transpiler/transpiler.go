@@ -479,6 +479,197 @@ func (t *Transpiler) transpileFunc(fn *ast.FuncDecl, receiver string) {
 	}
 }
 
+// --- Built-in Methods ---
+
+// transpileBuiltinMethod handles method calls on built-in types (string, list, map).
+// Returns true if handled, false if the caller should use default method call emission.
+func (t *Transpiler) transpileBuiltinMethod(mc *ast.MethodCallExpr) bool {
+	ct, ok := mc.Receiver.ResolvedType.(*checker.Type)
+	if !ok || ct == nil {
+		return false
+	}
+	switch ct.Kind {
+	case checker.TyString:
+		return t.transpileStringMethod(mc)
+	case checker.TyList:
+		return t.transpileListMethod(mc)
+	case checker.TyMap:
+		return t.transpileMapMethod(mc)
+	}
+	return false
+}
+
+func (t *Transpiler) transpileStringMethod(mc *ast.MethodCallExpr) bool {
+	switch mc.Method {
+	case "len":
+		t.writef("len(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")")
+	case "contains":
+		t.autoImports["strings"] = true
+		t.writef("strings.Contains(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(")")
+	case "has_prefix":
+		t.autoImports["strings"] = true
+		t.writef("strings.HasPrefix(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(")")
+	case "has_suffix":
+		t.autoImports["strings"] = true
+		t.writef("strings.HasSuffix(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(")")
+	case "to_upper":
+		t.autoImports["strings"] = true
+		t.writef("strings.ToUpper(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")")
+	case "to_lower":
+		t.autoImports["strings"] = true
+		t.writef("strings.ToLower(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")")
+	case "trim":
+		t.autoImports["strings"] = true
+		t.writef("strings.TrimSpace(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")")
+	case "trim_left":
+		t.autoImports["strings"] = true
+		t.writef("strings.TrimLeft(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(`, " \t\n\r")`)
+	case "trim_right":
+		t.autoImports["strings"] = true
+		t.writef("strings.TrimRight(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(`, " \t\n\r")`)
+	case "replace":
+		t.autoImports["strings"] = true
+		t.writef("strings.ReplaceAll(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[1])
+		t.writef(")")
+	case "split":
+		t.autoImports["strings"] = true
+		t.writef("strings.Split(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(")")
+	case "index_of":
+		t.autoImports["strings"] = true
+		t.writef("strings.Index(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(")")
+	case "repeat":
+		t.autoImports["strings"] = true
+		t.writef("strings.Repeat(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", int(")
+		t.transpileExpr(&mc.Args[0])
+		t.writef("))")
+	default:
+		return false
+	}
+	return true
+}
+
+func (t *Transpiler) transpileListMethod(mc *ast.MethodCallExpr) bool {
+	switch mc.Method {
+	case "len":
+		t.writef("len(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")")
+	case "push":
+		// list.push(x) → list = append(list, x)
+		t.transpileExpr(&mc.Receiver)
+		t.writef(" = append(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(")")
+	case "pop":
+		// list.pop() → list[len(list)-1] (caller must also shrink; simplified)
+		t.transpileExpr(&mc.Receiver)
+		t.writef("[len(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")-1]")
+	case "contains":
+		t.autoImports["slices"] = true
+		t.writef("slices.Contains(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(")")
+	case "reverse":
+		t.autoImports["slices"] = true
+		t.writef("slices.Reverse(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")")
+	case "join":
+		t.autoImports["strings"] = true
+		t.writef("strings.Join(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(", ")
+		t.transpileExpr(&mc.Args[0])
+		t.writef(")")
+	default:
+		return false
+	}
+	return true
+}
+
+func (t *Transpiler) transpileMapMethod(mc *ast.MethodCallExpr) bool {
+	ct, _ := mc.Receiver.ResolvedType.(*checker.Type)
+	keyGoType := "any"
+	valGoType := "any"
+	if ct != nil {
+		if ct.Key != nil {
+			keyGoType = checkerTypeToGo(ct.Key)
+		}
+		if ct.Val != nil {
+			valGoType = checkerTypeToGo(ct.Val)
+		}
+	}
+	switch mc.Method {
+	case "len":
+		t.writef("len(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")")
+	case "contains_key":
+		t.writef("func() bool { _, _ok := ")
+		t.transpileExpr(&mc.Receiver)
+		t.writef("[")
+		t.transpileExpr(&mc.Args[0])
+		t.writef("]; return _ok }()")
+	case "keys":
+		t.writef("func() []%s { var _keys []%s; for _k := range ", keyGoType, keyGoType)
+		t.transpileExpr(&mc.Receiver)
+		t.writef(" { _keys = append(_keys, _k) }; return _keys }()")
+	case "values":
+		t.writef("func() []%s { var _vals []%s; for _, _v := range ", valGoType, valGoType)
+		t.transpileExpr(&mc.Receiver)
+		t.writef(" { _vals = append(_vals, _v) }; return _vals }()")
+	default:
+		return false
+	}
+	return true
+}
+
+
 // --- Statements ---
 
 func (t *Transpiler) transpileStmts(stmts []ast.Stmt) {
@@ -971,6 +1162,9 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		}
 	case ast.ExprMethodCall:
 		mc := expr.Data.(*ast.MethodCallExpr)
+		if t.transpileBuiltinMethod(mc) {
+			break
+		}
 		t.transpileExpr(&mc.Receiver)
 		t.writef(".%s(", exportName(mc.Method))
 		for i := range mc.Args {

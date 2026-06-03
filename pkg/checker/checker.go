@@ -832,11 +832,156 @@ func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 			}
 		}
 	}
+	// Built-in methods on primitive types
+	if ret := c.checkBuiltinMethod(recvType, mc.Method, mc.Args, expr); ret != nil {
+		return ret
+	}
 	// Check args but return unknown
 	for i := range mc.Args {
 		c.checkExpr(&mc.Args[i])
 	}
 	return TypeUnknown
+}
+
+// checkBuiltinMethod resolves methods on built-in types (string, list, map).
+// Returns nil if the method is not a known built-in.
+func (c *Checker) checkBuiltinMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type {
+	switch recvType.Kind {
+	case TyString:
+		return c.checkStringMethod(method, args, expr)
+	case TyList:
+		return c.checkListMethod(recvType, method, args, expr)
+	case TyMap:
+		return c.checkMapMethod(recvType, method, args, expr)
+	}
+	return nil
+}
+
+func (c *Checker) checkStringMethod(method string, args []ast.Expr, expr *ast.Expr) *Type {
+	switch method {
+	case "len":
+		c.expectArgs(method, args, 0, expr)
+		return &Type{Kind: TyInt, Bits: -1}
+	case "contains", "has_prefix", "has_suffix":
+		c.expectArgs(method, args, 1, expr)
+		if len(args) > 0 {
+			c.expectArgType(method, &args[0], 0, TypeString)
+		}
+		return TypeBool
+	case "to_upper", "to_lower", "trim", "trim_left", "trim_right":
+		c.expectArgs(method, args, 0, expr)
+		return TypeString
+	case "replace":
+		c.expectArgs(method, args, 2, expr)
+		for i := range args {
+			if i < 2 {
+				c.expectArgType(method, &args[i], i, TypeString)
+			}
+		}
+		return TypeString
+	case "split":
+		c.expectArgs(method, args, 1, expr)
+		if len(args) > 0 {
+			c.expectArgType(method, &args[0], 0, TypeString)
+		}
+		return ListType(TypeString)
+	case "index_of":
+		c.expectArgs(method, args, 1, expr)
+		if len(args) > 0 {
+			c.expectArgType(method, &args[0], 0, TypeString)
+		}
+		return &Type{Kind: TyInt, Bits: -1}
+	case "repeat":
+		c.expectArgs(method, args, 1, expr)
+		// Accept any integer type for count
+		if len(args) > 0 {
+			t := c.checkExpr(&args[0])
+			if !t.IsInteger() && t.Kind != TyUnknown {
+				c.error(args[0].Span, "%s: argument 1 must be integer, got %s", method, t)
+			}
+		}
+		return TypeString
+	}
+	return nil
+}
+
+func (c *Checker) checkListMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type {
+	elemType := recvType.Elem
+	if elemType == nil {
+		elemType = TypeUnknown
+	}
+	switch method {
+	case "len":
+		c.expectArgs(method, args, 0, expr)
+		return &Type{Kind: TyInt, Bits: -1}
+	case "push":
+		c.expectArgs(method, args, 1, expr)
+		if len(args) > 0 {
+			c.expectArgType(method, &args[0], 0, elemType)
+		}
+		return &Type{Kind: TyUnit}
+	case "pop":
+		c.expectArgs(method, args, 0, expr)
+		return elemType
+	case "contains":
+		c.expectArgs(method, args, 1, expr)
+		if len(args) > 0 {
+			c.expectArgType(method, &args[0], 0, elemType)
+		}
+		return TypeBool
+	case "reverse":
+		c.expectArgs(method, args, 0, expr)
+		return recvType
+	case "join":
+		c.expectArgs(method, args, 1, expr)
+		if len(args) > 0 {
+			c.expectArgType(method, &args[0], 0, TypeString)
+		}
+		return TypeString
+	}
+	return nil
+}
+
+func (c *Checker) checkMapMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type {
+	switch method {
+	case "len":
+		c.expectArgs(method, args, 0, expr)
+		return &Type{Kind: TyInt, Bits: -1}
+	case "contains_key":
+		c.expectArgs(method, args, 1, expr)
+		if len(args) > 0 && recvType.Key != nil {
+			c.expectArgType(method, &args[0], 0, recvType.Key)
+		}
+		return TypeBool
+	case "keys":
+		c.expectArgs(method, args, 0, expr)
+		if recvType.Key != nil {
+			return ListType(recvType.Key)
+		}
+		return ListType(TypeUnknown)
+	case "values":
+		c.expectArgs(method, args, 0, expr)
+		if recvType.Val != nil {
+			return ListType(recvType.Val)
+		}
+		return ListType(TypeUnknown)
+	}
+	return nil
+}
+
+// Helper: check expected arg count
+func (c *Checker) expectArgs(method string, args []ast.Expr, expected int, expr *ast.Expr) {
+	if len(args) != expected {
+		c.error(expr.Span, "%s expects %d arguments, got %d", method, expected, len(args))
+	}
+}
+
+// Helper: check arg type
+func (c *Checker) expectArgType(method string, arg *ast.Expr, idx int, expected *Type) {
+	t := c.checkExpr(arg)
+	if !c.assignableTo(t, expected) && t.Kind != TyUnknown {
+		c.error(arg.Span, "%s: argument %d: expected %s, got %s", method, idx+1, expected, t)
+	}
 }
 
 func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type {

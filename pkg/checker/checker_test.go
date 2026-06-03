@@ -1017,3 +1017,70 @@ func TestLenBuiltin(t *testing.T) {
 	}`)
 	expectNoErrors(t, c)
 }
+
+
+func TestBuiltinStringMethods(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func f() {
+			let s = "hello"
+			let l = s.len()
+			let u = s.to_upper()
+			let lo = s.to_lower()
+			let b = s.contains("ell")
+			let p = s.has_prefix("he")
+			let sx = s.has_suffix("lo")
+			let r = s.replace("l", "r")
+			let parts = s.split(",")
+			let idx = s.index_of("ll")
+			let t = s.trim()
+			let rep = s.repeat(3)
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestBuiltinStringMethodBadArgs(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func f() {
+			let s = "hello"
+			let _ = s.contains(42)
+		}
+	}`)
+	expectErrors(t, c, 1)
+}
+
+func TestBuiltinListMethods(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func f() {
+			let mut xs: [i32] = []
+			xs.push(10)
+			let l = xs.len()
+			let b = xs.contains(10)
+			let last = xs.pop()
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestBuiltinListJoin(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func f() {
+			let words = ["a", "b", "c"]
+			let joined = words.join(", ")
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestBuiltinMapMethods(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func f() {
+			let m = map[string]i32{"a": 1}
+			let l = m.len()
+			let b = m.contains_key("a")
+			let ks = m.keys()
+			let vs = m.values()
+		}
+	}`)
+	expectNoErrors(t, c)
+}

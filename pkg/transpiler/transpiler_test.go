@@ -621,3 +621,56 @@ func TestTranspileLenAppend(t *testing.T) {
 		t.Errorf("expected append(xs, int32(4)), got:\n%s", out)
 	}
 }
+
+
+func TestTranspileStringMethods(t *testing.T) {
+	out := transpileWithChecker(t, `grok test {
+		func main() {
+			let s = "hello"
+			println(s.to_upper())
+			println(s.contains("x"))
+			let parts = s.split(",")
+			println(s.replace("l", "r"))
+		}
+	}`)
+	if !strings.Contains(out, "strings.ToUpper(s)") {
+		t.Error("expected strings.ToUpper(s)")
+	}
+	if !strings.Contains(out, `strings.Contains(s, "x")`) {
+		t.Error("expected strings.Contains")
+	}
+	if !strings.Contains(out, `strings.Split(s, ",")`) {
+		t.Error("expected strings.Split")
+	}
+	if !strings.Contains(out, `strings.ReplaceAll(s, "l", "r")`) {
+		t.Error("expected strings.ReplaceAll")
+	}
+}
+
+func TestTranspileListMethods(t *testing.T) {
+	out := transpileWithChecker(t, `grok test {
+		func main() {
+			let mut xs: [i32] = []
+			xs.push(10)
+			println(xs.len())
+		}
+	}`)
+	if !strings.Contains(out, "xs = append(xs") {
+		t.Error("expected append pattern for push")
+	}
+	if !strings.Contains(out, "len(xs)") {
+		t.Error("expected len(xs)")
+	}
+}
+
+func TestTranspileMapMethods(t *testing.T) {
+	out := transpileWithChecker(t, `grok test {
+		func main() {
+			let m = map[string]i32{"a": 1}
+			println(m.contains_key("a"))
+		}
+	}`)
+	if !strings.Contains(out, `_ok := m["a"]`) {
+		t.Error("expected contains_key IIFE pattern")
+	}
+}
