@@ -33,6 +33,35 @@ grok Grok {
        Error (fail build), Warning (encourage completeness), Info (context)
   """
 
+  doc "Contracts": """
+    The system relies on concrete data structures rather than Go interfaces, but
+    three critical contracts govern module interactions:
+
+    1. ast.File — the primary structural contract. Parser is the sole producer;
+       verifier is the primary consumer. Any future tool (codegen, LSP) consumes
+       this same contract without touching parser or verifier.
+    2. Result/Finding — the verifier's output contract. Consumed by CLI, CI
+       pipelines, and future IDE integrations. Severity-graded findings with
+       file locations and descriptive messages.
+    3. go/ast and go/parser — the verifier acts as a client to the Go compiler's
+       frontend, relying on these external interfaces to build its internal
+       representation of the implementation's reality.
+  """
+
+  doc "Dependency Constraints": """
+    The dependency graph is strictly layered and unidirectional — no circular
+    or upward dependencies. This is an enforced architectural constraint, not
+    an accident:
+
+      ast (leaf, stdlib only) ← parser (depends on ast) ← verifier (depends on both + go/ast)
+
+    The AST has no knowledge of how it is parsed. The parser has no knowledge of
+    how the AST will be verified. This information flow containment means each
+    module can evolve independently: adding a new AST node doesn't touch the
+    verifier unless you want to verify it; adding a new verification rule doesn't
+    touch the parser.
+  """
+
   doc "GDD Methodology": """
     Grok exists to support Grok-Driven Development. The .grok file is the primary
     design artifact — a machine-verifiable understanding of a codebase. The AI
