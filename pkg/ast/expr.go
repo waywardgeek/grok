@@ -28,9 +28,10 @@ const (
 
 // Expr is any expression node.
 type Expr struct {
-	Kind ExprKind
-	Data any // one of the *Lit, *CallExpr, etc. below
-	Span Span
+	Kind         ExprKind
+	Data         any  // one of the *Lit, *CallExpr, etc. below
+	Span         Span
+	ResolvedType any  // set by checker: *checker.Type (avoids import cycle via any)
 }
 
 type IdentExpr struct {

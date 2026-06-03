@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/waywardgeek/grok/pkg/ast"
+	"github.com/waywardgeek/grok/pkg/checker"
 )
 
 // Transpiler converts Grok AST to Go source.
@@ -281,7 +282,12 @@ func (t *Transpiler) transpileFunc(fn *ast.FuncDecl, receiver string) {
 		t.writef("(%s *%s) ", recvName, receiver)
 	}
 
-	t.writef("%s(", exportName(fn.Name))
+	// Special-case: Main -> main for Go entry point
+	funcName := exportName(fn.Name)
+	if fn.Name == "Main" && t.pkg == "main" {
+		funcName = "main"
+	}
+	t.writef("%s(", funcName)
 
 	// Parameters (skip self)
 	first := true
@@ -683,9 +689,54 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 
 func (t *Transpiler) transpileBinary(expr *ast.Expr) {
 	b := expr.Data.(*ast.BinaryExpr)
-	t.transpileExpr(&b.Left)
+	// If the binary expression has a resolved type and operands have different
+	// resolved types, insert explicit Go casts to the wider type.
+	var targetGoType string
+	if expr.ResolvedType != nil {
+		if rt, ok := expr.ResolvedType.(*checker.Type); ok && rt.IsNumeric() {
+			targetGoType = checkerTypeToGo(rt)
+		}
+	}
+	t.transpileExprWithCast(&b.Left, targetGoType)
 	t.writef(" %s ", binaryOpString(b.Op))
-	t.transpileExpr(&b.Right)
+	t.transpileExprWithCast(&b.Right, targetGoType)
+}
+
+// transpileExprWithCast emits an expression, wrapping it in a Go type cast if
+// its resolved type differs from the target type.
+func (t *Transpiler) transpileExprWithCast(expr *ast.Expr, targetGoType string) {
+	if targetGoType == "" || expr.ResolvedType == nil {
+		t.transpileExpr(expr)
+		return
+	}
+	if rt, ok := expr.ResolvedType.(*checker.Type); ok {
+		exprGoType := checkerTypeToGo(rt)
+		if exprGoType != targetGoType && exprGoType != "" {
+			t.writef("%s(", targetGoType)
+			t.transpileExpr(expr)
+			t.writef(")")
+			return
+		}
+	}
+	t.transpileExpr(expr)
+}
+
+// checkerTypeToGo converts a checker.Type to a Go type string.
+func checkerTypeToGo(ct *checker.Type) string {
+	switch ct.Kind {
+	case checker.TyInt:
+		return fmt.Sprintf("int%d", ct.Bits)
+	case checker.TyUint:
+		return fmt.Sprintf("uint%d", ct.Bits)
+	case checker.TyFloat:
+		return fmt.Sprintf("float%d", ct.Bits)
+	case checker.TyBool:
+		return "bool"
+	case checker.TyString:
+		return "string"
+	default:
+		return ""
+	}
 }
 
 func binaryOpString(op ast.BinaryOp) string {

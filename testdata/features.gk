@@ -1,9 +1,8 @@
 grok features {
-    // Test numeric widening: i32 assigned to i64 variable
-    func Widen(x: i32) -> i32 {
-        let mut y: i32 = 100
-        y = x
-        return y
+    // Test numeric widening: i32 + i64 should emit Go cast
+    func Widen(x: i32) -> i64 {
+        let y: i64 = 100
+        return x + y
     }
 
     // Test break/continue in loops

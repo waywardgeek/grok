@@ -400,6 +400,12 @@ func (c *Checker) checkExpr(expr *ast.Expr) *Type {
 	if expr == nil {
 		return TypeUnknown
 	}
+	t := c.inferExpr(expr)
+	expr.ResolvedType = t
+	return t
+}
+
+func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 	switch expr.Kind {
 	case ast.ExprIntLit:
 		return TypeI32 // default integer literal type
