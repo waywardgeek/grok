@@ -287,3 +287,50 @@ func assertContains(t *testing.T, got, want string) {
 		t.Errorf("output does not contain %q\n\ngot:\n%s", want, got)
 	}
 }
+
+func TestTranspileMatchExpr(t *testing.T) {
+	matchExpr := ast.Expr{
+		Kind: ast.ExprMatch,
+		Data: &ast.MatchStmt{
+			Value: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "x"}},
+			Arms: []ast.MatchArm{
+				{
+					Pattern: ast.Pattern{Kind: ast.PatLiteral, Data: &ast.LiteralPattern{
+						Expr: ast.Expr{Kind: ast.ExprIntLit, Data: &ast.IntLitExpr{Value: "1"}},
+					}},
+					Body: ast.Block{Stmts: []ast.Stmt{{
+						Kind: ast.StmtExpr,
+						Data: &ast.ExprStmt{Expr: ast.Expr{Kind: ast.ExprIntLit, Data: &ast.IntLitExpr{Value: "10"}}},
+					}}},
+				},
+				{
+					Pattern: ast.Pattern{Kind: ast.PatWildcard},
+					Body: ast.Block{Stmts: []ast.Stmt{{
+						Kind: ast.StmtExpr,
+						Data: &ast.ExprStmt{Expr: ast.Expr{Kind: ast.ExprIntLit, Data: &ast.IntLitExpr{Value: "0"}}},
+					}}},
+				},
+			},
+		},
+	}
+	file := &ast.File{
+		Blocks: []ast.GrokBlock{{
+			Functions: []ast.FuncDecl{{
+				Name: "f",
+				Body: &ast.Block{Stmts: []ast.Stmt{
+					{
+						Kind: ast.StmtVarDecl,
+						Data: &ast.VarDeclStmt{Name: "result", Value: &matchExpr},
+					},
+				}},
+			}},
+		}},
+	}
+	tr := New("main")
+	got := tr.Transpile(file)
+	assertContains(t, got, "func() any {")
+	assertContains(t, got, "switch _m :=")
+	assertContains(t, got, "return 10")
+	assertContains(t, got, "return 0")
+	assertContains(t, got, "}()")
+}

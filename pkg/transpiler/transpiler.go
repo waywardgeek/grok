@@ -627,8 +627,49 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		t.writeIndent()
 		t.writef("}")
 	case ast.ExprMatch:
-		// match-as-expression is harder in Go; emit a comment
-		t.writef("/* match expr */ nil")
+		// Match-as-expression in Go via IIFE: func() T { switch v { case ... } }()
+		m := expr.Data.(*ast.MatchStmt)
+		t.writef("func() any {\n")
+		t.indent++
+		t.writeIndent()
+		t.writef("switch _m := ")
+		t.transpileExpr(&m.Value)
+		t.writef("; _m {\n")
+		for _, arm := range m.Arms {
+			t.writeIndent()
+			t.writef("case ")
+			t.transpilePattern(&arm.Pattern)
+			t.writef(":\n")
+			t.indent++
+			// Last statement in arm body is the result — emit as return
+			if len(arm.Body.Stmts) > 0 {
+				for i := 0; i < len(arm.Body.Stmts)-1; i++ {
+					t.transpileStmt(&arm.Body.Stmts[i])
+				}
+				last := &arm.Body.Stmts[len(arm.Body.Stmts)-1]
+				if last.Kind == ast.StmtExpr {
+					t.writeIndent()
+					t.writef("return ")
+					exprStmt := last.Data.(*ast.ExprStmt)
+					t.transpileExpr(&exprStmt.Expr)
+					t.writef("\n")
+				} else {
+					t.transpileStmt(last)
+				}
+			}
+			t.indent--
+		}
+		t.writeIndent()
+		t.writef("default:\n")
+		t.indent++
+		t.writeIndent()
+		t.writef("return nil\n")
+		t.indent--
+		t.writeIndent()
+		t.writef("}\n")
+		t.indent--
+		t.writeIndent()
+		t.writef("}()")
 	}
 }
 
