@@ -216,33 +216,33 @@ func helper() {}
 		t.Fatalf("Verify failed: %v", err)
 	}
 
-	var warnings []string
+	var errors []string
 	for _, f := range result.Findings {
-		if f.Severity == Warning {
-			warnings = append(warnings, f.Message)
+		if f.Severity == Error {
+			errors = append(errors, f.Message)
 		}
 	}
 
-	// Should warn about Config (exported type) and ParseConfig (exported func)
-	// Should NOT warn about unexported or helper
-	assertWarning := func(substr string) {
-		for _, w := range warnings {
-			if strings.Contains(w, substr) {
+	// Should error about Config (exported type) and ParseConfig (exported func)
+	// Should NOT error about unexported or helper
+	assertError := func(substr string) {
+		for _, e := range errors {
+			if strings.Contains(e, substr) {
 				return
 			}
 		}
-		t.Errorf("expected warning containing %q, got: %v", substr, warnings)
+		t.Errorf("expected error containing %q, got: %v", substr, errors)
 	}
-	assertNoWarning := func(substr string) {
-		for _, w := range warnings {
-			if strings.Contains(w, substr) {
-				t.Errorf("unexpected warning containing %q: %s", substr, w)
+	assertNoError := func(substr string) {
+		for _, e := range errors {
+			if strings.Contains(e, substr) {
+				t.Errorf("unexpected error containing %q: %s", substr, e)
 			}
 		}
 	}
 
-	assertWarning("Config")
-	assertWarning("ParseConfig")
-	assertNoWarning("unexported")
-	assertNoWarning("helper")
+	assertError("Config")
+	assertError("ParseConfig")
+	assertNoError("unexported")
+	assertNoError("helper")
 }

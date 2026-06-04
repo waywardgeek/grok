@@ -352,6 +352,12 @@ grok Checker {
   func New() -> Checker?
     why: "Creates a Checker with fresh scope and registry. Registers built-in type 'error' as interface."
 
+  func NewRegistry() -> Registry?
+    why: "Creates an empty type registry for storing struct, class, enum, and interface declarations."
+
+  func NewScope(parent: Scope?) -> Scope?
+    why: "Creates a new lexical scope with an optional parent for variable lookup chaining."
+
   func substituteType(t: Type?, subst: map[string]Type?) -> Type?
     why: "Recursively replaces TyVar nodes in a type tree according to a substitution map. Handles List, Map, Optional, Tuple, Func composite types."
 

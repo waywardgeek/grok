@@ -213,6 +213,9 @@ grok Parser {
 
   // ---- Public API ----
 
+  func NewLexer(source: string, filename: string) -> Lexer?
+    why: "Creates a new Lexer for the given source text and filename."
+
   func ParseFile(source: string, filename: string) -> (File?, error)
     why: "Primary entry point. Manages lexer/parser lifecycle, returns AST or ParseError."
 

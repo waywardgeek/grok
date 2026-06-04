@@ -219,7 +219,7 @@ func verifyBlock(block grokast.GrokBlock, goInfo *goTypeInfo, grokPath string, r
 }
 
 // verifyCompleteness checks that all exported Go symbols in the source files
-// are documented in the .grok block. Reports warnings for missing symbols.
+// are documented in the .grok block. Reports errors for missing symbols.
 func verifyCompleteness(block grokast.GrokBlock, goInfo *goTypeInfo, grokPath, goFile string, result *Result) {
 	// Build set of all names declared in .grok
 	grokNames := make(map[string]bool)
@@ -265,7 +265,7 @@ func verifyCompleteness(block grokast.GrokBlock, goInfo *goTypeInfo, grokPath, g
 
 	sort.Strings(missingTypes)
 	for _, name := range missingTypes {
-		result.add(Warning, grokPath, goFile, fmt.Sprintf("exported type %s not documented in .grok", name))
+		result.add(Error, grokPath, goFile, fmt.Sprintf("exported type %s not documented in .grok", name))
 	}
 
 	// Check exported functions (not methods — those are checked per-struct already)
@@ -278,7 +278,7 @@ func verifyCompleteness(block grokast.GrokBlock, goInfo *goTypeInfo, grokPath, g
 
 	sort.Strings(missingFuncs)
 	for _, name := range missingFuncs {
-		result.add(Warning, grokPath, goFile, fmt.Sprintf("exported function %s not documented in .grok", name))
+		result.add(Error, grokPath, goFile, fmt.Sprintf("exported function %s not documented in .grok", name))
 	}
 
 }
@@ -765,7 +765,11 @@ func verifyClass(c grokast.ClassDecl, goInfo *goTypeInfo, grokFile, goFile strin
 	}
 	sort.Strings(extras)
 	for _, extra := range extras {
-		result.add(Info, grokFile, goFile, fmt.Sprintf("class %s: Go has method %s not in .grok", c.Name, extra))
+		if isExported(extra) {
+			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: exported method %s not documented in .grok", c.Name, extra))
+		} else {
+			result.add(Info, grokFile, goFile, fmt.Sprintf("class %s: Go has method %s not in .grok", c.Name, extra))
+		}
 	}
 }
 
