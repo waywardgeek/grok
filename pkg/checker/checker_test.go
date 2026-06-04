@@ -1240,3 +1240,49 @@ func TestUnionMatchInvalidType(t *testing.T) {
 		t.Error("expected error for matching non-member type 'bool'")
 	}
 }
+
+func TestConstraintViolation(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func max<T: Comparable>(a: T, b: T) -> T {
+			if a > b { return a }
+			return b
+		}
+		func f() {
+			let xs = [1, 2, 3]
+			let r = max<[i32]>(xs, xs)
+		}
+	}`)
+	if len(c.Errors()) == 0 {
+		t.Error("expected error for [i32] not satisfying Comparable constraint")
+	}
+}
+
+func TestConstraintSatisfied(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func max<T: Comparable>(a: T, b: T) -> T {
+			if a > b { return a }
+			return b
+		}
+		func f() {
+			let r = max<i32>(1, 2)
+		}
+	}`)
+	if len(c.Errors()) > 0 {
+		t.Errorf("unexpected errors: %v", c.Errors())
+	}
+}
+
+func TestConstraintInferred(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func max<T: Comparable>(a: T, b: T) -> T {
+			if a > b { return a }
+			return b
+		}
+		func f() {
+			let r = max("hello", "world")
+		}
+	}`)
+	if len(c.Errors()) > 0 {
+		t.Errorf("unexpected errors: %v", c.Errors())
+	}
+}

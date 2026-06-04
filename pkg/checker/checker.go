@@ -45,7 +45,8 @@ type Type struct {
 	Fields         []TypeField // for tuple
 	Params         []*Type     // for func: param types
 	Return         *Type       // for func: return type
-	TypeParamNames []string    // for func: generic type parameter names
+	TypeParamNames       []string    // for func: generic type parameter names
+	TypeParamConstraints []string    // for func: constraints (parallel to TypeParamNames)
 	Variants       []*Type    // for union: member types
 }
 
@@ -941,6 +942,16 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 	paramTypes := fnType.Params
 	retType := fnType.Return
 	if subst != nil {
+		// Validate constraints
+		for i, name := range fnType.TypeParamNames {
+			if i < len(fnType.TypeParamConstraints) && fnType.TypeParamConstraints[i] != "" {
+				if concreteType, ok := subst[name]; ok && concreteType != nil {
+					if !c.satisfiesConstraint(concreteType, fnType.TypeParamConstraints[i]) {
+						c.error(expr.Span, "type %s does not satisfy constraint %s", concreteType, fnType.TypeParamConstraints[i])
+					}
+				}
+			}
+		}
 		paramTypes = make([]*Type, len(fnType.Params))
 		for i, p := range fnType.Params {
 			paramTypes[i] = substituteType(p, subst)
@@ -1561,6 +1572,26 @@ func (c *Checker) checkMatch(stmt *ast.Stmt) {
 	}
 }
 
+// satisfiesConstraint checks whether a concrete type satisfies a named constraint.
+func (c *Checker) satisfiesConstraint(t *Type, constraint string) bool {
+	switch constraint {
+	case "Comparable":
+		// Comparable types: all numeric, string, bool
+		return t.IsNumeric() || t.Kind == TyString || t.Kind == TyBool
+	case "Equatable":
+		// Equatable: comparable in Go (==)
+		return t.IsNumeric() || t.Kind == TyString || t.Kind == TyBool
+	case "Hashable":
+		// Same as Equatable for now
+		return t.IsNumeric() || t.Kind == TyString || t.Kind == TyBool
+	case "":
+		return true // unconstrained
+	default:
+		// Unknown constraint — pass through (let Go handle it)
+		return true
+	}
+}
+
 // bindUnionPattern handles match arms for union types. PatIdent names are
 // resolved as type references (e.g. "string", "i32") and the implicit _m
 // variable is bound with the narrowed type.
@@ -1760,15 +1791,18 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 		ctorParams = append(ctorParams, c.resolveTypeExpr(&p.Type))
 	}
 	var typeParamNames []string
+	var typeParamConstraints []string
 	for _, tp := range cls.TypeParams {
 		typeParamNames = append(typeParamNames, tp.Name)
+		typeParamConstraints = append(typeParamConstraints, tp.Constraint)
 	}
 	c.scope.Define(cls.Name, &Type{
-		Kind:           TyFunc,
-		Name:           cls.Name,
-		Params:         ctorParams,
-		Return:         info.Type,
-		TypeParamNames: typeParamNames,
+		Kind:                 TyFunc,
+		Name:                 cls.Name,
+		Params:               ctorParams,
+		Return:               info.Type,
+		TypeParamNames:       typeParamNames,
+		TypeParamConstraints: typeParamConstraints,
 	})
 }
 
@@ -1889,10 +1923,12 @@ func (c *Checker) funcDeclToType(fn *ast.FuncDecl) *Type {
 		ret = c.resolveTypeExpr(fn.ReturnType)
 	}
 	var typeParamNames []string
+	var typeParamConstraints []string
 	for _, tp := range fn.TypeParams {
 		typeParamNames = append(typeParamNames, tp.Name)
+		typeParamConstraints = append(typeParamConstraints, tp.Constraint)
 	}
-	return &Type{Kind: TyFunc, Params: params, Return: ret, TypeParamNames: typeParamNames}
+	return &Type{Kind: TyFunc, Params: params, Return: ret, TypeParamNames: typeParamNames, TypeParamConstraints: typeParamConstraints}
 }
 
 func (c *Checker) checkFuncBody(fn *ast.FuncDecl) {
