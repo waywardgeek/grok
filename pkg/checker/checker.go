@@ -906,6 +906,13 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 			if !c.assignableTo(argType, paramTypes[i]) && argType.Kind != TyUnknown {
 				c.error(call.Args[i].Span, "argument %d: expected %s, got %s", i+1, paramTypes[i], argType)
 			}
+			// Propagate expected type to literal args so transpiler emits correct type
+			// (e.g. identity<i64>(100) should emit int64(100), not int32(100))
+			if call.Args[i].Kind == ast.ExprIntLit || call.Args[i].Kind == ast.ExprFloatLit {
+				if paramTypes[i].IsNumeric() {
+					call.Args[i].ResolvedType = paramTypes[i]
+				}
+			}
 		}
 	}
 	return retType
