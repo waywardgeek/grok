@@ -46,8 +46,9 @@ grok Transpiler {
 
     Classes: emit struct (ctor params + fields), and pointer-receiver methods.
     Class constructor calls (ClassName<T>(...)) emit as &ClassName[T]{Field: val}
-    using classCtorFields map for field names. Class struct literals emit with &
-    prefix (pointer) since methods use pointer receivers. The receiver name
+    using classCtorFields map for field names. Generic class constructors include
+    type params: func NewPair[T any](...) *Pair[T]. Class struct literals emit with
+    & prefix (pointer) since methods use pointer receivers. The receiver name
     defaults to "r". The selfName field tracks the current receiver name so
     `self` in expressions emits the correct Go name. Type parameters emitted.
 
@@ -81,13 +82,14 @@ grok Transpiler {
     - For: `for _, var := range collection` (discards index by default).
       When IndexVar is present: `for idx, var := range collection`.
     - While: `for condition { ... }`
-    - Match: when match value has enum ResolvedType, emits Go type switch
-      (switch _m := val.(type)). When match value has union ResolvedType,
-      emits type switch without binding (switch val.(type)). PatIdent arms
-      use Pattern.ResolvedType → checkerTypeToGo for correct Go type names.
-      (`switch _m := val.(type)`) with variant-typed cases and field extraction
-      (`r := _m.Radius`). For non-enum matches, emits regular `switch value { ... }`.
-      Wildcard → default:. Unit variants in match arms detected via PatIdent.
+    - Match: when match value has enum ResolvedType, emits Go type switch.
+      enumMatchNeedsBinding() scans arms to determine if any destructure variant
+      fields — only emits `_m := val.(type)` when bindings are needed, otherwise
+      emits `val.(type)` (avoids Go "_m declared and not used" error for unit-only
+      enum matches). When match value has union ResolvedType, emits type switch
+      without binding (switch val.(type)). PatIdent arms use Pattern.ResolvedType →
+      checkerTypeToGo for correct Go type names. For non-enum/union matches, emits
+      regular `switch value { ... }`. Wildcard → default:.
     - Cascade: `defer func() { ... }()`
     - Break/Continue: direct Go keywords
     - Block: bare `{ ... }` block
@@ -233,6 +235,9 @@ grok Transpiler {
 
   func checkerTypeToGo(ct: Type?) -> string
     why: "Converts checker.Type to Go type string. Handles composites recursively: TyList→[]T, TyMap→map[K]V, TyOptional→*T."
+
+  func enumMatchNeedsBinding(arms: [MatchArm]) -> bool
+    why: "Returns true if any match arm destructures variant fields, meaning the type switch needs '_m := val.(type)' rather than 'val.(type)'. Prevents Go unused-variable errors for unit-only enum matches."
 
   func binaryOpString(op: BinaryOp) -> string
 
