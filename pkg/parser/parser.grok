@@ -434,63 +434,63 @@ grok Parser {
 //
 // func (p *Parser) parsePostfixExpr() (*ast.Expr, error)    :158
 //
-// func (p *Parser) parseArgList() ([]ast.Expr, ast.Pos, error)    :331
+// func (p *Parser) parseArgList() ([]ast.Expr, ast.Pos, error)    :340
 //
-// func (p *Parser) parsePrimaryExpr() (*ast.Expr, error)    :352
+// func (p *Parser) parsePrimaryExpr() (*ast.Expr, error)    :361
 //
-// func (p *Parser) parseMapLit(mapTok Token) (*ast.Expr, error)    :504
+// func (p *Parser) parseMapLit(mapTok Token) (*ast.Expr, error)    :513
 //
-// func (p *Parser) parseMatchExpr() (*ast.Expr, error)    :561
+// func (p *Parser) parseMatchExpr() (*ast.Expr, error)    :570
 //
 // parseCastExpr parses <Type>expr — explicit type conversion.
-// func (p *Parser) parseCastExpr() (*ast.Expr, error)    :585
+// func (p *Parser) parseCastExpr() (*ast.Expr, error)    :594
 //
 // parseLambdaExpr parses |params| -> ReturnType { body } or |params| { body }
-// func (p *Parser) parseLambdaExpr() (*ast.Expr, error)    :609
+// func (p *Parser) parseLambdaExpr() (*ast.Expr, error)    :618
 //
 // parseBlock parses { stmts... }
-// func (p *Parser) parseBlock() (*ast.Block, error)    :681
+// func (p *Parser) parseBlock() (*ast.Block, error)    :690
 //
-// func (p *Parser) parseStmt() (*ast.Stmt, error)    :706
+// func (p *Parser) parseStmt() (*ast.Stmt, error)    :715
 //
-// func (p *Parser) parseVarDecl() (*ast.Stmt, error)    :747
+// func (p *Parser) parseVarDecl() (*ast.Stmt, error)    :756
 //
-// func (p *Parser) parseReturn() (*ast.Stmt, error)    :822
+// func (p *Parser) parseReturn() (*ast.Stmt, error)    :831
 //
-// func (p *Parser) parseIf() (*ast.Stmt, error)    :841
+// func (p *Parser) parseIf() (*ast.Stmt, error)    :850
 //
-// func (p *Parser) parseFor() (*ast.Stmt, error)    :889
+// func (p *Parser) parseFor() (*ast.Stmt, error)    :898
 //
-// func (p *Parser) parseWhile() (*ast.Stmt, error)    :924
+// func (p *Parser) parseWhile() (*ast.Stmt, error)    :933
 //
-// func (p *Parser) parseMatchStmt() (*ast.Stmt, error)    :942
+// func (p *Parser) parseMatchStmt() (*ast.Stmt, error)    :951
 //
-// func (p *Parser) parseMatchArms() ([]ast.MatchArm, error)    :964
+// func (p *Parser) parseMatchArms() ([]ast.MatchArm, error)    :973
 //
-// func (p *Parser) parsePattern() (*ast.Pattern, error)    :997
+// func (p *Parser) parsePattern() (*ast.Pattern, error)    :1006
 //
-// func (p *Parser) parseCascade() (*ast.Stmt, error)    :1088
+// func (p *Parser) parseCascade() (*ast.Stmt, error)    :1097
 //
-// func (p *Parser) parseSpawn() (*ast.Stmt, error)    :1102
+// func (p *Parser) parseSpawn() (*ast.Stmt, error)    :1111
 //
-// func (p *Parser) parseSelect() (*ast.Stmt, error)    :1116
+// func (p *Parser) parseSelect() (*ast.Stmt, error)    :1125
 //
-// func (p *Parser) parseSelectCase() (*ast.SelectCase, error)    :1142
+// func (p *Parser) parseSelectCase() (*ast.SelectCase, error)    :1151
 //
-// func (p *Parser) parseLock() (*ast.Stmt, error)    :1192
+// func (p *Parser) parseLock() (*ast.Stmt, error)    :1201
 //
-// func (p *Parser) parseExprOrAssign() (*ast.Stmt, error)    :1216
+// func (p *Parser) parseExprOrAssign() (*ast.Stmt, error)    :1225
 //
 // isStructLitAhead peeks past { to see if the first content is Ident: (field initializer).
-// func (p *Parser) isStructLitAhead() bool    :1278
+// func (p *Parser) isStructLitAhead() bool    :1287
 //
-// func (p *Parser) parseStructLit(nameTok Token) (*ast.Expr, error)    :1298
+// func (p *Parser) parseStructLit(nameTok Token) (*ast.Expr, error)    :1307
 //
 // parseFString processes the raw text of an f-string token, splitting on {expr}
-// func (p *Parser) parseFString(tok Token) (*ast.Expr, error)    :1335
+// func (p *Parser) parseFString(tok Token) (*ast.Expr, error)    :1344
 //
 // tryParseTypeArgs attempts to parse <TypeExpr, TypeExpr, ...> and consume the '>'.
-// func (p *Parser) tryParseTypeArgs() ([]ast.TypeExpr, bool)    :1398
+// func (p *Parser) tryParseTypeArgs() ([]ast.TypeExpr, bool)    :1407
 
 // --- dependencies ---
 //

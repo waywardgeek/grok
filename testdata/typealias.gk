@@ -10,6 +10,8 @@ grok typealias {
         println(names.len())
 
         let val: IntOrString = 42
+        println(val)
         let maybe: MaybeInt = 10
+        println(maybe)
     }
 }

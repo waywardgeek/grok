@@ -36,11 +36,12 @@ type Transpiler struct {
 	taglessSwitch     bool                        // true when emitting a tagless switch (case conditions are booleans)
 	declVis           map[string]bool             // Grok name → IsPublic for visibility-aware name resolution
 	methodVis         map[string]bool             // method name → IsPublic for method call emission
+	typeAliasGoType   map[string]string           // type alias name → underlying Go type string
 }
 
 // New creates a transpiler targeting the given Go package name.
 func New(pkg string) *Transpiler {
-	return &Transpiler{pkg: pkg, classes: make(map[string]bool), topFuncs: make(map[string]bool), autoImports: make(map[string]bool), variantCtors: make(map[string]*variantCtorInfo), unitVariants: make(map[string]string), classTypeParams: make(map[string][]ast.TypeParam), classCtorFields: make(map[string][]string), classCtorOptional: make(map[string][]bool), declVis: make(map[string]bool), methodVis: make(map[string]bool)}
+	return &Transpiler{pkg: pkg, classes: make(map[string]bool), topFuncs: make(map[string]bool), autoImports: make(map[string]bool), variantCtors: make(map[string]*variantCtorInfo), unitVariants: make(map[string]string), classTypeParams: make(map[string][]ast.TypeParam), classCtorFields: make(map[string][]string), classCtorOptional: make(map[string][]bool), declVis: make(map[string]bool), methodVis: make(map[string]bool), typeAliasGoType: make(map[string]string)}
 }
 
 func (t *Transpiler) needsImport(pkg string) {
@@ -149,7 +150,9 @@ func (t *Transpiler) transpileBlock(block *ast.GrokBlock) {
 	}
 	for i := range block.TypeAliases {
 		ta := &block.TypeAliases[i]
-		t.writef("\ntype %s = %s\n", visName(ta.Name, ta.IsPublic), t.goType(&ta.Type))
+		goTyp := t.goType(&ta.Type)
+		t.typeAliasGoType[ta.Name] = goTyp
+		t.writef("\ntype %s = %s\n", visName(ta.Name, ta.IsPublic), goTyp)
 	}
 	for i := range block.Functions {
 		t.writef("\n")
@@ -963,7 +966,22 @@ func (t *Transpiler) transpileVarDecl(stmt *ast.Stmt) {
 					}
 				}
 			}
+			// When the declared type is an alias for a pointer/optional type,
+			// wrap non-nil values with IIFE: func() *T { _v := expr; return &_v }()
+			if decl.Value.Kind != ast.ExprNil {
+				if nt, ok := decl.Type.Data.(ast.NamedType); ok {
+					if underlying, ok2 := t.typeAliasGoType[nt.Name]; ok2 && strings.HasPrefix(underlying, "*") {
+						innerType := underlying[1:] // strip the *
+						t.writef("func() %s { _v := %s(", goTypeName, innerType)
+						t.transpileExpr(decl.Value)
+						t.writef("); return &_v }()")
+						t.writef("\n")
+						return
+					}
+				}
+			}
 			t.transpileExpr(decl.Value)
+
 		} else if decl.Name == "_" {
 			t.writef("_ = ")
 			t.transpileExpr(decl.Value)
@@ -1813,7 +1831,12 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		if t.classes[sl.TypeName] {
 			t.writef("&")
 		}
-		t.writef("%s{", visName(sl.TypeName, t.declVis[sl.TypeName]))
+		// Qualified names (e.g. sync.Mutex) pass through unchanged
+		typeName := sl.TypeName
+		if !strings.Contains(typeName, ".") {
+			typeName = visName(typeName, t.declVis[typeName])
+		}
+		t.writef("%s{", typeName)
 		for i, f := range sl.Fields {
 			if i > 0 {
 				t.writef(", ")

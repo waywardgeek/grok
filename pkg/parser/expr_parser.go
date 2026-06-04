@@ -206,6 +206,15 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 						Span: ast.Span{Start: expr.Span.Start, End: name.Span.End},
 					}
 				}
+			} else if p.peek().Kind == TLBrace && expr.Kind == ast.ExprIdent && p.isStructLitAhead() {
+				// Qualified struct literal: pkg.Type{} or pkg.Type{field: val}
+				qualName := expr.Data.(*ast.IdentExpr).Name + "." + name.Text
+				qualTok := Token{Kind: TIdent, Text: qualName, Span: ast.Span{Start: expr.Span.Start, End: name.Span.End}}
+				var litErr error
+				expr, litErr = p.parseStructLit(qualTok)
+				if litErr != nil {
+					return nil, litErr
+				}
 			} else {
 				expr = &ast.Expr{
 					Kind: ast.ExprFieldAccess,
