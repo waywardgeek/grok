@@ -185,18 +185,6 @@ grok Transpiler {
   // ---- Core transpiler ----
   class Transpiler() {
     why: "Auto-detected import requirements. Populated during body transpilation (e.g. 'fmt' for Sprintf, 'cmp' for Ordered), merged with user imports in header. Two-pass: body first (discovers imports), then package+imports."
-    buf: any
-    indent: int
-    pkg: string
-    currentReturnType: string
-    selfName: string
-    classes: map[string]bool
-    topFuncs: map[string]bool
-    variantCtors: map[string]variantCtorInfo?
-    unitVariants: map[string]string
-    classCtorFields: map[string][string]
-    classCtorOptional: map[string][bool]
-    autoImports: map[string]bool
     func Transpile(mut self, file: File?) -> string
       why: "Primary entry point. Emits package declaration then all blocks."
   }
@@ -205,12 +193,6 @@ grok Transpiler {
   // ---- Helpers ----
   func New(pkg: string) -> Transpiler?
     why: "Creates a transpiler targeting the given Go package name."
-
-  func exportName(name: string) -> string
-    why: "Capitalizes first letter for Go export convention."
-
-  func grokPrimitiveToGo(name: string) -> string
-    why: "Maps Grok primitive type names to Go equivalents."
 
   doc "Type Inference Emission": """
     When CallExpr has InferredTypeArgs (set by checker), the transpiler emits
@@ -234,11 +216,6 @@ grok Transpiler {
     Pattern ResolvedType (set by checker's bindUnionPattern) provides the
     concrete type for Go emission via checkerTypeToGo.
   """
-
-  func checkerTypeToGo(ct: Type?) -> string
-    why: "Converts checker.Type to Go type string. Handles composites recursively: TyList→[]T, TyMap→map[K]V, TyOptional→*T."
-
-  func binaryOpString(op: BinaryOp) -> string
 
   source: ["transpiler.go"]
 }

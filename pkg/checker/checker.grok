@@ -308,8 +308,6 @@ grok Checker {
   // ---- Scope ----
   class Scope(parent: Scope?) {
     why: "Tracks which variables were declared with 'let mut'."
-    vars: map[string]Type?
-    mutables: map[string]bool
     func Define(mut self, name: string, typ: Type?)
     func DefineMut(mut self, name: string, typ: Type?)
       why: "Defines a mutable variable — adds to both vars and mutables maps."
@@ -336,7 +334,6 @@ grok Checker {
 
   class Registry() {
     why: "Named type definitions. Structs, classes, enums, interfaces registered during first pass."
-    types: map[string]TypeInfo?
     func Register(mut self, name: string, info: TypeInfo?)
     func Lookup(self, name: string) -> TypeInfo?
   }
@@ -351,11 +348,6 @@ grok Checker {
   // ---- Checker ----
   class Checker() {
     why: "Tracks nesting depth inside loops for break/continue validation."
-    scope: Scope?
-    registry: Registry?
-    errors: [error]
-    currentReturn: Type?
-    loopDepth: int
     func CheckFile(mut self, file: File?)
       why: "Primary entry point. Registers all types, then checks all function bodies."
     func Errors(self) -> [error]
@@ -370,15 +362,6 @@ grok Checker {
 
   func NewScope(parent: Scope?) -> Scope?
     why: "Creates a new lexical scope with an optional parent for variable lookup chaining."
-
-  func substituteType(t: Type?, subst: map[string]Type?) -> Type?
-    why: "Recursively replaces TyVar nodes in a type tree according to a substitution map. Handles List, Map, Optional, Tuple, Func composite types."
-
-  func matchTypeVars(param: Type?, arg: Type?, subst: map[string]Type?)
-    why: "Recursively walks a parameter type and argument type in parallel, binding TyVar names to concrete types. Handles List, Map, Optional, Tuple, Func composites."
-
-  func isErrorType(t: Type?) -> bool
-    why: "Checks if type is error — handles both TyError and TyInterface{Name:'error'} since error is registered as interface."
 
   func IntType(bits: int) -> Type?
 

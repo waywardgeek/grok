@@ -17,7 +17,7 @@ import (
 // runUpdate parses a .grok file, auto-updates Zone 1 with missing exported
 // symbols from Go source, then regenerates Zone 2 (function index) and
 // Zone 3 (dependencies).
-func runUpdate(grokPath string) error {
+func runUpdate(grokPath string, prune bool) error {
 	raw, err := os.ReadFile(grokPath)
 	if err != nil {
 		return err
@@ -74,6 +74,11 @@ func runUpdate(grokPath string) error {
 	// Auto-update Zone 1: add missing exported symbols to the first block
 	block := &grokFile.Blocks[0]
 	addMissingSymbols(block, goInfo)
+
+	// Optionally remove declarations not found in Go source
+	if prune {
+		pruneStaleSymbols(block, goInfo)
+	}
 
 	// Re-emit Zone 1 via formatter
 	var b strings.Builder
@@ -389,6 +394,139 @@ func addMissingSymbols(block *grokast.GrokBlock, info *goInfo) {
 		block.TypeAliases = append(block.TypeAliases, newAlias)
 		nextLine++
 	}
+}
+
+// pruneStaleSymbols removes declarations from the .grok block that no longer
+// exist in Go source. Only removes exported symbols — unexported ones are
+// already excluded from auto-add.
+func pruneStaleSymbols(block *grokast.GrokBlock, info *goInfo) {
+	// Prune structs not in Go (unless they're in Go as interfaces or typedefs)
+	var keepStructs []grokast.StructDecl
+	for _, s := range block.Structs {
+		if _, ok := info.Structs[s.Name]; ok {
+			// Prune fields not in Go
+			if isExported(s.Name) {
+				pruneFields(&s.Fields, info.Structs[s.Name].Fields)
+			}
+			keepStructs = append(keepStructs, s)
+		} else if !isExported(s.Name) {
+			keepStructs = append(keepStructs, s) // keep unexported
+		} else if _, ok := info.Interfaces[s.Name]; ok {
+			keepStructs = append(keepStructs, s) // it's an interface in Go, keep
+		} else if _, ok := info.TypeDefs[s.Name]; ok {
+			keepStructs = append(keepStructs, s) // it's a typedef, keep
+		}
+		// else: exported, not in Go anywhere → drop
+	}
+	block.Structs = keepStructs
+
+	// Prune interfaces
+	var keepIfaces []grokast.InterfaceDecl
+	for _, iface := range block.Interfaces {
+		if goIface, ok := info.Interfaces[iface.Name]; ok {
+			pruneIfaceMethods(&iface.Methods, goIface.Methods)
+			keepIfaces = append(keepIfaces, iface)
+		} else if !isExported(iface.Name) {
+			keepIfaces = append(keepIfaces, iface)
+		}
+	}
+	block.Interfaces = keepIfaces
+
+	// Prune classes (Go structs declared as classes in .grok)
+	var keepClasses []grokast.ClassDecl
+	for _, c := range block.Classes {
+		if goStruct, ok := info.Structs[c.Name]; ok {
+			pruneFields(&c.Fields, goStruct.Fields)
+			pruneMethods(&c.Methods, goStruct.Methods)
+			keepClasses = append(keepClasses, c)
+		} else if !isExported(c.Name) {
+			keepClasses = append(keepClasses, c)
+		}
+	}
+	block.Classes = keepClasses
+
+	// Prune standalone functions — keep only if still a standalone Go function
+	var keepFuncs []grokast.FuncDecl
+	for _, f := range block.Functions {
+		if _, ok := info.Functions[f.Name]; ok {
+			keepFuncs = append(keepFuncs, f)
+		} else {
+			// Try case-insensitive match (Grok naming may differ)
+			found := false
+			for goName := range info.Functions {
+				if strings.EqualFold(goName, f.Name) {
+					found = true
+					break
+				}
+			}
+			if found {
+				keepFuncs = append(keepFuncs, f)
+			}
+		}
+	}
+	block.Functions = keepFuncs
+
+	// Prune type aliases
+	var keepAliases []grokast.TypeAliasDecl
+	for _, t := range block.TypeAliases {
+		if _, ok := info.TypeDefs[t.Name]; ok {
+			keepAliases = append(keepAliases, t)
+		} else if !isExported(t.Name) {
+			keepAliases = append(keepAliases, t)
+		} else if _, ok := info.Structs[t.Name]; ok {
+			keepAliases = append(keepAliases, t) // became a struct
+		} else if _, ok := info.Interfaces[t.Name]; ok {
+			keepAliases = append(keepAliases, t) // became an interface
+		}
+	}
+	block.TypeAliases = keepAliases
+
+	// Prune enums — keep if Go has a type with that name (typedef, struct, or interface)
+	var keepEnums []grokast.EnumDecl
+	for _, e := range block.Enums {
+		if !isExported(e.Name) {
+			keepEnums = append(keepEnums, e)
+		} else if _, ok := info.TypeDefs[e.Name]; ok {
+			keepEnums = append(keepEnums, e)
+		} else if _, ok := info.Structs[e.Name]; ok {
+			keepEnums = append(keepEnums, e)
+		} else if _, ok := info.Interfaces[e.Name]; ok {
+			keepEnums = append(keepEnums, e)
+		}
+	}
+	block.Enums = keepEnums
+}
+
+func pruneFields(fields *[]grokast.Field, goFields map[string]string) {
+	var keep []grokast.Field
+	for _, f := range *fields {
+		if _, ok := goFields[f.Name]; ok {
+			keep = append(keep, f)
+		}
+	}
+	*fields = keep
+}
+
+func pruneMethods(methods *[]grokast.FuncDecl, goMethods map[string]*goFuncDef) {
+	var keep []grokast.FuncDecl
+	for _, m := range *methods {
+		if _, ok := goMethods[m.Name]; ok {
+			keep = append(keep, m)
+		} else if !isExported(m.Name) {
+			keep = append(keep, m)
+		}
+	}
+	*methods = keep
+}
+
+func pruneIfaceMethods(methods *[]grokast.FuncDecl, goMethods map[string]*goFuncDef) {
+	var keep []grokast.FuncDecl
+	for _, m := range *methods {
+		if _, ok := goMethods[m.Name]; ok {
+			keep = append(keep, m)
+		}
+	}
+	*methods = keep
 }
 
 func addMissingFields(fields *[]grokast.Field, goFields map[string]string) {

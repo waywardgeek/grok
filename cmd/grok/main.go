@@ -101,10 +101,22 @@ func cmdVerify(args []string) error {
 
 func cmdUpdate(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: grok update <file.grok> [...]")
+		return fmt.Errorf("usage: grok update [--prune] <file.grok> [...]")
 	}
-	for _, grokPath := range args {
-		if err := runUpdate(grokPath); err != nil {
+	prune := false
+	var files []string
+	for _, a := range args {
+		if a == "--prune" {
+			prune = true
+		} else {
+			files = append(files, a)
+		}
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("usage: grok update [--prune] <file.grok> [...]")
+	}
+	for _, grokPath := range files {
+		if err := runUpdate(grokPath, prune); err != nil {
 			return fmt.Errorf("%s: %w", grokPath, err)
 		}
 		fmt.Printf("updated %s\n", grokPath)
