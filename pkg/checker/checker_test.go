@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -1490,5 +1491,139 @@ func TestUserDefinedConstraintViolated(t *testing.T) {
 	}`)
 	if len(c.Errors()) == 0 {
 		t.Error("expected error for Cat not satisfying Printable constraint")
+	}
+}
+
+
+func TestModuleImport(t *testing.T) {
+	// Create a temporary .gk module file
+	dir := t.TempDir()
+	mathFile := dir + "/mathlib.gk"
+	os.WriteFile(mathFile, []byte(`grok mathlib {
+		pub struct Point {
+			x: i32
+			y: i32
+		}
+		pub func add(a: i32, b: i32) -> i32 {
+			return a + b
+		}
+		func private_helper() -> i32 {
+			return 42
+		}
+	}`), 0644)
+
+	// Parse the main file that imports the module
+	mainSrc := `grok main {
+		import math from "` + mathFile + `"
+		func test() -> i32 {
+			let result = math.add(1, 2)
+			return result
+		}
+	}`
+	file, err := parser.ParseString(mainSrc)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	c := New()
+	c.CheckFile(file)
+	expectNoErrors(t, c)
+}
+
+func TestModuleImportUndefinedSymbol(t *testing.T) {
+	dir := t.TempDir()
+	mathFile := dir + "/mathlib.gk"
+	os.WriteFile(mathFile, []byte(`grok mathlib {
+		pub func add(a: i32, b: i32) -> i32 {
+			return a + b
+		}
+	}`), 0644)
+
+	mainSrc := `grok main {
+		import math from "` + mathFile + `"
+		func test() -> i32 {
+			return math.nonexistent(1, 2)
+		}
+	}`
+	file, err := parser.ParseString(mainSrc)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	c := New()
+	c.CheckFile(file)
+	if len(c.Errors()) == 0 {
+		t.Error("expected error for undefined module symbol")
+	}
+}
+
+func TestModuleImportPrivateNotExported(t *testing.T) {
+	dir := t.TempDir()
+	mathFile := dir + "/mathlib.gk"
+	os.WriteFile(mathFile, []byte(`grok mathlib {
+		func private_fn() -> i32 {
+			return 42
+		}
+	}`), 0644)
+
+	mainSrc := `grok main {
+		import math from "` + mathFile + `"
+		func test() -> i32 {
+			return math.private_fn()
+		}
+	}`
+	file, err := parser.ParseString(mainSrc)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	c := New()
+	c.CheckFile(file)
+	if len(c.Errors()) == 0 {
+		t.Error("expected error for private function access")
+	}
+}
+
+func TestModuleImportCycle(t *testing.T) {
+	dir := t.TempDir()
+	aFile := dir + "/a.gk"
+	bFile := dir + "/b.gk"
+	os.WriteFile(aFile, []byte(`grok a {
+		import b from "`+bFile+`"
+	}`), 0644)
+	os.WriteFile(bFile, []byte(`grok b {
+		import a from "`+aFile+`"
+	}`), 0644)
+
+	src, _ := os.ReadFile(aFile)
+	file, err := parser.ParseFile(string(src), aFile)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	c := New()
+	c.CheckFile(file)
+	hasImportCycle := false
+	for _, e := range c.Errors() {
+		if strings.Contains(e.Error(), "import cycle") {
+			hasImportCycle = true
+		}
+	}
+	if !hasImportCycle {
+		t.Error("expected import cycle error")
+	}
+}
+
+func TestModuleImportFileNotFound(t *testing.T) {
+	mainSrc := `grok main {
+		import math from "/nonexistent/path/math.gk"
+		func test() -> i32 {
+			return math.add(1, 2)
+		}
+	}`
+	file, err := parser.ParseString(mainSrc)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	c := New()
+	c.CheckFile(file)
+	if len(c.Errors()) == 0 {
+		t.Error("expected error for missing module file")
 	}
 }

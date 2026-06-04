@@ -1,0 +1,20 @@
+grok mathlib {
+	pub struct Point {
+		x: i32
+		y: i32
+	}
+
+	pub func add(a: i32, b: i32) -> i32 {
+		return a + b
+	}
+
+	pub func distance(a: Point, b: Point) -> i32 {
+		let dx = b.x - a.x
+		let dy = b.y - a.y
+		return dx * dx + dy * dy
+	}
+
+	func internal_helper() -> i32 {
+		return 42
+	}
+}

@@ -3,9 +3,12 @@ package checker
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/waywardgeek/grok/pkg/ast"
+	"github.com/waywardgeek/grok/pkg/parser"
 )
 
 // TypeKind discriminates type categories.
@@ -30,6 +33,7 @@ const (
 	TyInterface               // named interface type
 	TyVar                     // type variable (for generics)
 	TyUnion                   // union type (T | U)
+	TyModule                  // imported Grok module (qualified access to exports)
 	TyUnknown                 // not yet resolved
 	TyError                   // error sentinel
 )
@@ -119,6 +123,8 @@ func (t *Type) String() string {
 		}
 		s += ") -> " + t.Return.String()
 		return s
+	case TyModule:
+		return "<module " + t.Name + ">"
 	case TyUnknown:
 		return "?"
 	case TyError:
@@ -331,6 +337,12 @@ func (e *CheckError) Error() string {
 	return fmt.Sprintf("%s:%d:%d: %s", e.Span.Start.File, e.Span.Start.Line, e.Span.Start.Column, e.Message)
 }
 
+// ModuleExports holds the public symbols exported by a Grok module.
+type ModuleExports struct {
+	Types     map[string]*TypeInfo // exported type names → type info
+	Functions map[string]*Type     // exported function names → function types
+}
+
 // Checker performs type checking on a Grok AST.
 type Checker struct {
 	registry      *Registry
@@ -338,6 +350,9 @@ type Checker struct {
 	scope         *Scope
 	currentReturn *Type // expected return type of current function (nil = void/unit)
 	loopDepth     int   // tracks nesting depth inside loops (for break/continue validation)
+	modules       map[string]*ModuleExports // file path → exports (cache)
+	checking      map[string]bool           // files currently being checked (cycle detection)
+	currentFile   string                    // file path of the file being checked
 }
 
 // New creates a new type checker.
@@ -345,6 +360,8 @@ func New() *Checker {
 	c := &Checker{
 		registry: NewRegistry(),
 		scope:    NewScope(nil),
+		modules:  make(map[string]*ModuleExports),
+		checking: make(map[string]bool),
 	}
 	// Register builtin functions
 	// println(...) — variadic, accepts any types, returns unit
@@ -369,6 +386,115 @@ func New() *Checker {
 // Errors returns all accumulated type errors.
 func (c *Checker) Errors() []error {
 	return c.errors
+}
+
+// CheckModuleFile parses, checks, and caches a .gk module file.
+// Returns the module's exported symbols. Uses cycle detection and caching.
+func (c *Checker) CheckModuleFile(importPath string, fromSpan ast.Span) *ModuleExports {
+	// Resolve path relative to current file
+	absPath := importPath
+	if c.currentFile != "" && !filepath.IsAbs(importPath) {
+		absPath = filepath.Join(filepath.Dir(c.currentFile), importPath)
+	}
+	absPath, _ = filepath.Abs(absPath)
+
+	// Check cache
+	if exports, ok := c.modules[absPath]; ok {
+		return exports
+	}
+
+	// Cycle detection
+	if c.checking[absPath] {
+		c.error(fromSpan, "import cycle detected: %s", importPath)
+		return nil
+	}
+	c.checking[absPath] = true
+	defer delete(c.checking, absPath)
+
+	// Read and parse
+	src, err := os.ReadFile(absPath)
+	if err != nil {
+		c.error(fromSpan, "cannot read module %q: %v", importPath, err)
+		return nil
+	}
+	file, err := parser.ParseFile(string(src), absPath)
+	if err != nil {
+		c.error(fromSpan, "parse error in module %q: %v", importPath, err)
+		return nil
+	}
+
+	// Save and restore checker state for the module
+	savedRegistry := c.registry
+	savedScope := c.scope
+	savedFile := c.currentFile
+	c.registry = NewRegistry()
+	c.scope = NewScope(nil)
+	c.currentFile = absPath
+	// Re-register builtins in new scope
+	c.scope.Define("println", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "println"})
+	c.scope.Define("print", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "print"})
+	c.scope.Define("len", &Type{Kind: TyFunc, Params: nil, Return: &Type{Kind: TyInt, Bits: -1}, Name: "len"})
+	c.scope.Define("append", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "append"})
+	c.scope.Define("isnull", &Type{Kind: TyFunc, Params: nil, Return: TypeBool, Name: "isnull"})
+	c.scope.Define("make_channel", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "make_channel"})
+	c.registry.Register("error", &TypeInfo{
+		Type: &Type{Kind: TyInterface, Name: "error"},
+	})
+
+	// Check the module
+	c.CheckFile(file)
+
+	// Extract exports: pub types and pub functions
+	exports := &ModuleExports{
+		Types:     make(map[string]*TypeInfo),
+		Functions: make(map[string]*Type),
+	}
+	for _, block := range file.Blocks {
+		for _, s := range block.Structs {
+			if s.IsPublic {
+				if info := c.registry.Lookup(s.Name); info != nil {
+					exports.Types[s.Name] = info
+				}
+			}
+		}
+		for _, cl := range block.Classes {
+			if cl.IsPublic {
+				if info := c.registry.Lookup(cl.Name); info != nil {
+					exports.Types[cl.Name] = info
+				}
+			}
+		}
+		for _, e := range block.Enums {
+			if e.IsPublic {
+				if info := c.registry.Lookup(e.Name); info != nil {
+					exports.Types[e.Name] = info
+				}
+			}
+		}
+		for _, iface := range block.Interfaces {
+			if iface.IsPublic {
+				if info := c.registry.Lookup(iface.Name); info != nil {
+					exports.Types[iface.Name] = info
+				}
+			}
+		}
+		for _, f := range block.Functions {
+			if f.IsPublic {
+				if t := c.scope.Lookup(f.Name); t != nil {
+					exports.Functions[f.Name] = t
+				}
+			}
+		}
+	}
+
+	// Restore state
+	c.registry = savedRegistry
+	c.scope = savedScope
+	c.currentFile = savedFile
+
+	// Cache
+	c.modules[absPath] = exports
+	return exports
 }
 
 func (c *Checker) error(span ast.Span, msg string, args ...any) {
@@ -1021,6 +1147,28 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 	mc := expr.Data.(*ast.MethodCallExpr)
 	recvType := c.checkExpr(&mc.Receiver)
+	// Module method call: mod.func(args)
+	if recvType.Kind == TyModule {
+		if info := c.registry.Lookup(recvType.Name); info != nil {
+			if methType, ok := info.Methods[mc.Method]; ok && methType.Kind == TyFunc {
+				// Check argument types against function params
+				if methType.Params != nil && len(mc.Args) != len(methType.Params) {
+					c.error(expr.Span, "%s.%s expects %d arguments, got %d", recvType.Name, mc.Method, len(methType.Params), len(mc.Args))
+				}
+				for i := range mc.Args {
+					argType := c.checkExpr(&mc.Args[i])
+					if methType.Params != nil && i < len(methType.Params) {
+						if !c.assignableTo(argType, methType.Params[i]) && argType.Kind != TyUnknown {
+							c.error(mc.Args[i].Span, "%s.%s: argument %d: expected %s, got %s", recvType.Name, mc.Method, i+1, methType.Params[i], argType)
+						}
+					}
+				}
+				return methType.Return
+			}
+			c.error(expr.Span, "module %q has no exported function %q", recvType.Name, mc.Method)
+			return TypeError
+		}
+	}
 	// Look up method on the receiver type
 	if recvType.Kind == TyStruct || recvType.Kind == TyClass {
 		if info := c.registry.Lookup(recvType.Name); info != nil {
@@ -1213,6 +1361,20 @@ func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type {
 				return fieldType
 			}
 			c.error(expr.Span, "type %s has no field %q", recvType.Name, fa.Field)
+		}
+	}
+	if recvType.Kind == TyModule {
+		if info := c.registry.Lookup(recvType.Name); info != nil {
+			// Check types first (for struct/enum/class access)
+			if fieldType, ok := info.Fields[fa.Field]; ok {
+				return fieldType
+			}
+			// Check functions
+			if methType, ok := info.Methods[fa.Field]; ok {
+				return methType
+			}
+			c.error(expr.Span, "module %q has no exported symbol %q", recvType.Name, fa.Field)
+			return TypeError
 		}
 	}
 	return TypeUnknown
@@ -1899,6 +2061,9 @@ func (c *Checker) checkBlock(block *ast.Block) {
 
 // CheckFile type-checks an entire AST file.
 func (c *Checker) CheckFile(file *ast.File) {
+	if file.Filename != "" && c.currentFile == "" {
+		c.currentFile = file.Filename
+	}
 	for i := range file.Blocks {
 		c.checkGrokBlock(&file.Blocks[i])
 	}
@@ -1927,7 +2092,31 @@ func (c *Checker) checkGrokBlock(block *ast.GrokBlock) {
 
 	// Register import aliases in scope (packages are opaque types)
 	for _, imp := range block.Imports {
-		c.scope.Define(imp.Alias, &Type{Kind: TyUnknown, Name: imp.Path})
+		if strings.HasSuffix(imp.Path, ".gk") {
+			// Grok module import — parse and check the imported file
+			exports := c.CheckModuleFile(imp.Path, imp.Span)
+			if exports != nil {
+				// Register as a module type with exports attached
+				modType := &Type{Kind: TyModule, Name: imp.Alias}
+				modType.Fields = make([]TypeField, 0)
+				// Store exports in registry under the alias for lookup
+				modInfo := &TypeInfo{
+					Type:    modType,
+					Fields:  make(map[string]*Type),
+					Methods: make(map[string]*Type),
+				}
+				for name, ti := range exports.Types {
+					modInfo.Fields[name] = ti.Type
+				}
+				for name, ft := range exports.Functions {
+					modInfo.Methods[name] = ft
+				}
+				c.registry.Register(imp.Alias, modInfo)
+				c.scope.Define(imp.Alias, modType)
+			}
+		} else {
+			c.scope.Define(imp.Alias, &Type{Kind: TyUnknown, Name: imp.Path})
+		}
 	}
 
 	// Register type aliases
@@ -2197,6 +2386,33 @@ func (c *Checker) checkFuncBody(fn *ast.FuncDecl) {
 func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 	sl := expr.Data.(*ast.StructLitExpr)
 	info := c.registry.Lookup(sl.TypeName)
+	// If not found and contains a dot, try module-qualified lookup
+	if info == nil && strings.Contains(sl.TypeName, ".") {
+		parts := strings.SplitN(sl.TypeName, ".", 2)
+		modAlias, typeName := parts[0], parts[1]
+		if modInfo := c.registry.Lookup(modAlias); modInfo != nil && modInfo.Type.Kind == TyModule {
+			if fieldType, ok := modInfo.Fields[typeName]; ok {
+				// Register the type temporarily in the local registry for field checking
+				info = &TypeInfo{
+					Type:   fieldType,
+					Fields: make(map[string]*Type),
+				}
+				// Look up the full type info from the module's exports
+				absPath := ""
+				if c.currentFile != "" {
+					absPath = filepath.Join(filepath.Dir(c.currentFile), typeName)
+				}
+				_ = absPath
+				// Find the module exports to get full field info
+				for _, exports := range c.modules {
+					if ti, ok := exports.Types[typeName]; ok {
+						info = ti
+						break
+					}
+				}
+			}
+		}
+	}
 	if info == nil {
 		c.error(expr.Span, "undefined type %q", sl.TypeName)
 		return TypeError

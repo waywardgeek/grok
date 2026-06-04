@@ -1,0 +1,14 @@
+grok main {
+	import math from "mathlib.gk"
+	import fmt from "fmt"
+
+	pub func main() {
+		let sum = math.add(10, 20)
+		println(f"Sum: {sum}")
+
+		let p1 = math.Point { x: 0, y: 0 }
+		let p2 = math.Point { x: 3, y: 4 }
+		let dist = math.distance(p1, p2)
+		println(f"Distance squared: {dist}")
+	}
+}

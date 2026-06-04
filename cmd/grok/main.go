@@ -139,6 +139,7 @@ func cmdCompile(args []string) error {
 	var inputs []string
 	output := ""
 	pkg := "main"
+	modPath := ""
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -152,13 +153,18 @@ func cmdCompile(args []string) error {
 			if i < len(args) {
 				pkg = args[i]
 			}
+		case "-mod":
+			i++
+			if i < len(args) {
+				modPath = args[i]
+			}
 		default:
 			inputs = append(inputs, args[i])
 		}
 	}
 
 	if len(inputs) == 0 {
-		return fmt.Errorf("usage: grok compile <file.gk> [...] [-o output.go] [-pkg name]")
+		return fmt.Errorf("usage: grok compile <file.gk> [...] [-o output.go] [-pkg name] [-mod modpath]")
 	}
 
 	type parsedFile struct {
@@ -195,6 +201,9 @@ func cmdCompile(args []string) error {
 
 	for _, pf := range files {
 		tr := transpiler.New(pkg)
+		if modPath != "" {
+			tr.SetModulePath(modPath)
+		}
 		goSrc := tr.Transpile(pf.file)
 		if err := os.WriteFile(pf.output, []byte(goSrc), 0644); err != nil {
 			return fmt.Errorf("writing %s: %w", pf.output, err)

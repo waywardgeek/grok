@@ -265,6 +265,7 @@ grok Checker {
     TyFunc
     TyVar
     TyUnion
+    TyModule
     TyUnknown
     TyError
   }
@@ -345,12 +346,29 @@ grok Checker {
     Message: string
   }
 
+  // ---- Module system ----
+  struct ModuleExports {
+    why: "Holds the public symbols exported by a Grok module. Populated by CheckModuleFile."
+    Types: map[string]TypeInfo?
+    Functions: map[string]Type?
+  }
+
+  doc "Module System": """
+    Grok-to-Grok imports (paths ending in .gk) are handled by CheckModuleFile.
+    The checker parses and checks the imported file recursively, extracts pub
+    symbols, and registers them as TyModule in the importer's scope. Module
+    types support qualified field access (mod.TypeName) and method calls
+    (mod.func_name(args)). Cycle detection via the checking map prevents
+    infinite recursion. Checked modules are cached in the modules map.
+  """
+
   // ---- Checker ----
   class Checker() {
     why: "Tracks nesting depth inside loops for break/continue validation."
     func CheckFile(mut self, file: File?)
       why: "Primary entry point. Registers all types, then checks all function bodies."
     func Errors(self) -> [error]
+    pub func CheckModuleFile(self, importPath: string, fromSpan: ast.Span) -> ModuleExports?
   }
 
   // ---- Standalone functions ----
@@ -375,6 +393,11 @@ grok Checker {
 
   func OptionalType(elem: Type?) -> Type?
 
+  pub struct ModuleExports {
+    Functions: map[string]Type?
+    Types: map[string]TypeInfo?
+  }
+
   source: ["checker.go"]
 }
 // --- index ---
@@ -384,186 +407,189 @@ grok Checker {
 //
 // file: checker.go
 //
-// func (t *Type) String() string    :59
+// func (t *Type) String() string    :63
 //
-// func IntType(bits int) *Type    :143
+// func IntType(bits int) *Type    :149
 //
-// func UintType(bits int) *Type    :144
+// func UintType(bits int) *Type    :150
 //
-// func FloatType(bits int) *Type    :145
+// func FloatType(bits int) *Type    :151
 //
-// func ListType(elem *Type) *Type    :146
+// func ListType(elem *Type) *Type    :152
 //
-// func MapType(key, val *Type) *Type    :147
+// func MapType(key, val *Type) *Type    :153
 //
-// func OptionalType(elem *Type) *Type    :148
+// func OptionalType(elem *Type) *Type    :154
 //
 // Equal checks structural type equality.
-// func (t *Type) Equal(other *Type) bool    :151
+// func (t *Type) Equal(other *Type) bool    :157
 //
 // numericWidens checks if 'from' can implicitly widen to 'to'.
-// func numericWidens(from, to *Type) bool    :200
+// func numericWidens(from, to *Type) bool    :206
 //
 // coerceNumeric returns the wider type if one side can widen to the other, else nil.
-// func coerceNumeric(left, right *Type) *Type    :218
+// func coerceNumeric(left, right *Type) *Type    :224
 //
 // IsNumeric returns true for int, uint, and float types.
-// func (t *Type) IsNumeric() bool    :238
+// func (t *Type) IsNumeric() bool    :244
 //
 // IsInteger returns true for int and uint types.
-// func (t *Type) IsInteger() bool    :243
+// func (t *Type) IsInteger() bool    :249
 //
-// func NewScope(parent *Scope) *Scope    :256
+// func NewScope(parent *Scope) *Scope    :262
 //
-// func (s *Scope) Define(name string, typ *Type)    :260
+// func (s *Scope) Define(name string, typ *Type)    :266
 //
-// func (s *Scope) DefineMut(name string, typ *Type)    :264
+// func (s *Scope) DefineMut(name string, typ *Type)    :270
 //
-// func (s *Scope) IsMutable(name string) bool    :269
+// func (s *Scope) IsMutable(name string) bool    :275
 //
-// func (s *Scope) Lookup(name string) *Type    :279
+// func (s *Scope) Lookup(name string) *Type    :285
 //
-// func NewRegistry() *Registry    :310
+// func NewRegistry() *Registry    :316
 //
-// func (r *Registry) Register(name string, info *TypeInfo)    :314
+// func (r *Registry) Register(name string, info *TypeInfo)    :320
 //
-// func (r *Registry) Lookup(name string) *TypeInfo    :318
+// func (r *Registry) Lookup(name string) *TypeInfo    :324
 //
-// func (e *CheckError) Error() string    :330
+// func (e *CheckError) Error() string    :336
 //
 // New creates a new type checker.
-// func New() *Checker    :344
+// func New() *Checker    :359
 //
 // Errors returns all accumulated type errors.
-// func (c *Checker) Errors() []error    :370
+// func (c *Checker) Errors() []error    :387
 //
-// func (c *Checker) error(span ast.Span, msg string, args ...any)    :374
+// CheckModuleFile parses, checks, and caches a .gk module file.
+// func (c *Checker) CheckModuleFile(importPath string, fromSpan ast.Span) *ModuleExports    :393
 //
-// func (c *Checker) pushScope()    :381
+// func (c *Checker) error(span ast.Span, msg string, args ...any)    :500
 //
-// func (c *Checker) popScope()    :385
+// func (c *Checker) pushScope()    :507
+//
+// func (c *Checker) popScope()    :511
 //
 // resolveTypeExpr converts an AST TypeExpr to a checker Type.
-// func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type    :390
+// func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type    :516
 //
-// func (c *Checker) resolveNamedType(name string, args []ast.TypeExpr) *Type    :445
+// func (c *Checker) resolveNamedType(name string, args []ast.TypeExpr) *Type    :571
 //
 // assignableTo checks if 'from' type can be used where 'to' type is expected.
-// func (c *Checker) assignableTo(from, to *Type) bool    :504
+// func (c *Checker) assignableTo(from, to *Type) bool    :630
 //
 // substituteType replaces type variables in a type according to a substitution map.
-// func substituteType(t *Type, subst map[string]*Type) *Type    :598
+// func substituteType(t *Type, subst map[string]*Type) *Type    :724
 //
 // inferTypeArgs infers generic type arguments from actual argument types.
-// func (c *Checker) inferTypeArgs(fnType *Type, argTypes []*Type) map[string]*Type    :642
+// func (c *Checker) inferTypeArgs(fnType *Type, argTypes []*Type) map[string]*Type    :768
 //
 // matchTypeVars recursively walks a parameter type and an argument type in parallel,
-// func matchTypeVars(param, arg *Type, subst map[string]*Type)    :667
+// func matchTypeVars(param, arg *Type, subst map[string]*Type)    :793
 //
-// func (c *Checker) checkExpr(expr *ast.Expr) *Type    :717
+// func (c *Checker) checkExpr(expr *ast.Expr) *Type    :843
 //
-// func (c *Checker) inferExpr(expr *ast.Expr) *Type    :726
+// func (c *Checker) inferExpr(expr *ast.Expr) *Type    :852
 //
-// func (c *Checker) checkUnary(expr *ast.Expr) *Type    :791
+// func (c *Checker) checkUnary(expr *ast.Expr) *Type    :917
 //
-// func (c *Checker) checkBinary(expr *ast.Expr) *Type    :811
+// func (c *Checker) checkBinary(expr *ast.Expr) *Type    :937
 //
-// func (c *Checker) checkCall(expr *ast.Expr) *Type    :912
+// func (c *Checker) checkCall(expr *ast.Expr) *Type    :1038
 //
-// func (c *Checker) checkMethodCall(expr *ast.Expr) *Type    :1021
+// func (c *Checker) checkMethodCall(expr *ast.Expr) *Type    :1147
 //
 // checkBuiltinMethod resolves methods on built-in types (string, list, map).
-// func (c *Checker) checkBuiltinMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1045
+// func (c *Checker) checkBuiltinMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1193
 //
-// func (c *Checker) checkStringMethod(method string, args []ast.Expr, expr *ast.Expr) *Type    :1059
+// func (c *Checker) checkStringMethod(method string, args []ast.Expr, expr *ast.Expr) *Type    :1207
 //
-// func (c *Checker) checkListMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1107
+// func (c *Checker) checkListMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1255
 //
-// func (c *Checker) checkMapMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1144
+// func (c *Checker) checkMapMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1292
 //
-// func (c *Checker) checkChannelMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1171
+// func (c *Checker) checkChannelMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1319
 //
 // Helper: check expected arg count
-// func (c *Checker) expectArgs(method string, args []ast.Expr, expected int, expr *ast.Expr)    :1193
+// func (c *Checker) expectArgs(method string, args []ast.Expr, expected int, expr *ast.Expr)    :1341
 //
 // Helper: check arg type
-// func (c *Checker) expectArgType(method string, arg *ast.Expr, idx int, expected *Type)    :1200
+// func (c *Checker) expectArgType(method string, arg *ast.Expr, idx int, expected *Type)    :1348
 //
-// func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type    :1207
+// func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type    :1355
 //
-// func (c *Checker) checkIndex(expr *ast.Expr) *Type    :1221
+// func (c *Checker) checkIndex(expr *ast.Expr) *Type    :1383
 //
-// func (c *Checker) checkSlice(expr *ast.Expr) *Type    :1246
+// func (c *Checker) checkSlice(expr *ast.Expr) *Type    :1408
 //
-// func (c *Checker) checkListLit(expr *ast.Expr) *Type    :1271
+// func (c *Checker) checkListLit(expr *ast.Expr) *Type    :1433
 //
-// func (c *Checker) checkTupleLit(expr *ast.Expr) *Type    :1286
+// func (c *Checker) checkTupleLit(expr *ast.Expr) *Type    :1448
 //
-// func (c *Checker) checkMapLit(expr *ast.Expr) *Type    :1296
+// func (c *Checker) checkMapLit(expr *ast.Expr) *Type    :1458
 //
-// func (c *Checker) checkMatchExpr(expr *ast.Expr) *Type    :1316
+// func (c *Checker) checkMatchExpr(expr *ast.Expr) *Type    :1478
 //
-// func (c *Checker) checkCast(expr *ast.Expr) *Type    :1356
+// func (c *Checker) checkCast(expr *ast.Expr) *Type    :1518
 //
-// func (c *Checker) checkUnwrap(expr *ast.Expr) *Type    :1371
+// func (c *Checker) checkUnwrap(expr *ast.Expr) *Type    :1533
 //
 // isErrorType returns true if the type represents Go's error interface.
-// func isErrorType(t *Type) bool    :1384
+// func isErrorType(t *Type) bool    :1546
 //
-// func (c *Checker) checkTry(expr *ast.Expr) *Type    :1394
+// func (c *Checker) checkTry(expr *ast.Expr) *Type    :1556
 //
-// func (c *Checker) checkLambda(expr *ast.Expr) *Type    :1435
+// func (c *Checker) checkLambda(expr *ast.Expr) *Type    :1597
 //
-// func (c *Checker) checkStmt(stmt *ast.Stmt)    :1470
+// func (c *Checker) checkStmt(stmt *ast.Stmt)    :1632
 //
-// func (c *Checker) checkVarDecl(stmt *ast.Stmt)    :1530
+// func (c *Checker) checkVarDecl(stmt *ast.Stmt)    :1692
 //
-// func (c *Checker) checkAssign(stmt *ast.Stmt)    :1605
+// func (c *Checker) checkAssign(stmt *ast.Stmt)    :1767
 //
-// func (c *Checker) checkReturn(stmt *ast.Stmt)    :1621
+// func (c *Checker) checkReturn(stmt *ast.Stmt)    :1783
 //
-// func (c *Checker) checkIf(stmt *ast.Stmt)    :1637
+// func (c *Checker) checkIf(stmt *ast.Stmt)    :1799
 //
-// func (c *Checker) checkFor(stmt *ast.Stmt)    :1656
+// func (c *Checker) checkFor(stmt *ast.Stmt)    :1818
 //
-// func (c *Checker) checkWhile(stmt *ast.Stmt)    :1687
+// func (c *Checker) checkWhile(stmt *ast.Stmt)    :1849
 //
-// func (c *Checker) checkMatch(stmt *ast.Stmt)    :1698
+// func (c *Checker) checkMatch(stmt *ast.Stmt)    :1860
 //
 // satisfiesConstraint checks whether a concrete type satisfies a named constraint.
-// func (c *Checker) satisfiesConstraint(t *Type, constraint string) bool    :1785
+// func (c *Checker) satisfiesConstraint(t *Type, constraint string) bool    :1947
 //
 // bindUnionPattern handles match arms for union types. PatIdent names are
-// func (c *Checker) bindUnionPattern(pat *ast.Pattern, matchType *Type)    :1811
+// func (c *Checker) bindUnionPattern(pat *ast.Pattern, matchType *Type)    :1973
 //
 // bindPattern introduces variables from a pattern into the current scope.
-// func (c *Checker) bindPattern(pat *ast.Pattern, matchType *Type)    :1845
+// func (c *Checker) bindPattern(pat *ast.Pattern, matchType *Type)    :2007
 //
-// func (c *Checker) checkBlock(block *ast.Block)    :1890
+// func (c *Checker) checkBlock(block *ast.Block)    :2052
 //
 // CheckFile type-checks an entire AST file.
-// func (c *Checker) CheckFile(file *ast.File)    :1901
+// func (c *Checker) CheckFile(file *ast.File)    :2063
 //
-// func (c *Checker) checkGrokBlock(block *ast.GrokBlock)    :1907
+// func (c *Checker) checkGrokBlock(block *ast.GrokBlock)    :2072
 //
-// func (c *Checker) registerStruct(s *ast.StructDecl)    :1975
+// func (c *Checker) registerStruct(s *ast.StructDecl)    :2164
 //
-// func (c *Checker) registerClass(cls *ast.ClassDecl)    :1986
+// func (c *Checker) registerClass(cls *ast.ClassDecl)    :2175
 //
-// func (c *Checker) registerEnum(e *ast.EnumDecl)    :2030
+// func (c *Checker) registerEnum(e *ast.EnumDecl)    :2219
 //
-// func (c *Checker) registerInterface(iface *ast.InterfaceDecl)    :2063
+// func (c *Checker) registerInterface(iface *ast.InterfaceDecl)    :2252
 //
 // checkImplements verifies that a class satisfies all its declared interfaces.
-// func (c *Checker) checkImplements(cls *ast.ClassDecl)    :2088
+// func (c *Checker) checkImplements(cls *ast.ClassDecl)    :2277
 //
-// func (c *Checker) registerFunc(fn *ast.FuncDecl)    :2129
+// func (c *Checker) registerFunc(fn *ast.FuncDecl)    :2318
 //
-// func (c *Checker) funcDeclToType(fn *ast.FuncDecl) *Type    :2134
+// func (c *Checker) funcDeclToType(fn *ast.FuncDecl) *Type    :2323
 //
-// func (c *Checker) checkFuncBody(fn *ast.FuncDecl)    :2166
+// func (c *Checker) checkFuncBody(fn *ast.FuncDecl)    :2355
 //
-// func (c *Checker) checkStructLit(expr *ast.Expr) *Type    :2197
+// func (c *Checker) checkStructLit(expr *ast.Expr) *Type    :2386
 
 // --- dependencies ---
 //
@@ -571,3 +597,4 @@ grok Checker {
 // DO NOT EDIT below this line — regenerated by `grok update`.
 //
 // pkg/ast
+// pkg/parser

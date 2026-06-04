@@ -38,6 +38,7 @@ type Transpiler struct {
 	declVis           map[string]bool             // Grok name → IsPublic for visibility-aware name resolution
 	methodVis         map[string]bool             // method name → IsPublic for method call emission
 	typeAliasGoType   map[string]string           // type alias name → underlying Go type string
+	modPath           string                      // Go module path prefix for .gk imports (e.g., "github.com/user/project")
 }
 
 // New creates a transpiler targeting the given Go package name.
@@ -47,6 +48,11 @@ func New(pkg string) *Transpiler {
 
 func (t *Transpiler) needsImport(pkg string) {
 	t.autoImports[pkg] = true
+}
+
+// SetModulePath sets the Go module path prefix for resolving .gk imports.
+func (t *Transpiler) SetModulePath(modPath string) {
+	t.modPath = modPath
 }
 
 // Transpile converts an AST file to Go source code.
@@ -71,7 +77,17 @@ func (t *Transpiler) Transpile(file *ast.File) string {
 	importSet := make(map[string]string) // path → alias
 	for _, block := range file.Blocks {
 		for _, imp := range block.Imports {
-			importSet[imp.Path] = imp.Alias
+			if strings.HasSuffix(imp.Path, ".gk") {
+				// Grok module import: convert to Go import path
+				if t.modPath != "" {
+					// Strip .gk extension and use as relative package path
+					relPath := strings.TrimSuffix(imp.Path, ".gk")
+					goPath := t.modPath + "/" + relPath
+					importSet[goPath] = imp.Alias
+				}
+			} else {
+				importSet[imp.Path] = imp.Alias
+			}
 		}
 	}
 	for pkg := range t.autoImports {

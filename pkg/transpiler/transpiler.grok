@@ -187,6 +187,7 @@ grok Transpiler {
     why: "Auto-detected import requirements. Populated during body transpilation (e.g. 'fmt' for Sprintf, 'cmp' for Ordered), merged with user imports in header. Two-pass: body first (discovers imports), then package+imports."
     func Transpile(mut self, file: File?) -> string
       why: "Primary entry point. Emits package declaration then all blocks."
+    pub func SetModulePath(self, modPath: string)
   }
 
   // strings.Builder — no Grok equivalent, accepted error
@@ -227,133 +228,142 @@ grok Transpiler {
 // file: transpiler.go
 //
 // New creates a transpiler targeting the given Go package name.
-// func New(pkg string) *Transpiler    :42
+// func New(pkg string) *Transpiler    :45
 //
-// func (t *Transpiler) needsImport(pkg string)    :46
+// func (t *Transpiler) needsImport(pkg string)    :49
+//
+// SetModulePath sets the Go module path prefix for resolving .gk imports.
+// func (t *Transpiler) SetModulePath(modPath string)    :54
 //
 // Transpile converts an AST file to Go source code.
-// func (t *Transpiler) Transpile(file *ast.File) string    :51
+// func (t *Transpiler) Transpile(file *ast.File) string    :59
 //
-// func (t *Transpiler) transpileBlock(block *ast.GrokBlock)    :100
+// func (t *Transpiler) transpileBlock(block *ast.GrokBlock)    :118
 //
-// func (t *Transpiler) goType(te *ast.TypeExpr) string    :162
+// func (t *Transpiler) goType(te *ast.TypeExpr) string    :182
 //
-// func (t *Transpiler) goNamedType(name string, args []ast.TypeExpr) string    :215
+// func (t *Transpiler) goNamedType(name string, args []ast.TypeExpr) string    :235
 //
-// func grokPrimitiveToGo(name string) string    :236
+// func grokPrimitiveToGo(name string) string    :256
 //
-// func (t *Transpiler) transpileInterface(iface *ast.InterfaceDecl)    :283
+// func (t *Transpiler) transpileInterface(iface *ast.InterfaceDecl)    :303
 //
-// func (t *Transpiler) transpileStruct(s *ast.StructDecl)    :328
+// func (t *Transpiler) transpileStruct(s *ast.StructDecl)    :348
 //
-// func (t *Transpiler) transpileClass(cls *ast.ClassDecl)    :341
+// func (t *Transpiler) transpileClass(cls *ast.ClassDecl)    :361
 //
-// func (t *Transpiler) transpileEnum(e *ast.EnumDecl)    :407
+// func (t *Transpiler) transpileEnum(e *ast.EnumDecl)    :427
 //
-// func (t *Transpiler) transpileFunc(fn *ast.FuncDecl, receiver string)    :453
+// func (t *Transpiler) transpileFunc(fn *ast.FuncDecl, receiver string)    :473
 //
 // transpileBuiltinMethod handles method calls on built-in types (string, list, map).
-// func (t *Transpiler) transpileBuiltinMethod(mc *ast.MethodCallExpr) bool    :549
+// func (t *Transpiler) transpileBuiltinMethod(mc *ast.MethodCallExpr) bool    :569
 //
-// func (t *Transpiler) transpileStringMethod(mc *ast.MethodCallExpr) bool    :567
+// func (t *Transpiler) transpileStringMethod(mc *ast.MethodCallExpr) bool    :587
 //
-// func (t *Transpiler) transpileListMethod(mc *ast.MethodCallExpr) bool    :655
+// func (t *Transpiler) transpileListMethod(mc *ast.MethodCallExpr) bool    :675
 //
-// func (t *Transpiler) transpileMapMethod(mc *ast.MethodCallExpr) bool    :712
+// func (t *Transpiler) transpileMapMethod(mc *ast.MethodCallExpr) bool    :732
 //
-// func (t *Transpiler) transpileChannelMethod(mc *ast.MethodCallExpr) bool    :749
+// func (t *Transpiler) transpileChannelMethod(mc *ast.MethodCallExpr) bool    :769
 //
-// func (t *Transpiler) transpileStmts(stmts []ast.Stmt)    :771
+// func (t *Transpiler) transpileStmts(stmts []ast.Stmt)    :791
 //
-// func (t *Transpiler) transpileStmt(stmt *ast.Stmt)    :777
+// func (t *Transpiler) transpileStmt(stmt *ast.Stmt)    :797
 //
-// func (t *Transpiler) transpileVarDecl(stmt *ast.Stmt)    :908
+// func (t *Transpiler) transpileVarDecl(stmt *ast.Stmt)    :928
 //
-// func (t *Transpiler) transpileAssign(stmt *ast.Stmt)    :990
+// func (t *Transpiler) transpileAssign(stmt *ast.Stmt)    :1025
 //
-// func (t *Transpiler) transpileReturn(stmt *ast.Stmt)    :999
+// func (t *Transpiler) transpileReturn(stmt *ast.Stmt)    :1034
 //
-// func (t *Transpiler) transpileIf(stmt *ast.Stmt)    :1033
+// func (t *Transpiler) transpileIf(stmt *ast.Stmt)    :1068
 //
-// func (t *Transpiler) transpileFor(stmt *ast.Stmt)    :1062
+// func (t *Transpiler) transpileFor(stmt *ast.Stmt)    :1097
 //
-// func (t *Transpiler) transpileWhile(stmt *ast.Stmt)    :1079
+// func (t *Transpiler) transpileWhile(stmt *ast.Stmt)    :1114
 //
-// func (t *Transpiler) transpileMatch(stmt *ast.Stmt)    :1092
+// func (t *Transpiler) transpileMatch(stmt *ast.Stmt)    :1127
+//
+// transpileTupleMatch emits an if-else chain for match on tuple values.
+// func (t *Transpiler) transpileTupleMatch(matchStmt *ast.MatchStmt)    :1319
+//
+// isTupleAllWildcard checks if a tuple pattern has only wildcard elements.
+// func (t *Transpiler) isTupleAllWildcard(pat *ast.Pattern) bool    :1407
 //
 // isEnumMatch checks if the match value expression has an enum resolved type.
-// func (t *Transpiler) isEnumMatch(expr *ast.Expr) bool    :1276
+// func (t *Transpiler) isEnumMatch(expr *ast.Expr) bool    :1421
 //
 // isUnionMatch checks if the match value expression has a union resolved type.
-// func (t *Transpiler) isUnionMatch(expr *ast.Expr) bool    :1284
+// func (t *Transpiler) isUnionMatch(expr *ast.Expr) bool    :1429
 //
 // enumMatchNeedsBinding returns true if any match arm destructures variant fields,
-// func (t *Transpiler) enumMatchNeedsBinding(arms []ast.MatchArm) bool    :1293
+// func (t *Transpiler) enumMatchNeedsBinding(arms []ast.MatchArm) bool    :1438
 //
 // variantGoType returns the Go type name for a variant (e.g., "ShapeCircle").
-// func (t *Transpiler) variantGoType(variantName string) string    :1306
+// func (t *Transpiler) variantGoType(variantName string) string    :1451
 //
 // emitVariantBindings emits field extraction from a type-switch matched variant.
-// func (t *Transpiler) emitVariantBindings(vp *ast.VariantPattern, matchVar string)    :1320
+// func (t *Transpiler) emitVariantBindings(vp *ast.VariantPattern, matchVar string)    :1465
 //
 // hasNestedVariantBindings returns true if any arm has a PatVariant binding inside
-// func (t *Transpiler) hasNestedVariantBindings(arms []ast.MatchArm) bool    :1344
+// func (t *Transpiler) hasNestedVariantBindings(arms []ast.MatchArm) bool    :1489
 //
 // groupArmsByVariant groups arms sharing the same outer variant for nested match.
-// func groupArmsByVariant(arms []ast.MatchArm) []armGroup    :1366
+// func groupArmsByVariant(arms []ast.MatchArm) []armGroup    :1511
 //
 // emitNestedTypeSwitch emits a nested type switch for arms that share an outer variant
-// func (t *Transpiler) emitNestedTypeSwitch(outerVP *ast.VariantPattern, innerArms []ast.MatchArm, matchVar string, isExprMatch bool, retType string)    :1388
+// func (t *Transpiler) emitNestedTypeSwitch(outerVP *ast.VariantPattern, innerArms []ast.MatchArm, matchVar string, isExprMatch bool, retType string)    :1533
 //
-// func (t *Transpiler) transpileExpr(expr *ast.Expr)    :1456
+// func (t *Transpiler) transpileExpr(expr *ast.Expr)    :1601
 //
 // emitTryErrCheck emits: if errVar != nil { return <zero values>, errVar }
-// func (t *Transpiler) emitTryErrCheck(errVar string)    :2119
+// func (t *Transpiler) emitTryErrCheck(errVar string)    :2269
 //
 // goTypeZeroValue returns the Go zero value for a type string.
-// func goTypeZeroValue(goType string) string    :2158
+// func goTypeZeroValue(goType string) string    :2308
 //
-// func (t *Transpiler) transpileBinary(expr *ast.Expr)    :2178
+// func (t *Transpiler) transpileBinary(expr *ast.Expr)    :2328
 //
 // transpileExprWithCast emits an expression, wrapping it in a Go type cast if
-// func (t *Transpiler) transpileExprWithCast(expr *ast.Expr, targetGoType string)    :2195
+// func (t *Transpiler) transpileExprWithCast(expr *ast.Expr, targetGoType string)    :2345
 //
 // checkerTypeToGo converts a checker.Type to a Go type string.
-// func (t *Transpiler) checkerTypeToGo(ct *checker.Type) string    :2213
+// func (t *Transpiler) checkerTypeToGo(ct *checker.Type) string    :2363
 //
-// func binaryOpString(op ast.BinaryOp) string    :2298
+// func binaryOpString(op ast.BinaryOp) string    :2448
 //
-// func (t *Transpiler) transpilePattern(pat *ast.Pattern)    :2343
+// func (t *Transpiler) transpilePattern(pat *ast.Pattern)    :2493
 //
-// func (t *Transpiler) writef(format string, args ...any)    :2369
+// func (t *Transpiler) writef(format string, args ...any)    :2519
 //
-// func (t *Transpiler) writeIndent()    :2373
+// func (t *Transpiler) writeIndent()    :2523
 //
-// func (t *Transpiler) typeParamList(params []ast.TypeParam) string    :2379
+// func (t *Transpiler) typeParamList(params []ast.TypeParam) string    :2529
 //
 // mergeWhereConstraints returns a copy of typeParams with where clause constraints merged in.
-// func (t *Transpiler) mergeWhereConstraints(typeParams []ast.TypeParam, where []ast.WhereClause) []ast.TypeParam    :2396
+// func (t *Transpiler) mergeWhereConstraints(typeParams []ast.TypeParam, where []ast.WhereClause) []ast.TypeParam    :2546
 //
 // mapConstraint maps Grok constraint names to Go equivalents.
-// func (t *Transpiler) mapConstraint(name string) string    :2413
+// func (t *Transpiler) mapConstraint(name string) string    :2563
 //
 // exportName capitalizes the first letter for Go export.
-// func exportName(name string) string    :2432
+// func exportName(name string) string    :2582
 //
 // unexportName lowercases the first letter for Go unexported symbols.
-// func unexportName(name string) string    :2444
+// func unexportName(name string) string    :2594
 //
 // visName returns the Go name based on visibility. pub = exported, else unexported.
-// func visName(name string, isPublic bool) string    :2455
+// func visName(name string, isPublic bool) string    :2605
 //
 // bodyRefsIdent checks if a block body references a given identifier name.
-// func bodyRefsIdent(body *ast.Block, name string) bool    :2463
+// func bodyRefsIdent(body *ast.Block, name string) bool    :2613
 //
-// func blockRefsIdent(body ast.Block, name string) bool    :2475
+// func blockRefsIdent(body ast.Block, name string) bool    :2625
 //
-// func stmtRefsIdent(stmt *ast.Stmt, name string) bool    :2479
+// func stmtRefsIdent(stmt *ast.Stmt, name string) bool    :2629
 //
-// func exprRefsIdent(expr *ast.Expr, name string) bool    :2521
+// func exprRefsIdent(expr *ast.Expr, name string) bool    :2671
 
 // --- dependencies ---
 //
