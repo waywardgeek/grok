@@ -18,93 +18,153 @@ The real bottleneck in AI-assisted software development is **human review**, not
 
 See [Grok-Driven Development](https://coderhapsody.ai/docs/grok-driven-development) for the full methodology.
 
-## Quick Example
+---
 
-```grok
-// pkg/verifier/verifier.grok — lives next to the code it describes
+## Quick Start
 
-grok Verifier {
-  why: "Compares .grok files against Go source, reporting structural drift."
+### Installation
 
-  doc "Architecture": """
-    Multi-stage pipeline: parse .grok → discover Go sources → extract types →
-    compare structurally → report findings. Aggregates ALL source files before
-    comparing — a grok block's types may span multiple Go files.
-  """
+Build the unified CLI from source:
 
-  enum Severity { Error Warning Info }
-
-  struct Finding {
-    Severity: Severity
-    GrokFile: string
-    GoFile:   string
-    Message:  string
-  }
-
-  class Result() {
-    Findings: [Finding]
-    func ErrorCount(self) -> int
-  }
-
-  func Verify(grokPath: string) -> (Result?, error)
-
-  source: ["verifier.go"]
-}
+```bash
+git clone https://github.com/waywardgeek/grok.git
+cd grok
+go build -o grok ./cmd/grok/
+# Optionally move to your PATH:
+# mv grok /usr/local/bin/
 ```
 
-Verify it:
+Or install individual tools:
+
 ```bash
-$ grok-verify pkg/verifier/verifier.grok
+go install github.com/waywardgeek/grok/cmd/grok-verify@latest
+go install github.com/waywardgeek/grok/cmd/grok-compile@latest
+```
+
+### Verify a `.grok` file
+
+```bash
+$ grok verify pkg/parser/parser.grok
 0 errors, 0 warnings
 ```
 
 If the code drifts:
+
 ```
-[ERROR] verifier.grok ↔ verifier.go: function Verify: param count mismatch: .grok=2, Go=1
-[WARNING] verifier.grok ↔ verifier.go: exported type Config not documented in .grok
+[ERROR] parser.grok ↔ parser.go: function ParseString: param count mismatch: .grok=2, Go=1
+[WARNING] parser.grok ↔ parser.go: exported type Config not documented in .grok
 ```
+
+### Compile a `.gk` file
+
+```bash
+$ grok compile testdata/demo.gk
+wrote demo.go
+$ go run demo.go
+Task Manager Demo
+Added: Buy groceries (priority 2)
+...
+```
+
+### Generate a `.grok` file from Go source
+
+```bash
+$ grok gen pkg/ast/        # scaffolds ast.grok from Go source
+$ grok update ast.grok     # auto-adds missing exported symbols
+$ grok fmt ast.grok        # formats to canonical style
+```
+
+---
 
 ## The Compiler
 
-The `.gk` compiler is a full-stack implementation: parser → type checker → Go transpiler.
+The `.gk` compiler is a full-stack transpiler: parser → type checker → Go code generator.
 
-```grok
-// demo.gk — compiles to valid, runnable Go
+```
+// demo.gk
 
-import fmt from "fmt"
+grok task_demo {
+  enum Priority { Low Medium High Critical }
 
-class Stack<T>() {
-    items: [T]
+  struct Task {
+    name: string
+    priority: Priority
+    done: bool
+  }
 
-    func push(mut self, item: T) -> unit {
-        self.items = append(self.items, item)
+  class TaskManager<T>() {
+    tasks: [T]
+
+    pub fn add(mut self, task: T) {
+      self.tasks = append(self.tasks, task)
     }
 
-    func pop(mut self) -> T? {
-        if len(self.items) == 0 {
-            return nil
+    pub fn count(self) -> i32 {
+      return <i32>len(self.tasks)
+    }
+  }
+
+  func main() {
+    let mgr = TaskManager<Task>()
+    mgr.add(Task { name: "Ship it", priority: Priority.High, done: false })
+    println(f"Tasks: {mgr.count()}")
+  }
+}
+```
+
+### Language Features
+
+**Type system:** Generics with constraints and inference, interfaces (structural subtyping), enums (tagged unions with fields), optionals (`T?`, `!` unwrap, `isnull()`), union types (`T | U`), tuples `(T, U)`, type aliases.
+
+**Error handling:** `(T, error)` tuples with Rust-style `?` operator for concise error propagation — works in any expression position:
+
+```
+func process(s: string) -> (i32, error) {
+    let result = double(parse(s)?)      // nested ? in function args
+    let sum = parse("a")? + parse("b")? // multiple ? in one expression
+    return (result + sum, null)
+}
+```
+
+**Concurrency:** `spawn` (goroutines), typed channels (`make_channel<T>`, send/receive/close), `select` with receive binding, `lock(mu) { ... }` (scoped mutex).
+
+**Concurrency safety:** `guarded_by(mu)` annotations are enforced at compile time — accessing a guarded field outside its lock scope is a checker error:
+
+```
+class Counter() {
+    count: i32 guarded_by(mu)  // must access within lock(mu)
+    mu: lock
+
+    pub fn increment(mut self) {
+        lock(self.mu) {
+            self.count = self.count + 1  // OK
         }
-        let last = self.items[len(self.items) - 1]
-        self.items = self.items[:len(self.items) - 1]
-        return last
+    }
+
+    pub fn bad_read(self) -> i32 {
+        return self.count  // ERROR: field "count" is guarded by "mu"
     }
 }
-
-func main() -> unit {
-    let s = Stack<i32>()
-    s.push(10)
-    s.push(20)
-    println(f"popped: {s.pop()!}")
-}
 ```
 
-```bash
-$ grok-compile demo.gk
-$ go run demo.go
-popped: 20
-```
+**Pattern matching:** Enum/union type switches, nested patterns (`Some(Circle(r)) =>`), guard clauses (`x if x > 0 =>`), exhaustiveness warnings, tuple destructuring.
 
-**Language features:** generics with constraints, interfaces, enums (tagged unions), optionals (`T?`, `!` unwrap, `isnull`), f-strings, error handling via `(T, error)` tuples, pattern matching, lambdas, type casts, built-in methods on string/list/map, numeric coercion, slices.
+**Other:** Lambdas, f-strings, visibility (`pub`/private), built-in methods on string/list/map/channel, numeric types (i8–i256, u8–u256, f32–f128), type casts, modules (`import X from "file.gk"`), `cascade` (defer).
+
+---
+
+## The Toolchain
+
+| Command | Description |
+|---|---|
+| `grok compile file.gk` | Compile `.gk` to `.go` |
+| `grok verify file.grok` | Check `.grok` against Go source for structural drift |
+| `grok update file.grok` | Auto-add missing exported symbols, regenerate function index |
+| `grok update --prune file.grok` | Also remove stale declarations not in Go source |
+| `grok gen pkg/dir/` | Scaffold a new `.grok` file from Go source |
+| `grok fmt file.grok` | Format `.grok` to canonical style |
+
+---
 
 ## Key Principles
 
@@ -112,62 +172,57 @@ popped: 20
 - **Cross-file concepts only** — data structures, APIs, interfaces. Not single-file implementation details.
 - **Adopt the implementation language's conventions** — PascalCase for Go, snake_case for Python
 - **AI writes, human reviews** — implement first, write `.grok` after, human validates architecture
-- **Completeness checking** — the verifier warns about exported Go symbols not documented in `.grok`, ensuring the file captures the full public API surface
+- **Completeness checking** — the verifier warns about exported Go symbols not documented in `.grok`
+- **Self-referential** — every compiler package has its own `.grok` file, verified by the tool it contains
 
-## Documentation
-
-- [Grok-Driven Development](https://coderhapsody.ai/docs/grok-driven-development) — the methodology
-- [Grok Language Specification](https://coderhapsody.ai/docs/grok-language) — the full type system and syntax
-
-## Installation
-
-```bash
-go install github.com/waywardgeek/grok/cmd/grok-verify@latest
-go install github.com/waywardgeek/grok/cmd/grok-compile@latest
-```
-
-Or build from source:
-```bash
-git clone https://github.com/waywardgeek/grok.git
-cd grok
-go build -o grok-verify ./cmd/grok-verify/
-go build -o grok-compile ./cmd/grok-compile/
-```
-
-## Usage
-
-```bash
-# Verify .grok files against Go source
-grok-verify pkg/parser/parser.grok
-find . -name '*.grok' -exec grok-verify {} \;
-
-# Compile .gk files to Go
-grok-compile testdata/demo.gk
-go run demo.go
-```
+---
 
 ## Project Structure
 
 ```
-cmd/grok-verify/       CLI: structural drift detector
-cmd/grok-compile/      CLI: .gk → Go compiler
+cmd/grok/              Unified CLI (compile, verify, update, gen, fmt)
+cmd/grok-compile/      Standalone compiler CLI
+cmd/grok-verify/       Standalone verifier CLI
+cmd/grok-gen/          Standalone scaffolding CLI
+cmd/grok-update/       Standalone update CLI
 pkg/ast/               AST node types + ast.grok
 pkg/parser/            PEG parser for .grok and .gk files + parser.grok
 pkg/checker/           Type checker with inference + checker.grok
 pkg/transpiler/        Go code generator + transpiler.grok
 pkg/verifier/          Structural drift detector + verifier.grok
-testdata/              .gk test files (15 files, all compile to valid Go)
+testdata/              36 .gk test files (all compile, 33 go-build clean)
+testdata/modules/      Module system test files
 ```
 
-The project is self-referential: every package has its own `.grok` file, verified by the tool it contains.
+---
 
 ## Test Status
 
-180 tests across parser, checker, transpiler, and verifier. 15 `.gk` test files compile to valid Go and run correctly.
+233 tests across parser, checker, transpiler, and verifier. 36 `.gk` test files all compile; 33 produce Go that passes `go build` (1 known issue: `typealias.gk`). 6 self-referential `.grok` files verify clean (0 errors, 0 warnings).
 
 ```bash
-go test ./...
+$ go test ./...
+ok  github.com/waywardgeek/grok/pkg/checker     0.018s
+ok  github.com/waywardgeek/grok/pkg/parser       0.006s
+ok  github.com/waywardgeek/grok/pkg/transpiler   0.005s
+ok  github.com/waywardgeek/grok/pkg/verifier     0.004s
 ```
+
+### Known Issues
+
+- `typealias.gk`: optional type alias wrapping generates Go that doesn't build in all cases
+- `features.gk`: `go vet` warns about unreachable code after exhaustive match
+- i128/i256 types silently downcast to int64/uint64 (math/big support planned)
+- No LSP server yet (planned)
+
+---
+
+## Documentation
+
+- [Grok Language Specification](https://coderhapsody.ai/docs/grok-language) — full type system, syntax, and examples
+- [Grok-Driven Development](https://coderhapsody.ai/docs/grok-driven-development) — the methodology
+
+---
 
 ## License
 
