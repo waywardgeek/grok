@@ -189,15 +189,19 @@ func (t *Transpiler) goType(te *ast.TypeExpr) string {
 
 func (t *Transpiler) goNamedType(name string, args []ast.TypeExpr) string {
 	goName := grokPrimitiveToGo(name)
+	prefix := ""
+	if t.classes[name] {
+		prefix = "*"
+	}
 	if len(args) == 0 {
-		return goName
+		return prefix + goName
 	}
 	// Generic: Type[A, B]
 	typeArgs := make([]string, len(args))
 	for i := range args {
 		typeArgs[i] = t.goType(&args[i])
 	}
-	return fmt.Sprintf("%s[%s]", goName, strings.Join(typeArgs, ", "))
+	return fmt.Sprintf("%s%s[%s]", prefix, goName, strings.Join(typeArgs, ", "))
 }
 
 func grokPrimitiveToGo(name string) string {
@@ -924,7 +928,13 @@ func (t *Transpiler) transpileVarDecl(stmt *ast.Stmt) {
 			t.writef("_ = ")
 			t.transpileExpr(decl.Value)
 		} else {
-			t.writef("%s := ", decl.Name)
+			// When the resolved type is an enum, emit `var name EnumType = expr`
+			// so Go sees the interface type, enabling type switches in match.
+			if rt, ok := decl.Value.ResolvedType.(*checker.Type); ok && rt.Kind == checker.TyEnum {
+				t.writef("var %s %s = ", decl.Name, rt.Name)
+			} else {
+				t.writef("%s := ", decl.Name)
+			}
 			t.transpileExpr(decl.Value)
 		}
 	} else if decl.Type != nil {
@@ -1852,7 +1862,12 @@ func checkerTypeToGo(ct *checker.Type) string {
 			return ct.Name
 		}
 		return "interface{}"
-	case checker.TyClass, checker.TyStruct:
+	case checker.TyClass:
+		if ct.Name != "" {
+			return "*" + ct.Name
+		}
+		return "any"
+	case checker.TyStruct:
 		if ct.Name != "" {
 			return ct.Name
 		}
