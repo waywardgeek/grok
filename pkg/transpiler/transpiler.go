@@ -1084,6 +1084,63 @@ func (t *Transpiler) transpileMatch(stmt *ast.Stmt) {
 			t.writef(" {\n")
 		}
 	}
+	hasNested := isEnumMatch && t.hasNestedVariantBindings(matchStmt.Arms)
+	if hasNested {
+		// Group arms by outer variant to avoid duplicate case labels
+		groups := groupArmsByVariant(matchStmt.Arms)
+		for _, g := range groups {
+			t.writeIndent()
+			if len(g.arms) == 1 && g.arms[0].Pattern.Kind == ast.PatWildcard {
+				t.writef("default:\n")
+				t.indent++
+				t.transpileStmts(g.arms[0].Body.Stmts)
+				t.indent--
+				continue
+			}
+			if g.variantName == "" {
+				// Non-variant arm (wildcard, unit variant ident, etc.)
+				arm := g.arms[0]
+				t.writeIndent()
+				if arm.Pattern.Kind == ast.PatWildcard {
+					t.writef("default:\n")
+				} else if arm.Pattern.Kind == ast.PatIdent {
+					id := arm.Pattern.Data.(*ast.IdentPattern)
+					t.writef("case %s:\n", t.variantGoType(id.Name))
+				} else {
+					t.writef("case ")
+					t.transpilePattern(&arm.Pattern)
+					t.writef(":\n")
+				}
+				t.indent++
+				t.transpileStmts(arm.Body.Stmts)
+				t.indent--
+				continue
+			}
+			t.writef("case %s:\n", t.variantGoType(g.variantName))
+			t.indent++
+			// Check if this group has nested variant patterns
+			hasNestedInGroup := false
+			for _, arm := range g.arms {
+				vp := arm.Pattern.Data.(*ast.VariantPattern)
+				for _, b := range vp.Bindings {
+					if b.Kind == ast.PatVariant {
+						hasNestedInGroup = true
+						break
+					}
+				}
+			}
+			if hasNestedInGroup {
+				outerVP := g.arms[0].Pattern.Data.(*ast.VariantPattern)
+				t.emitNestedTypeSwitch(outerVP, g.arms, "_m", false, "")
+			} else {
+				// Single arm, emit bindings normally
+				vp := g.arms[0].Pattern.Data.(*ast.VariantPattern)
+				t.emitVariantBindings(vp, "_m")
+				t.transpileStmts(g.arms[0].Body.Stmts)
+			}
+			t.indent--
+		}
+	} else {
 	for _, arm := range matchStmt.Arms {
 		t.writeIndent()
 		if arm.Pattern.Kind == ast.PatWildcard {
@@ -1092,7 +1149,7 @@ func (t *Transpiler) transpileMatch(stmt *ast.Stmt) {
 			vp := arm.Pattern.Data.(*ast.VariantPattern)
 			t.writef("case %s:\n", t.variantGoType(vp.Name))
 			t.indent++
-			t.emitVariantBindings(vp)
+			t.emitVariantBindings(vp, "_m")
 			if arm.Guard != nil {
 				t.writeIndent()
 				t.writef("if ")
@@ -1171,6 +1228,7 @@ func (t *Transpiler) transpileMatch(stmt *ast.Stmt) {
 		}
 		t.indent--
 	}
+	} // end else (non-nested)
 	t.writeIndent()
 	t.writef("}\n")
 	t.taglessSwitch = false
@@ -1218,25 +1276,138 @@ func (t *Transpiler) variantGoType(variantName string) string {
 }
 
 // emitVariantBindings emits field extraction from a type-switch matched variant.
-func (t *Transpiler) emitVariantBindings(vp *ast.VariantPattern) {
+// matchVar is the Go variable holding the matched value (e.g., "_m", "_m2").
+func (t *Transpiler) emitVariantBindings(vp *ast.VariantPattern, matchVar string) {
 	vci, ok := t.variantCtors[vp.Name]
 	if !ok || len(vp.Bindings) == 0 {
 		return
 	}
 	for i, binding := range vp.Bindings {
-		if binding.Kind != ast.PatIdent {
-			continue
-		}
-		id := binding.Data.(*ast.IdentPattern)
-		if id.Name == "_" {
-			continue
-		}
 		fieldName := fmt.Sprintf("V%d", i)
 		if i < len(vci.fieldNames) {
 			fieldName = vci.fieldNames[i]
 		}
+		if binding.Kind == ast.PatIdent {
+			id := binding.Data.(*ast.IdentPattern)
+			if id.Name == "_" {
+				continue
+			}
+			t.writeIndent()
+			t.writef("%s := %s.%s\n", id.Name, matchVar, exportName(fieldName))
+		}
+		// Nested PatVariant handled by emitNestedMatch — skip here
+	}
+}
+
+// hasNestedVariantBindings returns true if any arm has a PatVariant binding inside
+// a PatVariant pattern (e.g., Some(Circle(r))).
+func (t *Transpiler) hasNestedVariantBindings(arms []ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.Pattern.Kind == ast.PatVariant {
+			vp := arm.Pattern.Data.(*ast.VariantPattern)
+			for _, b := range vp.Bindings {
+				if b.Kind == ast.PatVariant {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// armGroup collects match arms sharing the same outer variant name.
+type armGroup struct {
+	variantName string
+	arms        []ast.MatchArm
+}
+
+// groupArmsByVariant groups arms sharing the same outer variant for nested match.
+// Non-variant arms (wildcard, ident for unit variants, etc.) get their own group.
+func groupArmsByVariant(arms []ast.MatchArm) []armGroup {
+	var groups []armGroup
+	groupMap := make(map[string]int) // variant name -> index in groups
+	for _, arm := range arms {
+		if arm.Pattern.Kind == ast.PatVariant {
+			vp := arm.Pattern.Data.(*ast.VariantPattern)
+			if idx, ok := groupMap[vp.Name]; ok {
+				groups[idx].arms = append(groups[idx].arms, arm)
+				continue
+			}
+			groupMap[vp.Name] = len(groups)
+			groups = append(groups, armGroup{variantName: vp.Name, arms: []ast.MatchArm{arm}})
+		} else {
+			// Non-variant arms (wildcard, ident/unit variant, literal) get their own group
+			groups = append(groups, armGroup{arms: []ast.MatchArm{arm}})
+		}
+	}
+	return groups
+}
+
+// emitNestedTypeSwitch emits a nested type switch for arms that share an outer variant
+// but have different inner variant patterns. matchVar is the outer match variable.
+func (t *Transpiler) emitNestedTypeSwitch(outerVP *ast.VariantPattern, innerArms []ast.MatchArm, matchVar string, isExprMatch bool, retType string) {
+	// Find the field index that has nested variant patterns (typically the first/only field)
+	vci, ok := t.variantCtors[outerVP.Name]
+	if !ok {
+		return
+	}
+	// Find which field has the nested variant pattern
+	fieldIdx := 0
+	for i, b := range outerVP.Bindings {
+		if b.Kind == ast.PatVariant {
+			fieldIdx = i
+			break
+		}
+	}
+	fieldName := fmt.Sprintf("V%d", fieldIdx)
+	if fieldIdx < len(vci.fieldNames) {
+		fieldName = vci.fieldNames[fieldIdx]
+	}
+	innerMatchVar := matchVar + "2"
+	t.writeIndent()
+	t.writef("switch %s := %s.%s.(type) {\n", innerMatchVar, matchVar, exportName(fieldName))
+	for _, arm := range innerArms {
+		vp := arm.Pattern.Data.(*ast.VariantPattern)
+		innerVP := vp.Bindings[fieldIdx].Data.(*ast.VariantPattern)
 		t.writeIndent()
-		t.writef("%s := _m.%s\n", id.Name, exportName(fieldName))
+		t.writef("case %s:\n", t.variantGoType(innerVP.Name))
+		t.indent++
+		t.emitVariantBindings(innerVP, innerMatchVar)
+		if isExprMatch {
+			// Emit body with last stmt as return
+			if len(arm.Body.Stmts) > 0 {
+				for i := 0; i < len(arm.Body.Stmts)-1; i++ {
+					t.transpileStmt(&arm.Body.Stmts[i])
+				}
+				last := &arm.Body.Stmts[len(arm.Body.Stmts)-1]
+				if last.Kind == ast.StmtExpr {
+					t.writeIndent()
+					t.writef("return ")
+					exprStmt := last.Data.(*ast.ExprStmt)
+					t.transpileExpr(&exprStmt.Expr)
+					t.writef("\n")
+				} else {
+					t.transpileStmt(last)
+				}
+			}
+		} else {
+			t.transpileStmts(arm.Body.Stmts)
+		}
+		t.indent--
+	}
+	t.writeIndent()
+	t.writef("}\n")
+	// In expr-match (IIFE) context, emit a fallback return after the nested switch
+	// in case none of the inner cases matched
+	if isExprMatch && retType != "" {
+		t.writeIndent()
+		if retType != "any" {
+			t.writef("var _zero %s\n", retType)
+			t.writeIndent()
+			t.writef("return _zero\n")
+		} else {
+			t.writef("return nil\n")
+		}
 	}
 }
 
@@ -1686,6 +1857,80 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 				t.writef("; _m {\n")
 			}
 		}
+		hasNested := isEnumMatch && t.hasNestedVariantBindings(m.Arms)
+		if hasNested {
+			groups := groupArmsByVariant(m.Arms)
+			for _, g := range groups {
+				t.writeIndent()
+				// Non-variant group (wildcard, unit variant ident, etc.)
+				if g.variantName == "" {
+					arm := g.arms[0]
+					if arm.Pattern.Kind == ast.PatWildcard {
+						t.writef("default:\n")
+					} else if arm.Pattern.Kind == ast.PatIdent {
+						id := arm.Pattern.Data.(*ast.IdentPattern)
+						t.writef("case %s:\n", t.variantGoType(id.Name))
+					} else {
+						t.writef("case ")
+						t.transpilePattern(&arm.Pattern)
+						t.writef(":\n")
+					}
+					t.indent++
+					if len(arm.Body.Stmts) > 0 {
+						for i := 0; i < len(arm.Body.Stmts)-1; i++ {
+							t.transpileStmt(&arm.Body.Stmts[i])
+						}
+						last := &arm.Body.Stmts[len(arm.Body.Stmts)-1]
+						if last.Kind == ast.StmtExpr {
+							t.writeIndent()
+							t.writef("return ")
+							exprStmt := last.Data.(*ast.ExprStmt)
+							t.transpileExpr(&exprStmt.Expr)
+							t.writef("\n")
+						} else {
+							t.transpileStmt(last)
+						}
+					}
+					t.indent--
+					continue
+				}
+				t.writef("case %s:\n", t.variantGoType(g.variantName))
+				t.indent++
+				hasNestedInGroup := false
+				for _, arm := range g.arms {
+					vp := arm.Pattern.Data.(*ast.VariantPattern)
+					for _, b := range vp.Bindings {
+						if b.Kind == ast.PatVariant {
+							hasNestedInGroup = true
+							break
+						}
+					}
+				}
+				if hasNestedInGroup {
+					outerVP := g.arms[0].Pattern.Data.(*ast.VariantPattern)
+					t.emitNestedTypeSwitch(outerVP, g.arms, "_m", true, retType)
+				} else {
+					vp := g.arms[0].Pattern.Data.(*ast.VariantPattern)
+					t.emitVariantBindings(vp, "_m")
+					if len(g.arms[0].Body.Stmts) > 0 {
+						for i := 0; i < len(g.arms[0].Body.Stmts)-1; i++ {
+							t.transpileStmt(&g.arms[0].Body.Stmts[i])
+						}
+						last := &g.arms[0].Body.Stmts[len(g.arms[0].Body.Stmts)-1]
+						if last.Kind == ast.StmtExpr {
+							t.writeIndent()
+							t.writef("return ")
+							exprStmt := last.Data.(*ast.ExprStmt)
+							t.transpileExpr(&exprStmt.Expr)
+							t.writef("\n")
+						} else {
+							t.transpileStmt(last)
+						}
+					}
+				}
+				t.indent--
+			}
+		} else {
 		for _, arm := range m.Arms {
 			t.writeIndent()
 			if arm.Pattern.Kind == ast.PatWildcard {
@@ -1694,7 +1939,7 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 				vp := arm.Pattern.Data.(*ast.VariantPattern)
 				t.writef("case %s:\n", t.variantGoType(vp.Name))
 				t.indent++
-				t.emitVariantBindings(vp)
+				t.emitVariantBindings(vp, "_m")
 			} else if arm.Pattern.Kind == ast.PatIdent && isEnumMatch {
 				id := arm.Pattern.Data.(*ast.IdentPattern)
 				if goType := t.variantGoType(id.Name); goType != exportName(id.Name) {
@@ -1770,6 +2015,7 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 			}
 			t.indent--
 		}
+		} // end else (non-nested IIFE)
 		// Add fallback default only if no wildcard arm exists
 		hasDefault := false
 		for _, arm := range m.Arms {

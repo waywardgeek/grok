@@ -536,6 +536,57 @@ func TestTranspileEnumMatchTypeSwitch(t *testing.T) {
 	}
 }
 
+func TestTranspileNestedPatternMatch(t *testing.T) {
+	src := `grok test {
+  enum Shape {
+    Circle(radius: f64)
+    Rect(w: f64, h: f64)
+  }
+  enum Option {
+    Some(value: Shape)
+    None
+  }
+  fn describe(opt: Option) -> string {
+    return match opt {
+      Some(Circle(r)) => { f"circle {r}" }
+      Some(Rect(w, h)) => { f"rect {w}x{h}" }
+      None => { "nothing" }
+    }
+  }
+}`
+	output := transpileWithChecker(t, src)
+	// Should have outer type switch
+	if !strings.Contains(output, "switch _m := opt.(type)") {
+		t.Errorf("expected outer type switch, got:\n%s", output)
+	}
+	// Should have single OptionSome case (not duplicate)
+	if strings.Count(output, "case OptionSome:") != 1 {
+		t.Errorf("expected exactly one OptionSome case, got:\n%s", output)
+	}
+	// Should have nested type switch on _m.Value
+	if !strings.Contains(output, "switch _m2 := _m.Value.(type)") {
+		t.Errorf("expected nested type switch on _m.Value, got:\n%s", output)
+	}
+	// Should have inner variant cases
+	if !strings.Contains(output, "case ShapeCircle:") {
+		t.Errorf("expected ShapeCircle case, got:\n%s", output)
+	}
+	if !strings.Contains(output, "case ShapeRect:") {
+		t.Errorf("expected ShapeRect case, got:\n%s", output)
+	}
+	// Should have field bindings from inner match var
+	if !strings.Contains(output, "r := _m2.Radius") {
+		t.Errorf("expected r := _m2.Radius, got:\n%s", output)
+	}
+	if !strings.Contains(output, "w := _m2.W") {
+		t.Errorf("expected w := _m2.W, got:\n%s", output)
+	}
+	// Should have OptionNone case
+	if !strings.Contains(output, "case OptionNone:") {
+		t.Errorf("expected OptionNone case, got:\n%s", output)
+	}
+}
+
 func TestTranspileEnumMatchNoBinding(t *testing.T) {
 	src := `grok test {
   enum Color { Red Green Blue }
