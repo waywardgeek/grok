@@ -515,6 +515,29 @@ func TestTranspileEnumMatchTypeSwitch(t *testing.T) {
 	}
 }
 
+func TestTranspileEnumMatchNoBinding(t *testing.T) {
+	src := `grok test {
+  enum Color { Red Green Blue }
+  func Name(c: Color) -> string {
+    return match c {
+      Red => { "red" }
+      Green => { "green" }
+      Blue => { "blue" }
+    }
+  }
+}`
+	output := transpileWithChecker(t, src)
+	if !strings.Contains(output, ".(type)") {
+		t.Errorf("expected type switch, got:\n%s", output)
+	}
+	if strings.Contains(output, "_m :=") {
+		t.Errorf("should NOT emit _m binding for unit-only enum match, got:\n%s", output)
+	}
+	if !strings.Contains(output, "case ColorRed:") {
+		t.Errorf("expected ColorRed case, got:\n%s", output)
+	}
+}
+
 func TestTupleReturn(t *testing.T) {
 	src := `grok test {
 		func divide(a: i32, b: i32) -> (i32, error) {

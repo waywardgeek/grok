@@ -316,17 +316,26 @@ func (t *Transpiler) transpileClass(cls *ast.ClassDecl) {
 
 	// Constructor
 	if len(cls.CtorParams) > 0 {
-		t.writef("\nfunc New%s(", name)
+		t.writef("\nfunc New%s%s(", name, typeParams)
 		for i, p := range cls.CtorParams {
 			if i > 0 {
 				t.writef(", ")
 			}
 			t.writef("%s %s", p.Name, t.goType(&p.Type))
 		}
-		t.writef(") *%s {\n", name)
+		// Build type arg list for return type (e.g., "[T]")
+		typeArgs := ""
+		if len(cls.TypeParams) > 0 {
+			var names []string
+			for _, tp := range cls.TypeParams {
+				names = append(names, tp.Name)
+			}
+			typeArgs = "[" + strings.Join(names, ", ") + "]"
+		}
+		t.writef(") *%s%s {\n", name, typeArgs)
 		t.indent++
 		t.writeIndent()
-		t.writef("return &%s{\n", name)
+		t.writef("return &%s%s{\n", name, typeArgs)
 		t.indent++
 		for _, p := range cls.CtorParams {
 			t.writeIndent()
@@ -890,9 +899,10 @@ func (t *Transpiler) transpileMatch(stmt *ast.Stmt) {
 	isEnumMatch := t.isEnumMatch(&matchStmt.Value)
 	isUnionMatch := t.isUnionMatch(&matchStmt.Value)
 	t.writeIndent()
+	needsBinding := isEnumMatch && t.enumMatchNeedsBinding(matchStmt.Arms)
 	if isEnumMatch || isUnionMatch {
 		t.writef("switch ")
-		if isEnumMatch {
+		if needsBinding {
 			t.writef("_m := ")
 		}
 		t.transpileExpr(&matchStmt.Value)
@@ -955,6 +965,20 @@ func (t *Transpiler) isEnumMatch(expr *ast.Expr) bool {
 func (t *Transpiler) isUnionMatch(expr *ast.Expr) bool {
 	if rt, ok := expr.ResolvedType.(*checker.Type); ok {
 		return rt.Kind == checker.TyUnion
+	}
+	return false
+}
+
+// enumMatchNeedsBinding returns true if any match arm destructures variant fields,
+// meaning the type switch needs "_m := val.(type)" rather than "val.(type)".
+func (t *Transpiler) enumMatchNeedsBinding(arms []ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.Pattern.Kind == ast.PatVariant {
+			vp := arm.Pattern.Data.(*ast.VariantPattern)
+			if _, ok := t.variantCtors[vp.Name]; ok && len(vp.Bindings) > 0 {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -1377,12 +1401,13 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		}
 		isEnumMatch := t.isEnumMatch(&m.Value)
 		isUnionMatch := t.isUnionMatch(&m.Value)
+		needsBinding := isEnumMatch && t.enumMatchNeedsBinding(m.Arms)
 		t.writef("func() %s {\n", retType)
 		t.indent++
 		t.writeIndent()
 		if isEnumMatch || isUnionMatch {
 			t.writef("switch ")
-			if isEnumMatch {
+			if needsBinding {
 				t.writef("_m := ")
 			}
 			t.transpileExpr(&m.Value)
