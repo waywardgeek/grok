@@ -807,6 +807,8 @@ func (t *Transpiler) transpileStmt(stmt *ast.Stmt) {
 		// Handle ? operator in expression statement: expr? → _, err := expr; if err != nil { return }
 		if es.Expr.Kind == ast.ExprTry {
 			try := es.Expr.Data.(*ast.TryExpr)
+			// Hoist any nested ? inside the operand first
+			t.hoistNestedTry(&try.Operand)
 			n := t.tryCounter
 			t.tryCounter++
 			errVar := fmt.Sprintf("_tryErr%d", n)
@@ -816,6 +818,8 @@ func (t *Transpiler) transpileStmt(stmt *ast.Stmt) {
 			t.writef("\n")
 			t.emitTryErrCheck(errVar)
 		} else {
+			// Hoist any nested ? in the expression
+			t.hoistNestedTry(&es.Expr)
 			t.writeIndent()
 			t.transpileExpr(&es.Expr)
 			t.writef("\n")
@@ -931,6 +935,8 @@ func (t *Transpiler) transpileVarDecl(stmt *ast.Stmt) {
 	// Handle ? operator: let x = expr? → temp, err := expr; if err != nil { return ..., err }; x := temp
 	if decl.Value != nil && decl.Value.Kind == ast.ExprTry {
 		try := decl.Value.Data.(*ast.TryExpr)
+		// Hoist any nested ? inside the operand first
+		t.hoistNestedTry(&try.Operand)
 		n := t.tryCounter
 		t.tryCounter++
 		valVar := fmt.Sprintf("_tryVal%d", n)
@@ -953,6 +959,11 @@ func (t *Transpiler) transpileVarDecl(stmt *ast.Stmt) {
 			t.writef("%s := %s\n", decl.Name, valVar)
 		}
 		return
+	}
+
+	// Hoist any nested ? in the value expression (before writeIndent so hoisted vars get proper indent)
+	if decl.Value != nil {
+		t.hoistNestedTry(decl.Value)
 	}
 
 	t.writeIndent()
@@ -1024,6 +1035,7 @@ func (t *Transpiler) transpileVarDecl(stmt *ast.Stmt) {
 
 func (t *Transpiler) transpileAssign(stmt *ast.Stmt) {
 	assign := stmt.Data.(*ast.AssignStmt)
+	t.hoistNestedTry(&assign.Value)
 	t.writeIndent()
 	t.transpileExpr(&assign.Target)
 	t.writef(" = ")
@@ -1033,6 +1045,9 @@ func (t *Transpiler) transpileAssign(stmt *ast.Stmt) {
 
 func (t *Transpiler) transpileReturn(stmt *ast.Stmt) {
 	ret := stmt.Data.(*ast.ReturnStmt)
+	if ret.Value != nil {
+		t.hoistNestedTry(ret.Value)
+	}
 	t.writeIndent()
 	if ret.Value != nil {
 		t.writef("return ")
@@ -1067,6 +1082,7 @@ func (t *Transpiler) transpileReturn(stmt *ast.Stmt) {
 
 func (t *Transpiler) transpileIf(stmt *ast.Stmt) {
 	ifStmt := stmt.Data.(*ast.IfStmt)
+	t.hoistNestedTry(&ifStmt.Condition)
 	t.writeIndent()
 	t.writef("if ")
 	t.transpileExpr(&ifStmt.Condition)
@@ -2256,11 +2272,102 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		t.writef("*")
 		t.transpileExpr(&unwrap.Operand)
 	case ast.ExprTry:
-		// ? in nested expression context — should have been handled at statement level
-		// Emit a comment for debugging; this case shouldn't occur in well-formed code
+		// ? in nested expression context — should have been hoisted by hoistNestedTry
+		// If we still get here, emit the operand (fallback)
 		try := expr.Data.(*ast.TryExpr)
-		t.writef("/* TODO: nested ? */ ")
 		t.transpileExpr(&try.Operand)
+	}
+}
+
+// hoistNestedTry walks an expression tree and hoists any ExprTry nodes into
+// temporary variable declarations emitted before the containing statement.
+// Each ExprTry is mutated in-place to become an ExprIdent referencing the temp var.
+func (t *Transpiler) hoistNestedTry(expr *ast.Expr) {
+	if expr == nil {
+		return
+	}
+	switch expr.Kind {
+	case ast.ExprTry:
+		try := expr.Data.(*ast.TryExpr)
+		// First, hoist any nested tries inside the operand
+		t.hoistNestedTry(&try.Operand)
+		// Now hoist this try: emit temp var + error check
+		n := t.tryCounter
+		t.tryCounter++
+		valVar := fmt.Sprintf("_tryVal%d", n)
+		errVar := fmt.Sprintf("_tryErr%d", n)
+		t.writeIndent()
+		t.writef("%s, %s := ", valVar, errVar)
+		t.transpileExpr(&try.Operand)
+		t.writef("\n")
+		t.emitTryErrCheck(errVar)
+		// Mutate the ExprTry into an ExprIdent referencing the temp val
+		expr.Kind = ast.ExprIdent
+		expr.Data = &ast.IdentExpr{Name: valVar}
+	case ast.ExprCall:
+		call := expr.Data.(*ast.CallExpr)
+		t.hoistNestedTry(&call.Func)
+		for i := range call.Args {
+			t.hoistNestedTry(&call.Args[i])
+		}
+	case ast.ExprMethodCall:
+		mc := expr.Data.(*ast.MethodCallExpr)
+		t.hoistNestedTry(&mc.Receiver)
+		for i := range mc.Args {
+			t.hoistNestedTry(&mc.Args[i])
+		}
+	case ast.ExprBinary:
+		bin := expr.Data.(*ast.BinaryExpr)
+		t.hoistNestedTry(&bin.Left)
+		t.hoistNestedTry(&bin.Right)
+	case ast.ExprUnary:
+		un := expr.Data.(*ast.UnaryExpr)
+		t.hoistNestedTry(&un.Operand)
+	case ast.ExprFieldAccess:
+		fa := expr.Data.(*ast.FieldAccessExpr)
+		t.hoistNestedTry(&fa.Receiver)
+	case ast.ExprIndex:
+		idx := expr.Data.(*ast.IndexExpr)
+		t.hoistNestedTry(&idx.Receiver)
+		t.hoistNestedTry(&idx.Index)
+	case ast.ExprCast:
+		cast := expr.Data.(*ast.CastExpr)
+		t.hoistNestedTry(&cast.Operand)
+	case ast.ExprUnwrap:
+		unwrap := expr.Data.(*ast.UnwrapExpr)
+		t.hoistNestedTry(&unwrap.Operand)
+	case ast.ExprListLit:
+		ll := expr.Data.(*ast.ListLitExpr)
+		for i := range ll.Elems {
+			t.hoistNestedTry(&ll.Elems[i])
+		}
+	case ast.ExprMapLit:
+		ml := expr.Data.(*ast.MapLitExpr)
+		for i := range ml.Entries {
+			t.hoistNestedTry(&ml.Entries[i].Key)
+			t.hoistNestedTry(&ml.Entries[i].Value)
+		}
+	case ast.ExprTupleLit:
+		tl := expr.Data.(*ast.TupleLitExpr)
+		for i := range tl.Elems {
+			t.hoistNestedTry(&tl.Elems[i])
+		}
+	case ast.ExprStructLit:
+		sl := expr.Data.(*ast.StructLitExpr)
+		for i := range sl.Fields {
+			t.hoistNestedTry(&sl.Fields[i].Value)
+		}
+	case ast.ExprSlice:
+		s := expr.Data.(*ast.SliceExpr)
+		t.hoistNestedTry(&s.Receiver)
+		if s.Low != nil {
+			t.hoistNestedTry(s.Low)
+		}
+		if s.High != nil {
+			t.hoistNestedTry(s.High)
+		}
+	// ExprIdent, ExprLiteral, ExprFString, ExprLambda — no children to hoist from
+	// (Lambda bodies are their own scope, ? inside would be a different function)
 	}
 }
 

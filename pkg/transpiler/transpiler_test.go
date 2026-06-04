@@ -921,3 +921,47 @@ func TestTranspileTryExprStmt(t *testing.T) {
 		t.Error("expected error check, got:", out)
 	}
 }
+
+func TestTranspileNestedTry(t *testing.T) {
+	src := `grok test {
+		import errors from "errors"
+		func parse(s: string) -> (i32, error) {
+			return (0, errors.New("fail"))
+		}
+		func double(x: i32) -> i32 {
+			return x * 2
+		}
+		func run() -> (i32, error) {
+			let result = double(parse("x")?)
+			return (result, null)
+		}
+	}`
+	out := transpileWithChecker(t, src)
+	// Should hoist the try into a temp var
+	if !strings.Contains(out, "_tryVal0, _tryErr0 := parse") {
+		t.Error("expected hoisted try temp var, got:", out)
+	}
+	if !strings.Contains(out, "double(_tryVal0)") {
+		t.Error("expected call with hoisted var, got:", out)
+	}
+}
+
+func TestTranspileMultipleNestedTry(t *testing.T) {
+	src := `grok test {
+		import errors from "errors"
+		func parse(s: string) -> (i32, error) {
+			return (0, errors.New("fail"))
+		}
+		func run() -> (i32, error) {
+			let sum = parse("a")? + parse("b")?
+			return (sum, null)
+		}
+	}`
+	out := transpileWithChecker(t, src)
+	if !strings.Contains(out, "_tryVal0") && !strings.Contains(out, "_tryVal1") {
+		t.Error("expected two hoisted try vars, got:", out)
+	}
+	if !strings.Contains(out, "_tryVal0 + _tryVal1") && !strings.Contains(out, "_tryVal1 + _tryVal2") {
+		t.Error("expected binary op with hoisted vars, got:", out)
+	}
+}
