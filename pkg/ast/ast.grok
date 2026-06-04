@@ -187,9 +187,16 @@ grok AST {
   struct BoolLitExpr   { Value: bool }
 
   struct CallExpr {
-    Func:     Expr
-    TypeArgs: [TypeExpr]   // explicit type arguments, e.g. f<i32>(x)
-    Args:     [Expr]
+    Func:             Expr
+    TypeArgs:         [TypeExpr]   // explicit type arguments, e.g. f<i32>(x)
+    Args:             [Expr]
+    InferredTypeArgs: [any]        // set by checker: []*checker.Type — inferred generics (avoids import cycle via any)
+  }
+
+  struct LambdaExpr {
+    Params:     [Param]
+    ReturnType: TypeExpr?   // optional explicit return type
+    Body:       Block?      // single expression or block
   }
 
   struct MethodCallExpr {

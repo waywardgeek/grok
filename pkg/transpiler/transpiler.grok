@@ -205,6 +205,18 @@ grok Transpiler {
   func grokPrimitiveToGo(name: string) -> string
     why: "Maps Grok primitive type names to Go equivalents."
 
+  doc "Type Inference Emission" {
+    When CallExpr has InferredTypeArgs (set by checker), the transpiler emits
+    Go type arguments from these inferred types instead of requiring explicit
+    TypeArgs. Both function calls and method calls check InferredTypeArgs as
+    fallback when TypeArgs is empty.
+  }
+
+  doc "Lambda Emission" {
+    ExprLambda emits as Go anonymous function: func(params) RetType { body }.
+    Uses implicit last-expression return for single-expression lambdas.
+  }
+
   func checkerTypeToGo(ct: Type?) -> string
     why: "Converts checker.Type to Go type string. Handles composites recursively: TyList→[]T, TyMap→map[K]V, TyOptional→*T."
 
