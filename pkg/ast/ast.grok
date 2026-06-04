@@ -547,6 +547,7 @@ grok AST {
     Annotations: Annotations
     Body: Block?
     Span: Span
+    IsPublic: bool
   }
 
   struct Field {
@@ -568,6 +569,7 @@ grok AST {
     Why: string
     Source: [string]
     Span: Span
+    IsPublic: bool
   }
 
   struct StructDecl {
@@ -577,6 +579,7 @@ grok AST {
     Fields: [Field]
     Why: string
     Span: Span
+    IsPublic: bool
   }
 
   struct EnumVariant {
@@ -591,6 +594,7 @@ grok AST {
     Variants: [EnumVariant]
     Why: string
     Span: Span
+    IsPublic: bool
   }
 
   struct InterfaceDecl {
@@ -601,6 +605,7 @@ grok AST {
     Methods: [FuncDecl]
     Why: string
     Span: Span
+    IsPublic: bool
   }
 
   // ---- Relations ----
@@ -646,6 +651,7 @@ grok AST {
     Name: string
     Type: TypeExpr
     Span: Span
+    IsPublic: bool
   }
 
   // ---- Top-level ----

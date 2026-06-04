@@ -258,6 +258,7 @@ grok Parser {
 
   class Lexer(Source: string, Filename: string) {
     why: "Stateful scanner. Handles triple-quoted strings, collapses newline sequences, tracks line/column. State is copyable for parser lookahead save/restore."
+    Comments: [ast.Comment]
     func Next(mut self) -> Token
     func Peek(self) -> Token
   }
@@ -294,34 +295,34 @@ grok Parser {
 // func (t Token) String() string    :192
 //
 // NewLexer creates a new lexer for the given source.
-// func NewLexer(source, filename string) *Lexer    :237
+// func NewLexer(source, filename string) *Lexer    :238
 //
-// func (l *Lexer) currentPos() ast.Pos    :246
+// func (l *Lexer) currentPos() ast.Pos    :247
 //
-// func (l *Lexer) advance() rune    :250
+// func (l *Lexer) advance() rune    :251
 //
-// func (l *Lexer) peek() rune    :265
+// func (l *Lexer) peek() rune    :266
 //
-// func (l *Lexer) peekAt(offset int) rune    :273
+// func (l *Lexer) peekAt(offset int) rune    :274
 //
 // Peek returns the next token without consuming it.
-// func (l *Lexer) Peek() Token    :283
+// func (l *Lexer) Peek() Token    :284
 //
 // Next returns the next token.
-// func (l *Lexer) Next() Token    :293
+// func (l *Lexer) Next() Token    :294
 //
-// func (l *Lexer) scan() Token    :302
+// func (l *Lexer) scan() Token    :303
 //
-// func (l *Lexer) scanString(start ast.Pos) Token    :472
+// func (l *Lexer) scanString(start ast.Pos) Token    :479
 //
 // scanFString scans f"..." and stores the raw content between quotes.
-// func (l *Lexer) scanFString(start ast.Pos) Token    :513
+// func (l *Lexer) scanFString(start ast.Pos) Token    :520
 //
-// func (l *Lexer) scanTripleString(start ast.Pos) Token    :553
+// func (l *Lexer) scanTripleString(start ast.Pos) Token    :560
 //
-// func (l *Lexer) scanNumber(start ast.Pos) Token    :569
+// func (l *Lexer) scanNumber(start ast.Pos) Token    :576
 //
-// func (l *Lexer) scanIdent(start ast.Pos) Token    :599
+// func (l *Lexer) scanIdent(start ast.Pos) Token    :606
 //
 // file: parser.go
 //
@@ -349,75 +350,75 @@ grok Parser {
 //
 // func (p *Parser) parseFile() (*ast.File, error)    :91
 //
-// func (p *Parser) parseGrokBlock() (*ast.GrokBlock, error)    :113
+// func (p *Parser) parseGrokBlock() (*ast.GrokBlock, error)    :114
 //
-// func (p *Parser) parseGrokItem(block *ast.GrokBlock) error    :145
+// func (p *Parser) parseGrokItem(block *ast.GrokBlock) error    :146
 //
 // parseWhy parses: why: "..."
-// func (p *Parser) parseWhy() (string, error)    :273
+// func (p *Parser) parseWhy() (string, error)    :274
 //
 // parseDoc parses: doc "Section": """..."""
-// func (p *Parser) parseDoc() (*ast.DocBlock, error)    :286
+// func (p *Parser) parseDoc() (*ast.DocBlock, error)    :287
 //
 // parseInvariant parses: invariant: "claim" [verified_at: "hash"]
-// func (p *Parser) parseInvariant() (*ast.InvariantDecl, error)    :308
+// func (p *Parser) parseInvariant() (*ast.InvariantDecl, error)    :309
 //
 // parseImport parses: import alias from "path"
-// func (p *Parser) parseImport() (*ast.ImportDecl, error)    :340
+// func (p *Parser) parseImport() (*ast.ImportDecl, error)    :341
 //
 // parseTypeAlias parses: type Name = TypeExpr
-// func (p *Parser) parseTypeAlias() (*ast.TypeAliasDecl, error)    :362
+// func (p *Parser) parseTypeAlias() (*ast.TypeAliasDecl, error)    :363
 //
 // parseStruct parses: struct Name[<TypeParams>] { fields }
-// func (p *Parser) parseStruct() (*ast.StructDecl, error)    :384
+// func (p *Parser) parseStruct() (*ast.StructDecl, error)    :385
 //
 // parseEnum parses: enum Name[<TypeParams>] { Variants }
-// func (p *Parser) parseEnum() (*ast.EnumDecl, error)    :433
+// func (p *Parser) parseEnum() (*ast.EnumDecl, error)    :434
 //
-// func (p *Parser) parseEnumVariant() (*ast.EnumVariant, error)    :480
+// func (p *Parser) parseEnumVariant() (*ast.EnumVariant, error)    :481
 //
-// func (p *Parser) parseTupleField() (*ast.TupleField, error)    :510
+// func (p *Parser) parseTupleField() (*ast.TupleField, error)    :511
 //
 // parseInterface parses: interface Name[<TypeParams>] { methods }
-// func (p *Parser) parseInterface() (*ast.InterfaceDecl, error)    :535
+// func (p *Parser) parseInterface() (*ast.InterfaceDecl, error)    :536
 //
 // parseClass parses: class Name[<TypeParams>](ctor_params) [implements I1, I2] { fields, methods }
-// func (p *Parser) parseClass() (*ast.ClassDecl, error)    :595
+// func (p *Parser) parseClass() (*ast.ClassDecl, error)    :596
 //
 // parseFunc parses a function/method declaration with annotations.
-// func (p *Parser) parseFunc() (*ast.FuncDecl, error)    :701
+// func (p *Parser) parseFunc() (*ast.FuncDecl, error)    :702
 //
-// func (p *Parser) parseWhereClause() (*ast.WhereClause, error)    :782
+// func (p *Parser) parseWhereClause() (*ast.WhereClause, error)    :783
 //
-// func (p *Parser) parseAnnotations() ast.Annotations    :802
+// func (p *Parser) parseAnnotations() ast.Annotations    :803
 //
 // parseExprText reads tokens until newline/EOF and returns them as text.
-// func (p *Parser) parseExprText() string    :878
+// func (p *Parser) parseExprText() string    :879
 //
 // parseField parses: name: Type [guarded_by(lock)] [// why: "..."]
-// func (p *Parser) parseField() (*ast.Field, error)    :888
+// func (p *Parser) parseField() (*ast.Field, error)    :889
 //
 // parseParam parses a function parameter: [mut] name: Type or [mut] self
-// func (p *Parser) parseParam() (*ast.Param, error)    :927
+// func (p *Parser) parseParam() (*ast.Param, error)    :928
 //
 // parseTypeExpr parses a type expression.
-// func (p *Parser) parseTypeExpr() (*ast.TypeExpr, error)    :976
+// func (p *Parser) parseTypeExpr() (*ast.TypeExpr, error)    :977
 //
-// func (p *Parser) parseBaseType() (*ast.TypeExpr, error)    :1039
+// func (p *Parser) parseBaseType() (*ast.TypeExpr, error)    :1040
 //
 // parseTypeParams parses: <T> or <T: Comparable> or <T, U> etc.
-// func (p *Parser) parseTypeParams() ([]ast.TypeParam, error)    :1220
+// func (p *Parser) parseTypeParams() ([]ast.TypeParam, error)    :1221
 //
 // parseRelation parses: relation [hint] Parent[:label] owns|refs [Child[:label]]
-// func (p *Parser) parseRelation() (*ast.RelationDecl, error)    :1253
+// func (p *Parser) parseRelation() (*ast.RelationDecl, error)    :1254
 //
-// func (p *Parser) parseRelationSideFrom(nameTok Token) ast.RelationSide    :1307
+// func (p *Parser) parseRelationSideFrom(nameTok Token) ast.RelationSide    :1308
 //
 // parseSource parses: source: ["file1.go", "file2.go"]
-// func (p *Parser) parseSource() ([]string, error)    :1321
+// func (p *Parser) parseSource() ([]string, error)    :1322
 //
 // parseFake parses: fake: "file.go"
-// func (p *Parser) parseFake() (string, error)    :1347
+// func (p *Parser) parseFake() (string, error)    :1348
 //
 // file: expr_parser.go
 //
