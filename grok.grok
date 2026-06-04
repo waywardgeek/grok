@@ -61,8 +61,9 @@ grok Grok {
     Declaration: func max<T: Comparable>(a: T, b: T) -> T
     Call site:   max<i32>(x, y)
 
-    No type inference at call sites — the caller always provides explicit type
-    arguments. Future: first-arg-wins heuristic may make them optional.
+    Call-site type inference is supported via inferTypeArgs(), which walks
+    parameter and argument types to bind type variables. Explicit type arguments
+    take priority when provided.
 
     Constraint mapping to Go: Comparable → cmp.Ordered, Equatable/Hashable →
     comparable, others pass through as user-defined constraint interfaces.

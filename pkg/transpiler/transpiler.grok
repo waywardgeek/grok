@@ -153,7 +153,6 @@ grok Transpiler {
 
   doc "Known Limitations": """
     - i128/i256 silently downcast to int64 (data loss)
-    - For loops always discard the index variable
     - Nested ? in arbitrary expression context not supported (only statement-level)
   """
 

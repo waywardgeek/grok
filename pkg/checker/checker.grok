@@ -214,8 +214,6 @@ grok Checker {
   """
 
   doc "Known Limitations": """
-    - Constraint satisfaction not checked in checker — deferred to Go. TyVar
-      operands in binary expressions pass through unchecked.
     - No error recovery: first error stops checking that branch
     - Cast only supports numeric ↔ numeric
     - resolveNamedType falls through to TyVar for unknown names (should error
