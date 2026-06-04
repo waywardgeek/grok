@@ -223,6 +223,7 @@ func (p *Parser) parseGrokItem(block *ast.GrokBlock) error {
 			return err
 		}
 		block.Fake = fake
+
 	default:
 		return &ParseError{
 			Message: fmt.Sprintf("unexpected token %s (%q) in grok block", tokenNames[tok.Kind], tok.Text),
@@ -1111,14 +1112,6 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 			}, nil
 		}
 
-		// Special case: lock
-		if name.Text == "lock" {
-			return &ast.TypeExpr{
-				Kind: ast.TypeLock,
-				Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: name.Span.End},
-			}, nil
-		}
-
 		// Special case: unit
 		if name.Text == "unit" {
 			return &ast.TypeExpr{
@@ -1161,6 +1154,13 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 			Kind: ast.TypeNamed,
 			Data: ast.NamedType{Name: typeName, Args: args},
 			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End},
+		}, nil
+
+	case TLock:
+		p.next()
+		return &ast.TypeExpr{
+			Kind: ast.TypeLock,
+			Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: tok.Span.End},
 		}, nil
 
 	default:

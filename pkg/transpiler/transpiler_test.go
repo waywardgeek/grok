@@ -233,6 +233,27 @@ func TestTranspileCascade(t *testing.T) {
 	assertContains(t, got, "defer func() {")
 }
 
+func TestTranspileSpawn(t *testing.T) {
+	file := &ast.File{
+		Blocks: []ast.GrokBlock{{
+			Functions: []ast.FuncDecl{{
+				Name: "Test",
+				Body: &ast.Block{
+					Stmts: []ast.Stmt{
+						{Kind: ast.StmtSpawn, Data: &ast.SpawnStmt{
+							Body: ast.Block{Stmts: []ast.Stmt{{Kind: ast.StmtBreak}}},
+						}},
+					},
+				},
+			}},
+		}},
+	}
+	tr := New("main")
+	got := tr.Transpile(file)
+	assertContains(t, got, "go func() {")
+	assertContains(t, got, "}()")
+}
+
 func TestTranspileOptionalType(t *testing.T) {
 	file := &ast.File{
 		Blocks: []ast.GrokBlock{{

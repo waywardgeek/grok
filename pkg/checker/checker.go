@@ -356,6 +356,8 @@ func New() *Checker {
 	c.scope.Define("append", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "append"})
 	// isnull(optional) -> bool — checks if an optional value is nil
 	c.scope.Define("isnull", &Type{Kind: TyFunc, Params: nil, Return: TypeBool, Name: "isnull"})
+	// make_channel(capacity?) -> channel<T> — creates a buffered or unbuffered channel
+	c.scope.Define("make_channel", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "make_channel"})
 	// Register builtin types
 	// error — Go's error interface, used in (T, error) return patterns
 	c.registry.Register("error", &TypeInfo{
@@ -431,6 +433,10 @@ func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type {
 			variants = append(variants, c.resolveTypeExpr(&ut.Variants[i]))
 		}
 		return &Type{Kind: TyUnion, Variants: variants}
+	case ast.TypeChannel:
+		ct := te.Data.(ast.ChannelType)
+		elem := c.resolveTypeExpr(&ct.Elem)
+		return &Type{Kind: TyChannel, Elem: elem}
 	default:
 		return TypeUnknown
 	}
@@ -623,6 +629,8 @@ func substituteType(t *Type, subst map[string]*Type) *Type {
 			variants[i] = substituteType(v, subst)
 		}
 		return &Type{Kind: TyUnion, Variants: variants}
+	case TyChannel:
+		return &Type{Kind: TyChannel, Elem: substituteType(t.Elem, subst)}
 	default:
 		return t
 	}
@@ -696,6 +704,10 @@ func matchTypeVars(param, arg *Type, subst map[string]*Type) {
 			for i := range param.Variants {
 				matchTypeVars(param.Variants[i], arg.Variants[i], subst)
 			}
+		}
+	case TyChannel:
+		if arg.Kind == TyChannel {
+			matchTypeVars(param.Elem, arg.Elem, subst)
 		}
 	}
 }
@@ -898,6 +910,24 @@ func (c *Checker) checkBinary(expr *ast.Expr) *Type {
 func (c *Checker) checkCall(expr *ast.Expr) *Type {
 	call := expr.Data.(*ast.CallExpr)
 	fnType := c.checkExpr(&call.Func)
+
+	// Special builtin: make_channel<T>(capacity?) -> channel<T>
+	if fnType.Kind == TyFunc && fnType.Name == "make_channel" {
+		if len(call.TypeArgs) != 1 {
+			c.error(expr.Span, "make_channel requires exactly 1 type argument")
+			return TypeUnknown
+		}
+		elemType := c.resolveTypeExpr(&call.TypeArgs[0])
+		// Check optional capacity arg
+		for i := range call.Args {
+			c.checkExpr(&call.Args[i])
+		}
+		if len(call.Args) > 1 {
+			c.error(expr.Span, "make_channel accepts 0 or 1 arguments (capacity)")
+		}
+		return &Type{Kind: TyChannel, Elem: elemType}
+	}
+
 	if fnType.Kind == TyError || fnType.Kind == TyUnknown {
 		return TypeUnknown
 	}
@@ -1018,6 +1048,8 @@ func (c *Checker) checkBuiltinMethod(recvType *Type, method string, args []ast.E
 		return c.checkListMethod(recvType, method, args, expr)
 	case TyMap:
 		return c.checkMapMethod(recvType, method, args, expr)
+	case TyChannel:
+		return c.checkChannelMethod(recvType, method, args, expr)
 	}
 	return nil
 }
@@ -1130,6 +1162,27 @@ func (c *Checker) checkMapMethod(recvType *Type, method string, args []ast.Expr,
 			return ListType(recvType.Val)
 		}
 		return ListType(TypeUnknown)
+	}
+	return nil
+}
+
+func (c *Checker) checkChannelMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type {
+	switch method {
+	case "send":
+		c.expectArgs(method, args, 1, expr)
+		if len(args) > 0 && recvType.Elem != nil {
+			c.expectArgType(method, &args[0], 0, recvType.Elem)
+		}
+		return TypeUnit
+	case "receive":
+		c.expectArgs(method, args, 0, expr)
+		if recvType.Elem != nil {
+			return recvType.Elem
+		}
+		return TypeUnknown
+	case "close":
+		c.expectArgs(method, args, 0, expr)
+		return TypeUnit
 	}
 	return nil
 }
@@ -1385,6 +1438,30 @@ func (c *Checker) checkStmt(stmt *ast.Stmt) {
 	case ast.StmtCascade:
 		cs := stmt.Data.(*ast.CascadeStmt)
 		c.checkBlock(&cs.Body)
+	case ast.StmtSpawn:
+		ss := stmt.Data.(*ast.SpawnStmt)
+		c.checkBlock(&ss.Body)
+	case ast.StmtSelect:
+		sel := stmt.Data.(*ast.SelectStmt)
+		for i := range sel.Cases {
+			sc := &sel.Cases[i]
+			if sc.Expr != nil {
+				t := c.checkExpr(sc.Expr)
+				if sc.BindVar != "" {
+					// Bind the receive result
+					c.scope = NewScope(c.scope)
+					c.scope.Define(sc.BindVar, t)
+					c.checkBlock(&sc.Body)
+					c.scope = c.scope.parent
+					continue
+				}
+			}
+			c.checkBlock(&sc.Body)
+		}
+	case ast.StmtLock:
+		ls := stmt.Data.(*ast.LockStmt)
+		c.checkExpr(&ls.Mutex)
+		c.checkBlock(&ls.Body)
 	case ast.StmtBreak:
 		if c.loopDepth == 0 {
 			c.error(stmt.Span, "break outside of loop")

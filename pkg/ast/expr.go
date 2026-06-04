@@ -198,6 +198,9 @@ const (
 	StmtCascade                  // cascade { ... } (like Go defer)
 	StmtBreak                    // break
 	StmtContinue                 // continue
+	StmtSpawn                    // spawn { ... } (goroutine)
+	StmtSelect                   // select { case ... }
+	StmtLock                     // lock(mu) { ... }
 )
 
 // Stmt is any statement node.
@@ -269,6 +272,29 @@ type MatchArm struct {
 	Guard   *Expr // optional: `if <expr>` guard clause
 	Body    Block
 	Span    Span
+}
+
+type SpawnStmt struct {
+	Body Block
+}
+
+type SelectStmt struct {
+	Cases []SelectCase
+}
+
+type SelectCase struct {
+	IsDefault bool
+	// For receive: BindVar is the variable name, Expr is ch.receive()
+	// For send: Expr is ch.send(val)
+	BindVar string // optional: `case val = ch.receive()`
+	Expr    *Expr  // nil for default case
+	Body    Block
+	Span    Span
+}
+
+type LockStmt struct {
+	Mutex Expr // the mutex expression
+	Body  Block
 }
 
 // --- Patterns ---

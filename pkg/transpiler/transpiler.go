@@ -508,6 +508,8 @@ func (t *Transpiler) transpileBuiltinMethod(mc *ast.MethodCallExpr) bool {
 		return t.transpileListMethod(mc)
 	case checker.TyMap:
 		return t.transpileMapMethod(mc)
+	case checker.TyChannel:
+		return t.transpileChannelMethod(mc)
 	}
 	return false
 }
@@ -694,6 +696,25 @@ func (t *Transpiler) transpileMapMethod(mc *ast.MethodCallExpr) bool {
 	return true
 }
 
+func (t *Transpiler) transpileChannelMethod(mc *ast.MethodCallExpr) bool {
+	switch mc.Method {
+	case "send":
+		t.transpileExpr(&mc.Receiver)
+		t.writef(" <- ")
+		t.transpileExpr(&mc.Args[0])
+	case "receive":
+		t.writef("<-")
+		t.transpileExpr(&mc.Receiver)
+	case "close":
+		t.writef("close(")
+		t.transpileExpr(&mc.Receiver)
+		t.writef(")")
+	default:
+		return false
+	}
+	return true
+}
+
 
 // --- Statements ---
 
@@ -743,6 +764,75 @@ func (t *Transpiler) transpileStmt(stmt *ast.Stmt) {
 		t.indent--
 		t.writeIndent()
 		t.writef("}()\n")
+	case ast.StmtSpawn:
+		ss := stmt.Data.(*ast.SpawnStmt)
+		// spawn → go func() { ... }()
+		t.writeIndent()
+		t.writef("go func() {\n")
+		t.indent++
+		t.transpileStmts(ss.Body.Stmts)
+		t.indent--
+		t.writeIndent()
+		t.writef("}()\n")
+	case ast.StmtSelect:
+		sel := stmt.Data.(*ast.SelectStmt)
+		t.writeIndent()
+		t.writef("select {\n")
+		for i := range sel.Cases {
+			sc := &sel.Cases[i]
+			if sc.IsDefault {
+				t.writeIndent()
+				t.writef("default:\n")
+			} else if sc.Expr != nil {
+				t.writeIndent()
+				mc, isMethod := sc.Expr.Data.(*ast.MethodCallExpr)
+				if isMethod && mc.Method == "receive" {
+					if sc.BindVar != "" {
+						t.writef("case %s := <-", sc.BindVar)
+					} else {
+						t.writef("case <-")
+					}
+					t.transpileExpr(&mc.Receiver)
+					t.writef(":\n")
+				} else if isMethod && mc.Method == "send" {
+					t.writef("case ")
+					t.transpileExpr(&mc.Receiver)
+					t.writef(" <- ")
+					if len(mc.Args) > 0 {
+						t.transpileExpr(&mc.Args[0])
+					}
+					t.writef(":\n")
+				} else {
+					t.writef("case ")
+					t.transpileExpr(sc.Expr)
+					t.writef(":\n")
+				}
+			}
+			t.indent++
+			t.transpileStmts(sc.Body.Stmts)
+			t.indent--
+		}
+		t.writeIndent()
+		t.writef("}\n")
+	case ast.StmtLock:
+		ls := stmt.Data.(*ast.LockStmt)
+		// lock(mu) { ... } → mu.Lock(); defer mu.Unlock(); ...
+		// Wrapped in a block for scoped defer
+		t.writeIndent()
+		t.writef("{\n")
+		t.indent++
+		t.needsImport("sync")
+		t.writeIndent()
+		t.transpileExpr(&ls.Mutex)
+		t.writef(".Lock()\n")
+		t.writeIndent()
+		t.writef("defer ")
+		t.transpileExpr(&ls.Mutex)
+		t.writef(".Unlock()\n")
+		t.transpileStmts(ls.Body.Stmts)
+		t.indent--
+		t.writeIndent()
+		t.writef("}\n")
 	case ast.StmtBreak:
 		t.writeIndent()
 		t.writef("break\n")
@@ -1238,6 +1328,20 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 				}
 				t.writef(" == nil)")
 				callDone = true
+			case "make_channel":
+				// make_channel<T>(cap?) → make(chan T, cap?)
+				t.writef("make(chan ")
+				if len(call.TypeArgs) > 0 {
+					t.writef("%s", t.goType(&call.TypeArgs[0]))
+				} else {
+					t.writef("any")
+				}
+				if len(call.Args) > 0 {
+					t.writef(", ")
+					t.transpileExpr(&call.Args[0])
+				}
+				t.writef(")")
+				callDone = true
 			default:
 				if t.topFuncs[id.Name] {
 					if (id.Name == "Main" || id.Name == "main") && t.pkg == "main" {
@@ -1646,6 +1750,11 @@ func checkerTypeToGo(ct *checker.Type) string {
 		return "any"
 	case checker.TyUnion:
 		return "any"
+	case checker.TyChannel:
+		if ct.Elem != nil {
+			return "chan " + checkerTypeToGo(ct.Elem)
+		}
+		return "chan any"
 	default:
 		return "any"
 	}

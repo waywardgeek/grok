@@ -716,6 +716,12 @@ func (p *Parser) parseStmt() (*ast.Stmt, error) {
 		return &ast.Stmt{Kind: ast.StmtContinue, Span: tok.Span}, nil
 	case TCascadeKw:
 		return p.parseCascade()
+	case TSpawn:
+		return p.parseSpawn()
+	case TSelect:
+		return p.parseSelect()
+	case TLock:
+		return p.parseLock()
 	case TLBrace:
 		blk, err := p.parseBlock()
 		if err != nil {
@@ -1056,6 +1062,120 @@ func (p *Parser) parseCascade() (*ast.Stmt, error) {
 	return &ast.Stmt{
 		Kind: ast.StmtCascade,
 		Data: &ast.CascadeStmt{Body: *body},
+		Span: ast.Span{Start: start, End: body.Span.End},
+	}, nil
+}
+
+func (p *Parser) parseSpawn() (*ast.Stmt, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'spawn'
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Stmt{
+		Kind: ast.StmtSpawn,
+		Data: &ast.SpawnStmt{Body: *body},
+		Span: ast.Span{Start: start, End: body.Span.End},
+	}, nil
+}
+
+func (p *Parser) parseSelect() (*ast.Stmt, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'select'
+	if _, err := p.expect(TLBrace); err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+	var cases []ast.SelectCase
+	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
+		sc, err := p.parseSelectCase()
+		if err != nil {
+			return nil, err
+		}
+		cases = append(cases, *sc)
+		p.skipNewlines()
+	}
+	if _, err := p.expect(TRBrace); err != nil {
+		return nil, err
+	}
+	return &ast.Stmt{
+		Kind: ast.StmtSelect,
+		Data: &ast.SelectStmt{Cases: cases},
+		Span: ast.Span{Start: start, End: p.peek().Span.End},
+	}, nil
+}
+
+func (p *Parser) parseSelectCase() (*ast.SelectCase, error) {
+	start := p.peek().Span.Start
+	// default case
+	if p.peek().Kind == TIdent && p.peek().Text == "default" {
+		p.next()
+		if _, err := p.expect(TFatArrow); err != nil {
+			return nil, err
+		}
+		body, err := p.parseBlock()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.SelectCase{IsDefault: true, Body: *body, Span: ast.Span{Start: start, End: body.Span.End}}, nil
+	}
+	// case expr => { ... } or case var = expr => { ... }
+	if _, err := p.expect(TCase); err != nil {
+		return nil, err
+	}
+	// Try: case ident = expr => body (receive with binding)
+	var bindVar string
+	if p.peek().Kind == TIdent {
+		saved := *p.lex
+		nametok := p.next()
+		if p.peek().Kind == TAssign {
+			p.next()
+			bindVar = nametok.Text
+		} else {
+			// Not a binding, rewind
+			*p.lex = saved
+		}
+	}
+	expr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TFatArrow); err != nil {
+		return nil, err
+	}
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.SelectCase{
+		BindVar: bindVar,
+		Expr:    expr,
+		Body:    *body,
+		Span:    ast.Span{Start: start, End: body.Span.End},
+	}, nil
+}
+
+func (p *Parser) parseLock() (*ast.Stmt, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'lock'
+	if _, err := p.expect(TLParen); err != nil {
+		return nil, err
+	}
+	mutex, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TRParen); err != nil {
+		return nil, err
+	}
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Stmt{
+		Kind: ast.StmtLock,
+		Data: &ast.LockStmt{Mutex: *mutex, Body: *body},
 		Span: ast.Span{Start: start, End: body.Span.End},
 	}, nil
 }
