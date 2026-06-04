@@ -1374,3 +1374,23 @@ func TestEnumMatchWildcardExhaustive(t *testing.T) {
 	}`)
 	expectNoErrors(t, c)
 }
+
+func TestTypeAlias(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		type StringList = [string]
+		func f() {
+			let names: StringList = ["hello"]
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestTypeAliasUnion(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		type Result = i32 | string
+		func f() {
+			let x: Result = 42
+		}
+	}`)
+	expectNoErrors(t, c)
+}

@@ -120,6 +120,10 @@ func (t *Transpiler) transpileBlock(block *ast.GrokBlock) {
 		t.writef("\n")
 		t.transpileClass(&block.Classes[i])
 	}
+	for i := range block.TypeAliases {
+		ta := &block.TypeAliases[i]
+		t.writef("\ntype %s = %s\n", exportName(ta.Name), t.goType(&ta.Type))
+	}
 	for i := range block.Functions {
 		t.writef("\n")
 		t.transpileFunc(&block.Functions[i], "")

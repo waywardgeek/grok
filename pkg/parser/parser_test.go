@@ -548,3 +548,20 @@ func TestParseUnwrapExpr(t *testing.T) {
 		t.Fatalf("expected ExprIdent operand, got %v", unwrap.Operand.Kind)
 	}
 }
+
+func TestParseTypeAlias(t *testing.T) {
+	input := `grok test {
+		type StringList = [string]
+	}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(file.Blocks[0].TypeAliases) != 1 {
+		t.Fatalf("expected 1 type alias, got %d", len(file.Blocks[0].TypeAliases))
+	}
+	ta := file.Blocks[0].TypeAliases[0]
+	if ta.Name != "StringList" {
+		t.Errorf("expected name 'StringList', got %q", ta.Name)
+	}
+}

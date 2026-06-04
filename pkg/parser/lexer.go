@@ -24,6 +24,7 @@ const (
 	TRelation
 	TImport
 	TImplements
+	TType
 	TWhere
 	TOwns
 	TRefs
@@ -127,6 +128,7 @@ var keywords = map[string]TokenKind{
 	"relation":   TRelation,
 	"import":     TImport,
 	"implements": TImplements,
+	"type":       TType,
 	"where":      TWhere,
 	"owns":       TOwns,
 	"refs":       TRefs,

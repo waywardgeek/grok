@@ -1788,6 +1788,14 @@ func (c *Checker) checkGrokBlock(block *ast.GrokBlock) {
 		c.scope.Define(imp.Alias, &Type{Kind: TyUnknown, Name: imp.Path})
 	}
 
+	// Register type aliases
+	for i := range block.TypeAliases {
+		ta := &block.TypeAliases[i]
+		resolved := c.resolveTypeExpr(&ta.Type)
+		c.registry.Register(ta.Name, &TypeInfo{Type: resolved})
+		c.scope.Define(ta.Name, resolved)
+	}
+
 	// Register functions in scope
 	for i := range block.Functions {
 		c.registerFunc(&block.Functions[i])

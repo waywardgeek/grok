@@ -205,6 +205,12 @@ func (p *Parser) parseGrokItem(block *ast.GrokBlock) error {
 			return err
 		}
 		block.Relations = append(block.Relations, *rel)
+	case TType:
+		ta, err := p.parseTypeAlias()
+		if err != nil {
+			return err
+		}
+		block.TypeAliases = append(block.TypeAliases, *ta)
 	case TSource:
 		src, err := p.parseSource()
 		if err != nil {
@@ -312,6 +318,28 @@ func (p *Parser) parseImport() (*ast.ImportDecl, error) {
 		Alias: alias.Text,
 		Path:  path.Text,
 		Span:  ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: path.Span.End},
+	}, nil
+}
+
+// parseTypeAlias parses: type Name = TypeExpr
+func (p *Parser) parseTypeAlias() (*ast.TypeAliasDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'type'
+	name, err := p.expectIdentLike()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TAssign); err != nil {
+		return nil, err
+	}
+	typeExpr, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.TypeAliasDecl{
+		Name: name.Text,
+		Type: *typeExpr,
+		Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: typeExpr.Span.End},
 	}, nil
 }
 

@@ -237,22 +237,30 @@ type ImportDecl struct {
 	Span  Span
 }
 
+// TypeAliasDecl is a type alias: type Name = OtherType
+type TypeAliasDecl struct {
+	Name string
+	Type TypeExpr
+	Span Span
+}
+
 // GrokBlock is the top-level grok { ... } block.
 type GrokBlock struct {
-	Name       string
-	Why        string
-	Imports    []ImportDecl
-	Docs       []DocBlock
-	Invariants []InvariantDecl
-	Structs    []StructDecl
-	Enums      []EnumDecl
-	Interfaces []InterfaceDecl
-	Classes    []ClassDecl
-	Functions  []FuncDecl
-	Relations  []RelationDecl
-	Source     []string
-	Fake       string
-	Span       Span
+	Name        string
+	Why         string
+	Imports     []ImportDecl
+	Docs        []DocBlock
+	Invariants  []InvariantDecl
+	Structs     []StructDecl
+	Enums       []EnumDecl
+	Interfaces  []InterfaceDecl
+	Classes     []ClassDecl
+	Functions   []FuncDecl
+	Relations   []RelationDecl
+	TypeAliases []TypeAliasDecl
+	Source      []string
+	Fake        string
+	Span        Span
 }
 
 // File is the top-level AST node.
