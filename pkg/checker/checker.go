@@ -576,6 +576,72 @@ func substituteType(t *Type, subst map[string]*Type) *Type {
 	}
 }
 
+// inferTypeArgs infers generic type arguments from actual argument types.
+// Walks each parameter type, and when a TyVar is found, binds it to the
+// corresponding argument type (first match wins). Returns nil if inference fails.
+func (c *Checker) inferTypeArgs(fnType *Type, argTypes []*Type) map[string]*Type {
+	subst := make(map[string]*Type)
+	paramTypes := fnType.Params
+	if paramTypes == nil {
+		return nil
+	}
+	n := len(paramTypes)
+	if n > len(argTypes) {
+		n = len(argTypes)
+	}
+	for i := 0; i < n; i++ {
+		matchTypeVars(paramTypes[i], argTypes[i], subst)
+	}
+	// Check that all type params were resolved
+	for _, name := range fnType.TypeParamNames {
+		if _, ok := subst[name]; !ok {
+			c.error(ast.Span{}, "cannot infer type argument %s; provide explicit type arguments", name)
+			return nil
+		}
+	}
+	return subst
+}
+
+// matchTypeVars recursively walks a parameter type and an argument type in parallel,
+// binding TyVar names to concrete types when found.
+func matchTypeVars(param, arg *Type, subst map[string]*Type) {
+	if param == nil || arg == nil {
+		return
+	}
+	switch param.Kind {
+	case TyVar:
+		if _, ok := subst[param.Name]; !ok {
+			subst[param.Name] = arg
+		}
+	case TyList:
+		if arg.Kind == TyList {
+			matchTypeVars(param.Elem, arg.Elem, subst)
+		}
+	case TyMap:
+		if arg.Kind == TyMap {
+			matchTypeVars(param.Key, arg.Key, subst)
+			matchTypeVars(param.Val, arg.Val, subst)
+		}
+	case TyOptional:
+		if arg.Kind == TyOptional {
+			matchTypeVars(param.Elem, arg.Elem, subst)
+		}
+	case TyTuple:
+		if arg.Kind == TyTuple && len(param.Fields) == len(arg.Fields) {
+			for i := range param.Fields {
+				matchTypeVars(param.Fields[i].Type, arg.Fields[i].Type, subst)
+			}
+		}
+	case TyFunc:
+		if arg.Kind == TyFunc && len(param.Params) == len(arg.Params) {
+			for i := range param.Params {
+				matchTypeVars(param.Params[i], arg.Params[i], subst)
+			}
+			matchTypeVars(param.Return, arg.Return, subst)
+		}
+	}
+}
+
 // --- Expression type inference ---
 
 func (c *Checker) checkExpr(expr *ast.Expr) *Type {
@@ -643,6 +709,8 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 		return c.checkCast(expr)
 	case ast.ExprUnwrap:
 		return c.checkUnwrap(expr)
+	case ast.ExprLambda:
+		return c.checkLambda(expr)
 	default:
 		return TypeUnknown
 	}
@@ -780,6 +848,9 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 		return TypeError
 	}
 
+	// Track whether args were already type-checked (during inference)
+	argsChecked := false
+
 	// Handle generic type arguments: build substitution map
 	var subst map[string]*Type
 	if len(call.TypeArgs) > 0 {
@@ -791,6 +862,22 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 				subst[name] = c.resolveTypeExpr(&call.TypeArgs[i])
 			}
 		}
+	} else if len(fnType.TypeParamNames) > 0 && len(call.Args) > 0 {
+		// Type inference: infer type arguments from actual argument types
+		argTypes := make([]*Type, len(call.Args))
+		for i := range call.Args {
+			argTypes[i] = c.checkExpr(&call.Args[i])
+		}
+		subst = c.inferTypeArgs(fnType, argTypes)
+		if subst != nil {
+			// Store inferred type args on the AST for the transpiler
+			inferred := make([]any, len(fnType.TypeParamNames))
+			for i, name := range fnType.TypeParamNames {
+				inferred[i] = subst[name]
+			}
+			call.InferredTypeArgs = inferred
+		}
+		argsChecked = true
 	}
 
 	// Apply substitution to param and return types
@@ -806,12 +893,14 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 
 	if paramTypes == nil {
 		// Variadic/builtin — just check each arg is valid
-		for i := range call.Args {
-			c.checkExpr(&call.Args[i])
+		if !argsChecked {
+			for i := range call.Args {
+				c.checkExpr(&call.Args[i])
+			}
 		}
 	} else if len(call.Args) != len(paramTypes) {
 		c.error(expr.Span, "expected %d arguments, got %d", len(paramTypes), len(call.Args))
-	} else {
+	} else if !argsChecked {
 		for i := range call.Args {
 			argType := c.checkExpr(&call.Args[i])
 			if !c.assignableTo(argType, paramTypes[i]) && argType.Kind != TyUnknown {
@@ -1149,6 +1238,39 @@ func (c *Checker) checkUnwrap(expr *ast.Expr) *Type {
 		c.error(expr.Span, "cannot unwrap non-optional type %s", operandType)
 	}
 	return TypeUnknown
+}
+
+func (c *Checker) checkLambda(expr *ast.Expr) *Type {
+	lam := expr.Data.(*ast.LambdaExpr)
+
+	// Build parameter types in a new scope
+	c.pushScope()
+	paramTypes := make([]*Type, len(lam.Params))
+	for i, p := range lam.Params {
+		paramTypes[i] = c.resolveTypeExpr(&lam.Params[i].Type)
+		c.scope.Define(p.Name, paramTypes[i])
+	}
+
+	// Resolve return type
+	var retType *Type
+	if lam.ReturnType != nil {
+		retType = c.resolveTypeExpr(lam.ReturnType)
+	} else {
+		retType = &Type{Kind: TyUnit}
+	}
+
+	// Check body
+	savedReturn := c.currentReturn
+	c.currentReturn = retType
+	if lam.Body != nil {
+		for i := range lam.Body.Stmts {
+			c.checkStmt(&lam.Body.Stmts[i])
+		}
+	}
+	c.currentReturn = savedReturn
+	c.popScope()
+
+	return &Type{Kind: TyFunc, Params: paramTypes, Return: retType}
 }
 
 // --- Statement checking ---

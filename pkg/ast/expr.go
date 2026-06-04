@@ -66,9 +66,10 @@ type BoolLitExpr struct {
 }
 
 type CallExpr struct {
-	Func     Expr
-	TypeArgs []TypeExpr // explicit type arguments, e.g. f<int>(x)
-	Args     []Expr
+	Func              Expr
+	TypeArgs          []TypeExpr // explicit type arguments, e.g. f<int>(x)
+	InferredTypeArgs  []any      // set by checker: []*checker.Type (avoids import cycle via any)
+	Args              []Expr
 }
 
 type MethodCallExpr struct {

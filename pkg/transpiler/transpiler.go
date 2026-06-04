@@ -1087,6 +1087,19 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 						t.writef("%s", t.goType(&call.TypeArgs[i]))
 					}
 					t.writef("]")
+				} else if len(call.InferredTypeArgs) > 0 {
+					t.writef("[")
+					for i, ta := range call.InferredTypeArgs {
+						if i > 0 {
+							t.writef(", ")
+						}
+						if ct, ok := ta.(*checker.Type); ok {
+							t.writef("%s", checkerTypeToGo(ct))
+						} else {
+							t.writef("any")
+						}
+					}
+					t.writef("]")
 				}
 				t.writef("{")
 				// Map positional args to constructor fields
@@ -1154,15 +1167,28 @@ func (t *Transpiler) transpileExpr(expr *ast.Expr) {
 		if !callDone {
 			// Emit type arguments: func[T, U](...)
 			if len(call.TypeArgs) > 0 {
-			t.writef("[")
-			for i := range call.TypeArgs {
-				if i > 0 {
-					t.writef(", ")
+				t.writef("[")
+				for i := range call.TypeArgs {
+					if i > 0 {
+						t.writef(", ")
+					}
+					t.writef("%s", t.goType(&call.TypeArgs[i]))
 				}
-				t.writef("%s", t.goType(&call.TypeArgs[i]))
+				t.writef("]")
+			} else if len(call.InferredTypeArgs) > 0 {
+				t.writef("[")
+				for i, ta := range call.InferredTypeArgs {
+					if i > 0 {
+						t.writef(", ")
+					}
+					if ct, ok := ta.(*checker.Type); ok {
+						t.writef("%s", checkerTypeToGo(ct))
+					} else {
+						t.writef("any")
+					}
+				}
+				t.writef("]")
 			}
-			t.writef("]")
-		}
 		t.writef("(")
 		for i := range call.Args {
 			if i > 0 {

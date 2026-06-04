@@ -1084,3 +1084,89 @@ func TestBuiltinMapMethods(t *testing.T) {
 	}`)
 	expectNoErrors(t, c)
 }
+
+
+func TestTypeInferenceSingleParam(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func identity<T>(x: T) -> T { return x }
+		func f() {
+			let x = identity(42)
+			let s = identity("hello")
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestTypeInferenceFromList(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func first<T>(xs: [T]) -> T? {
+			return nil
+		}
+		func f() {
+			let nums: [i32] = [1, 2, 3]
+			let f = first(nums)
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestTypeInferenceConstraint(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func max_val<T: Comparable>(a: T, b: T) -> T {
+			if a > b { return a }
+			return b
+		}
+		func f() {
+			let m = max_val(10, 20)
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestTypeInferenceExplicitStillWorks(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func identity<T>(x: T) -> T { return x }
+		func f() {
+			let x = identity<i64>(100)
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestTypeInferenceNoArgsRequiresExplicit(t *testing.T) {
+	// Zero-arg generic functions can't infer — uses TyVar passthrough
+	c := parseAndCheck(t, `grok test {
+		func make_list<T>() -> [T] {
+			let xs: [T] = []
+			return xs
+		}
+		func f() {
+			let x = make_list<i32>()
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestLambdaTypeChecking(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func f() {
+			let add = |a: i32, b: i32| -> i32 { return a + b }
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestLambdaInferenceMultiTypeParam(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		func transform<T, U>(xs: [T], f: (T) -> U) -> [U] {
+			let mut result: [U] = []
+			return result
+		}
+		func f() {
+			let nums: [i32] = [1, 2]
+			let to_str = |n: i32| -> string { return "x" }
+			let result = transform(nums, to_str)
+		}
+	}`)
+	expectNoErrors(t, c)
+}
