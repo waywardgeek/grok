@@ -1796,6 +1796,10 @@ func (c *Checker) satisfiesConstraint(t *Type, constraint string) bool {
 	case "":
 		return true // unconstrained
 	default:
+		// Check if constraint is a user-defined interface
+		if info := c.registry.Lookup(constraint); info != nil && info.Type.Kind == TyInterface {
+			return c.assignableTo(t, info.Type)
+		}
 		// Unknown constraint — pass through (let Go handle it)
 		return true
 	}
@@ -2144,6 +2148,17 @@ func (c *Checker) funcDeclToType(fn *ast.FuncDecl) *Type {
 	for _, tp := range fn.TypeParams {
 		typeParamNames = append(typeParamNames, tp.Name)
 		typeParamConstraints = append(typeParamConstraints, tp.Constraint)
+	}
+	// Merge where clause constraints into type param constraints
+	for _, wc := range fn.Where {
+		for i, name := range typeParamNames {
+			if name == wc.Variable {
+				if typeParamConstraints[i] == "" {
+					typeParamConstraints[i] = wc.Constraint
+				}
+				break
+			}
+		}
 	}
 	return &Type{Kind: TyFunc, Params: params, Return: ret, TypeParamNames: typeParamNames, TypeParamConstraints: typeParamConstraints}
 }

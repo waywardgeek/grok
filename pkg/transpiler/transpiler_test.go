@@ -673,6 +673,23 @@ func TestTranspileGenericFuncWithConstraint(t *testing.T) {
 	}
 }
 
+func TestTranspileWhereClause(t *testing.T) {
+	src := `grok test {
+		func max_val<T>(a: T, b: T) -> T
+		  where T: Comparable
+		{
+			if a > b {
+				return a
+			}
+			return b
+		}
+	}`
+	out := transpileWithChecker(t, src)
+	if !strings.Contains(out, "func Max_val[T cmp.Ordered](a T, b T) T") {
+		t.Errorf("expected where clause to map constraint, got:\n%s", out)
+	}
+}
+
 func TestTranspileUnwrap(t *testing.T) {
 	src := `grok test {
 		func f(x: i32?) -> i32 {

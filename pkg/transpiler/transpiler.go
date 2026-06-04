@@ -458,8 +458,9 @@ func (t *Transpiler) transpileFunc(fn *ast.FuncDecl, receiver string) {
 	}
 	t.writef("%s", funcName)
 
-	// Type parameters
-	typeParams := t.typeParamList(fn.TypeParams)
+	// Type parameters (merge where clause constraints)
+	mergedTypeParams := t.mergeWhereConstraints(fn.TypeParams, fn.Where)
+	typeParams := t.typeParamList(mergedTypeParams)
 	t.writef("%s(", typeParams)
 
 	// Parameters (skip self)
@@ -2335,6 +2336,23 @@ func (t *Transpiler) typeParamList(params []ast.TypeParam) string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
+// mergeWhereConstraints returns a copy of typeParams with where clause constraints merged in.
+func (t *Transpiler) mergeWhereConstraints(typeParams []ast.TypeParam, where []ast.WhereClause) []ast.TypeParam {
+	if len(where) == 0 {
+		return typeParams
+	}
+	merged := make([]ast.TypeParam, len(typeParams))
+	copy(merged, typeParams)
+	for _, wc := range where {
+		for i := range merged {
+			if merged[i].Name == wc.Variable && merged[i].Constraint == "" {
+				merged[i].Constraint = wc.Constraint
+			}
+		}
+	}
+	return merged
+}
+
 // mapConstraint maps Grok constraint names to Go equivalents.
 func (t *Transpiler) mapConstraint(name string) string {
 	switch name {
@@ -2346,7 +2364,7 @@ func (t *Transpiler) mapConstraint(name string) string {
 	case "Equatable", "Hashable":
 		return "comparable"
 	default:
-		return name // pass through user-defined constraints
+		return exportName(name) // pass through user-defined constraints
 	}
 }
 

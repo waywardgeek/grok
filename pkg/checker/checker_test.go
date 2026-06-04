@@ -1450,3 +1450,45 @@ func TestTryOperatorExprStmt(t *testing.T) {
 	}`)
 	expectNoErrors(t, c)
 }
+
+
+func TestUserDefinedConstraintSatisfied(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		interface Printable {
+			func to_string(self) -> string
+		}
+		class Dog(name: string) {
+			func to_string(self) -> string {
+				return self.name
+			}
+		}
+		func print_it<T: Printable>(item: T) -> string {
+			return item.to_string()
+		}
+		func main() {
+			let d = Dog("Rex")
+			let r = print_it<Dog>(d)
+		}
+	}`)
+	expectNoErrors(t, c)
+}
+
+func TestUserDefinedConstraintViolated(t *testing.T) {
+	c := parseAndCheck(t, `grok test {
+		interface Printable {
+			func to_string(self) -> string
+		}
+		class Cat(name: string) {
+		}
+		func print_it<T: Printable>(item: T) -> string {
+			return item.to_string()
+		}
+		func main() {
+			let c = Cat("Whiskers")
+			let r = print_it<Cat>(c)
+		}
+	}`)
+	if len(c.Errors()) == 0 {
+		t.Error("expected error for Cat not satisfying Printable constraint")
+	}
+}

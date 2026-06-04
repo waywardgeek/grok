@@ -46,6 +46,8 @@ func binaryPrec(kind TokenKind) int {
 		return precAdditive
 	case TStar, TSlash, TPercent:
 		return precMult
+	case TLParen:
+		return precNone
 	default:
 		return precNone
 	}
@@ -1051,6 +1053,29 @@ func (p *Parser) parsePattern() (*ast.Pattern, error) {
 			Kind: ast.PatLiteral,
 			Data: &ast.LiteralPattern{Expr: expr},
 			Span: tok.Span,
+		}, nil
+	case TLParen:
+		// Tuple pattern: (x, y, ...)
+		p.next()
+		var elems []ast.Pattern
+		for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
+			elem, err := p.parsePattern()
+			if err != nil {
+				return nil, err
+			}
+			elems = append(elems, *elem)
+			if p.peek().Kind == TComma {
+				p.next()
+			}
+		}
+		end := p.peek().Span.End
+		if _, err := p.expect(TRParen); err != nil {
+			return nil, err
+		}
+		return &ast.Pattern{
+			Kind: ast.PatTuple,
+			Data: &ast.TuplePattern{Elems: elems},
+			Span: ast.Span{Start: tok.Span.Start, End: end},
 		}, nil
 	default:
 		return nil, &ParseError{
