@@ -69,7 +69,7 @@ func run(grokPath string) error {
 
 	for _, src := range sources {
 		fullPath := filepath.Join(grokDir, src)
-		funcs, imports, err := extractFromGoFile(fullPath, filepath.Base(src))
+		funcs, imports, err := extractFromGoFile(fullPath, src)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: %s: %v\n", src, err)
 			continue
