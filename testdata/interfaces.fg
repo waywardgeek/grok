@@ -18,10 +18,17 @@ forge Interfaces {
     }
   }
 
-  // DoublyLinked: parent has children, child has name
+  // DoublyLinked with default fields for parent/child pointers
   interface DoublyLinked<P, C> {
     func P.children(self) -> [C]
     func C.label(self) -> string
+
+    // Default fields injected into concrete classes via relation
+    field P.first: C?
+    field P.last: C?
+    field C.prev: C?
+    field C.next: C?
+    field C.parent: P?
   }
 
   // Classes use DIFFERENT method names than the interface
@@ -50,14 +57,19 @@ forge Interfaces {
     E.tgt_node = SimpleEdge.get_target
   }
 
-  // Field binding test: Folder contains Files
+  // Folder and File classes — relation will inject default fields
   class Folder(name: string, items: [File]) {}
 
-  class File(name: string) {}
+  class File(title: string) {}
+
+  // This relation injects DoublyLinked default fields into Folder and File:
+  // Folder gets: files_first: File?, files_last: File?
+  // File gets: from_prev: File?, from_next: File?, from_parent: Folder?
+  relation DoublyLinked Folder:files owns [File:from]
 
   impl DoublyLinked<Folder, File> {
     P.children <-> Folder.items
-    C.label <-> File.name
+    C.label <-> File.title
   }
 
   pub func count_children<P, C>(p: P) -> i32 where DoublyLinked<P, C> {
@@ -78,5 +90,13 @@ forge Interfaces {
     let dir = Folder("docs", [f1, f2])
     let num = count_children<Folder, File>(dir)
     println(num)
+
+    // Verify injected fields exist by checking they're nil (default)
+    if isnull(dir.files_first) {
+      println("first is null")
+    }
+    if isnull(f1.from_parent) {
+      println("parent is null")
+    }
   }
 }

@@ -593,6 +593,12 @@ func (p *Parser) parseInterface() (*ast.InterfaceDecl, error) {
 			}
 			fn.IsPublic = isPub
 			iface.Methods = append(iface.Methods, *fn)
+		} else if p.peek().Kind == TField {
+			fd, err := p.parseInterfaceField()
+			if err != nil {
+				return nil, err
+			}
+			iface.Fields = append(iface.Fields, *fd)
 		} else {
 			return nil, &ParseError{
 				Message: fmt.Sprintf("unexpected %s in interface body", tokenNames[p.peek().Kind]),
@@ -608,6 +614,37 @@ func (p *Parser) parseInterface() (*ast.InterfaceDecl, error) {
 	}
 	iface.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End}
 	return iface, nil
+}
+
+// parseInterfaceField parses: field T.name: Type
+func (p *Parser) parseInterfaceField() (*ast.InterfaceFieldDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'field'
+
+	typeName, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TDot); err != nil {
+		return nil, &ParseError{Message: "expected '.' in field T.name", Span: p.peek().Span}
+	}
+	fieldName, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TColon); err != nil {
+		return nil, err
+	}
+	te, err := p.parseTypeExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.InterfaceFieldDecl{
+		TypeParam: typeName.Text,
+		Name:      fieldName.Text,
+		Type:      *te,
+		Span:      ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: te.Span.End},
+	}, nil
 }
 
 // parseImpl parses: impl Interface<T1, T2, ...> [as label] { mappings }
@@ -1545,10 +1582,12 @@ func (p *Parser) parseRelation() (*ast.RelationDecl, error) {
 
 func (p *Parser) parseRelationSideFrom(nameTok Token) ast.RelationSide {
 	side := ast.RelationSide{TypeName: nameTok.Text}
-	// Check for :label
+	// Check for :label — label can be an ident or a contextual keyword used as name
 	if p.peek().Kind == TColon {
 		p.next()
-		if p.peek().Kind == TIdent {
+		tok := p.peek()
+		if tok.Kind == TIdent || (tok.Text != "" && tok.Kind != TLBrace && tok.Kind != TRBrace &&
+			tok.Kind != TLBracket && tok.Kind != TRBracket && tok.Kind != TEOF && tok.Kind != TNewline) {
 			label := p.next()
 			side.Label = label.Text
 		}

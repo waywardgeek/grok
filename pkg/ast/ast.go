@@ -196,6 +196,16 @@ type EnumDecl struct {
 	Span       Span
 }
 
+// InterfaceFieldDecl is a default field declaration in an interface.
+// Syntax: field T.name: Type
+// These are injected into concrete classes when a relation is declared.
+type InterfaceFieldDecl struct {
+	TypeParam string   // "P", "C" — which type param this field belongs to
+	Name      string   // field name (e.g. "first", "next", "parent")
+	Type      TypeExpr // field type (may reference other type params)
+	Span      Span
+}
+
 // InterfaceDecl is an interface declaration.
 type InterfaceDecl struct {
 	Name       string
@@ -203,6 +213,7 @@ type InterfaceDecl struct {
 	TypeParams []TypeParam
 	Implements []string // composed interfaces
 	Methods    []FuncDecl
+	Fields     []InterfaceFieldDecl // default fields: field T.name: Type
 	Why        string
 	Span       Span
 }

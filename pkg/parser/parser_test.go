@@ -26,6 +26,40 @@ func TestParseMinimalForge(t *testing.T) {
 	}
 }
 
+func TestParseInterfaceFields(t *testing.T) {
+	input := `forge Test {
+  interface DoublyLinked<P, C> {
+    func P.children(self) -> [C]
+    field P.first: C?
+    field P.last: C?
+    field C.prev: C?
+    field C.next: C?
+    field C.parent: P?
+  }
+}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	iface := file.Blocks[0].Interfaces[0]
+	if len(iface.Methods) != 1 {
+		t.Errorf("expected 1 method, got %d", len(iface.Methods))
+	}
+	if len(iface.Fields) != 5 {
+		t.Fatalf("expected 5 fields, got %d", len(iface.Fields))
+	}
+	f := iface.Fields[0]
+	if f.TypeParam != "P" || f.Name != "first" {
+		t.Errorf("field 0: expected P.first, got %s.%s", f.TypeParam, f.Name)
+	}
+	if f.Type.Kind != ast.TypeOptional {
+		t.Errorf("field 0: expected optional type")
+	}
+	f4 := iface.Fields[4]
+	if f4.TypeParam != "C" || f4.Name != "parent" {
+		t.Errorf("field 4: expected C.parent, got %s.%s", f4.TypeParam, f4.Name)
+	}
+}
 func TestParseStruct(t *testing.T) {
 	input := `forge Test {
   struct Point {

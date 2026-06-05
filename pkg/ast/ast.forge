@@ -608,12 +608,21 @@ forge AST {
     IsPublic: bool
   }
 
+  struct InterfaceFieldDecl {
+    why: "Default field declaration in an interface: field T.name: Type. Injected into concrete classes via relations."
+    TypeParam: string
+    Name: string
+    Type: TypeExpr
+    Span: Span
+  }
+
   struct InterfaceDecl {
     why: "Method signatures with composition (implements). No inheritance — satisfaction only."
     Name: string
     TypeParams: [TypeParam]
     Implements: [string]
     Methods: [FuncDecl]
+    Fields: [InterfaceFieldDecl]
     Why: string
     Span: Span
     IsPublic: bool
