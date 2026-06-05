@@ -197,6 +197,7 @@ func cmdCompile(args []string) error {
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, e)
 		}
+		return fmt.Errorf("type check failed with %d error(s)", len(errs))
 	}
 
 	for _, pf := range files {

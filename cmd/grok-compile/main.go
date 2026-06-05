@@ -14,35 +14,40 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: grok-compile <file.gk>... [-o output.go] [-pkg name]\n")
+	if err := runCompile(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+func runCompile(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: grok-compile <file.gk>... [-o output.go] [-pkg name]")
 	}
 
 	var inputs []string
 	output := ""
 	pkg := "main"
 
-	for i := 1; i < len(os.Args); i++ {
-		switch os.Args[i] {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "-o":
 			i++
-			if i < len(os.Args) {
-				output = os.Args[i]
+			if i < len(args) {
+				output = args[i]
 			}
 		case "-pkg":
 			i++
-			if i < len(os.Args) {
-				pkg = os.Args[i]
+			if i < len(args) {
+				pkg = args[i]
 			}
 		default:
-			inputs = append(inputs, os.Args[i])
+			inputs = append(inputs, args[i])
 		}
 	}
 
 	if len(inputs) == 0 {
-		fmt.Fprintln(os.Stderr, "error: no input files")
-		os.Exit(1)
+		return fmt.Errorf("no input files")
 	}
 
 	// Parse all files
@@ -55,13 +60,11 @@ func main() {
 	for _, input := range inputs {
 		src, err := os.ReadFile(input)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error reading %s: %v\n", input, err)
-			os.Exit(1)
+			return fmt.Errorf("reading %s: %w", input, err)
 		}
 		file, err := parser.ParseFile(string(src), input)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return err
 		}
 		out := output
 		if out == "" {
@@ -79,6 +82,7 @@ func main() {
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, e)
 		}
+		return fmt.Errorf("type check failed with %d error(s)", len(errs))
 	}
 
 	// Transpile each file
@@ -86,9 +90,9 @@ func main() {
 		tr := transpiler.New(pkg)
 		goSrc := tr.Transpile(pf.file)
 		if err := os.WriteFile(pf.output, []byte(goSrc), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "error writing %s: %v\n", pf.output, err)
-			os.Exit(1)
+			return fmt.Errorf("writing %s: %w", pf.output, err)
 		}
 		fmt.Printf("wrote %s\n", pf.output)
 	}
+	return nil
 }
