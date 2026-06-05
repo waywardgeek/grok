@@ -337,19 +337,21 @@ func (g *cGen) emitStmt(s *LStmt) {
 		name := cSafeName(d.Name)
 		varType := d.Type
 		// If type contains type vars (from generic code), try to use init value's resolved type
-		if d.Init != nil && g.containsTypeVar(varType) {
+		if d.Init != nil && (varType == nil || g.containsTypeVar(varType) || varType.Kind == LTyAny) {
 			if d.Init.Kind == LValTemp {
-				if resolved, ok := g.tempTypes[d.Init.TempID]; ok {
+				if resolved, ok := g.tempTypes[d.Init.TempID]; ok && resolved != nil {
 					varType = resolved
 				}
-			} else if !g.containsTypeVar(d.Init.Type) && d.Init.Type != nil {
+			} else if d.Init.Kind == LValVar {
+				if resolved, ok := g.varTypes[d.Init.Name]; ok && resolved != nil {
+					varType = resolved
+				}
+			} else if d.Init.Type != nil && !g.containsTypeVar(d.Init.Type) {
 				varType = d.Init.Type
 			}
 		}
-		// Store resolved type for later lookups (e.g., unwrap)
-		if varType != d.Type {
-			g.varTypes[d.Name] = varType
-		}
+		// Store resolved type for later lookups
+		g.varTypes[d.Name] = varType
 		if d.Init != nil {
 			initStr := g.emitValue(d.Init)
 			// Wrap in union constructor if target is ForgeUnion and source isn't
@@ -410,13 +412,22 @@ func (g *cGen) emitStmt(s *LStmt) {
 					g.linef("return forge_ok(%s, %s);", val, resultName)
 				}
 			} else if g.currentFunc != nil && g.currentFunc.ReturnType != nil && g.currentFunc.ReturnType.Kind == LTyOptional {
-				optName := g.optTypeName(g.currentFunc.ReturnType.Elem)
-				if d.Values[0].Kind == LValLitNull {
-					g.linef("return forge_none(%s);", optName)
-				} else if d.Values[0].Type != nil && d.Values[0].Type.Kind == LTyOptional {
-					g.linef("return %s;", val)
+				if g.isClassOptional(g.currentFunc.ReturnType) {
+					// Class handle optional — just return the pointer (NULL = none)
+					if d.Values[0].Kind == LValLitNull {
+						g.linef("return NULL;")
+					} else {
+						g.linef("return %s;", val)
+					}
 				} else {
-					g.linef("return forge_some(%s, %s);", val, optName)
+					optName := g.optTypeName(g.currentFunc.ReturnType.Elem)
+					if d.Values[0].Kind == LValLitNull {
+						g.linef("return forge_none(%s);", optName)
+					} else if d.Values[0].Type != nil && d.Values[0].Type.Kind == LTyOptional {
+						g.linef("return %s;", val)
+					} else {
+						g.linef("return forge_some(%s, %s);", val, optName)
+					}
 				}
 			} else {
 				g.linef("return %s;", val)
@@ -844,13 +855,44 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		d := e.Data.(*LMethodCallData)
 		recv := g.emitValue(&d.Receiver)
 		args := g.emitArgs(d.Args)
-		className := d.Receiver.Type.Name
+		className := ""
+		if d.Receiver.Type != nil {
+			className = d.Receiver.Type.Name
+			// For Optional(ClassHandle), extract the class name
+			if d.Receiver.Type.Kind == LTyOptional && d.Receiver.Type.Elem != nil && d.Receiver.Type.Elem.Kind == LTyClassHandle {
+				className = d.Receiver.Type.Elem.Name
+			}
+		}
 		if g.prog.ClassRenames != nil {
 			if renamed, ok := g.prog.ClassRenames[className]; ok {
 				className = renamed
 			}
 		}
-		methodName := className + "_" + d.Method
+		// If className is still empty (type var, any), try to resolve from temp/var types
+		if className == "" {
+			var resolved *LType
+			if d.Receiver.Kind == LValTemp {
+				resolved = g.tempTypes[d.Receiver.TempID]
+			} else if d.Receiver.Kind == LValVar {
+				resolved = g.varTypes[d.Receiver.Name]
+			}
+			if resolved != nil {
+				className = resolved.Name
+				if resolved.Kind == LTyOptional && resolved.Elem != nil {
+					className = resolved.Elem.Name
+				}
+			}
+		}
+		// If still empty, search program for a matching method
+		if className == "" {
+			for _, fn := range g.prog.Functions {
+				if fn.Receiver != "" && fn.Name == d.Method {
+					className = fn.Receiver
+					break
+				}
+			}
+		}
+		methodName := g.structName(className, false) + "_" + d.Method
 		if args != "" {
 			return fmt.Sprintf("%s(%s, %s)", methodName, recv, args)
 		}
@@ -934,6 +976,20 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 
 	case LExprStructField:
 		d := e.Data.(*LStructFieldData)
+		// Check if receiver is actually a class handle (pointer) — use -> not .
+		recvType := d.Receiver.Type
+		if d.Receiver.Kind == LValTemp {
+			if resolved, ok := g.tempTypes[d.Receiver.TempID]; ok && resolved != nil {
+				recvType = resolved
+			}
+		} else if d.Receiver.Kind == LValVar {
+			if resolved, ok := g.varTypes[d.Receiver.Name]; ok && resolved != nil {
+				recvType = resolved
+			}
+		}
+		if recvType != nil && recvType.Kind == LTyClassHandle {
+			return fmt.Sprintf("%s->%s", g.emitValue(&d.Receiver), d.Field)
+		}
 		return fmt.Sprintf("%s.%s", g.emitValue(&d.Receiver), d.Field)
 
 	case LExprClassGet:
@@ -956,16 +1012,45 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 
 	case LExprWrapOptional:
 		d := e.Data.(*LWrapOptionalData)
+		// Class handles are already pointers (nullable) — no wrapping needed
+		if g.isClassOptional(e.Type) {
+			return g.emitValue(&d.Value)
+		}
 		optName := g.optTypeNameFromExpr(e)
 		return fmt.Sprintf("forge_some(%s, %s)", g.emitValue(&d.Value), optName)
 
 	case LExprUnwrapOptional:
 		d := e.Data.(*LUnwrapOptionalData)
+		valType := d.Value.Type
+		if d.Value.Kind == LValTemp {
+			if resolved, ok := g.tempTypes[d.Value.TempID]; ok && resolved != nil {
+				valType = resolved
+			}
+		} else if d.Value.Kind == LValVar {
+			if resolved, ok := g.varTypes[d.Value.Name]; ok && resolved != nil {
+				valType = resolved
+			}
+		}
+		if valType != nil && (valType.Kind == LTyClassHandle || g.isClassOptional(valType)) {
+			return g.emitValue(&d.Value)
+		}
 		return fmt.Sprintf("forge_unwrap(%s)", g.emitValue(&d.Value))
 
 	case LExprIsNull:
 		d := e.Data.(*LIsNullData)
-		if d.Value.Type != nil && d.Value.Type.Kind == LTyClassHandle {
+		valType := d.Value.Type
+		// Try to resolve through temp/var types for better class handle detection
+		if d.Value.Kind == LValTemp {
+			if resolved, ok := g.tempTypes[d.Value.TempID]; ok && resolved != nil {
+				valType = resolved
+			}
+		} else if d.Value.Kind == LValVar {
+			if resolved, ok := g.varTypes[d.Value.Name]; ok && resolved != nil {
+				valType = resolved
+			}
+		}
+		if valType != nil && (valType.Kind == LTyClassHandle ||
+			(valType.Kind == LTyOptional && valType.Elem != nil && valType.Elem.Kind == LTyClassHandle)) {
 			return fmt.Sprintf("(%s == NULL)", g.emitValue(&d.Value))
 		}
 		return fmt.Sprintf("forge_isnull(%s)", g.emitValue(&d.Value))
@@ -1159,7 +1244,19 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 
 	case "isnull":
 		if len(d.Args) > 0 {
-			if d.Args[0].Type != nil && d.Args[0].Type.Kind == LTyClassHandle {
+			argType := d.Args[0].Type
+			// Resolve through temp/var types for better class handle detection
+			if d.Args[0].Kind == LValTemp {
+				if resolved, ok := g.tempTypes[d.Args[0].TempID]; ok && resolved != nil {
+					argType = resolved
+				}
+			} else if d.Args[0].Kind == LValVar {
+				if resolved, ok := g.varTypes[d.Args[0].Name]; ok && resolved != nil {
+					argType = resolved
+				}
+			}
+			if argType != nil && (argType.Kind == LTyClassHandle ||
+				(argType.Kind == LTyOptional && argType.Elem != nil && argType.Elem.Kind == LTyClassHandle)) {
 				return fmt.Sprintf("(%s == NULL)", g.emitValue(&d.Args[0]))
 			}
 			return fmt.Sprintf("forge_isnull(%s)", g.emitValue(&d.Args[0]))
@@ -1317,10 +1414,21 @@ func (g *cGen) emitFormat(d *LFormatData) string {
 // printfSpecAndArg returns the format specifier and the argument expression.
 // For bools, the argument is wrapped in forge_bool_str().
 func (g *cGen) printfSpecAndArg(v *LValue) (string, string) {
-	if v.Type == nil {
+	t := v.Type
+	// Resolve through temp/var types for better format specifier selection
+	if v.Kind == LValTemp {
+		if resolved, ok := g.tempTypes[v.TempID]; ok && resolved != nil {
+			t = resolved
+		}
+	} else if v.Kind == LValVar {
+		if resolved, ok := g.varTypes[v.Name]; ok && resolved != nil {
+			t = resolved
+		}
+	}
+	if t == nil {
 		return "%d", g.emitValue(v)
 	}
-	switch v.Type.Kind {
+	switch t.Kind {
 	case LTyI8, LTyI16, LTyI32, LTyPlatformInt:
 		return "%d", g.emitValue(v)
 	case LTyI64:
@@ -1400,6 +1508,10 @@ func (g *cGen) cType(t *LType) string {
 		}
 		return g.structName(name, t.IsExported) + "*"
 	case LTyOptional:
+		// Class handles are already pointers in C — NULL = none
+		if t.Elem != nil && t.Elem.Kind == LTyClassHandle {
+			return g.cType(t.Elem) // ClassName* is already nullable
+		}
 		return g.optTypeName(t.Elem)
 	case LTyTaggedUnion:
 		return g.structName(t.Name, t.IsExported)
@@ -1551,7 +1663,10 @@ func (g *cGen) collectCompositeTypes() {
 		case LTySlice:
 			g.sliceTypeName(t.Elem)
 		case LTyOptional:
-			g.optTypeName(t.Elem)
+			// Class handle optionals are just pointers — no ForgeOpt needed
+			if t.Elem == nil || t.Elem.Kind != LTyClassHandle {
+				g.optTypeName(t.Elem)
+			}
 		case LTyErrorResult:
 			g.resultTypeName(t.Elem)
 		}
@@ -1690,6 +1805,12 @@ func sanitizeCTypeName(s string) string {
 	return r.Replace(s)
 }
 
+// isClassOptional returns true if the type is Optional(ClassHandle).
+// In C, class handles are already pointers (nullable), so optionals don't need ForgeOpt wrapping.
+func (g *cGen) isClassOptional(t *LType) bool {
+	return t != nil && t.Kind == LTyOptional && t.Elem != nil && t.Elem.Kind == LTyClassHandle
+}
+
 func (g *cGen) visName(name string, exported bool) string {
 	return name
 }
@@ -1712,6 +1833,9 @@ func (g *cGen) zeroValue(t *LType) string {
 	case LTyClassHandle:
 		return "NULL"
 	case LTyOptional:
+		if t.Elem != nil && t.Elem.Kind == LTyClassHandle {
+			return "NULL"
+		}
 		return fmt.Sprintf("forge_none(%s)", g.optTypeName(t.Elem))
 	case LTySlice:
 		return fmt.Sprintf("forge_slice_empty(%s)", g.sliceTypeName(t.Elem))
@@ -1837,13 +1961,31 @@ func (g *cGen) inferExprType(e *LExpr) *LType {
 		if argType != nil && argType.Kind == LTyOptional && argType.Elem != nil {
 			return argType.Elem
 		}
+		// If it's already a class handle, unwrap is identity (class pointers are nullable)
+		if argType != nil && argType.Kind == LTyClassHandle {
+			return argType
+		}
 	}
 	if e.Kind == LExprBuiltin {
 		d := e.Data.(*LBuiltinData)
 		if d.Name == "unwrap" && len(d.Args) > 0 {
 			argType := d.Args[0].Type
+			// Resolve through temp/var types
+			if d.Args[0].Kind == LValTemp {
+				if resolved, ok := g.tempTypes[d.Args[0].TempID]; ok && resolved != nil {
+					argType = resolved
+				}
+			} else if d.Args[0].Kind == LValVar {
+				if resolved, ok := g.varTypes[d.Args[0].Name]; ok && resolved != nil {
+					argType = resolved
+				}
+			}
 			if argType != nil && argType.Kind == LTyOptional && argType.Elem != nil {
 				return argType.Elem
+			}
+			// If it's already a class handle, unwrap is identity
+			if argType != nil && argType.Kind == LTyClassHandle {
+				return argType
 			}
 		}
 	}
