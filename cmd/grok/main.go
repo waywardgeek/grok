@@ -143,6 +143,7 @@ func cmdCompile(args []string) error {
 	modPath := ""
 	useLIR := false
 	useMono := false
+	useC := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -166,6 +167,10 @@ func cmdCompile(args []string) error {
 		case "--mono":
 			useMono = true
 			useLIR = true // mono requires LIR pipeline
+		case "--c":
+			useC = true
+			useMono = true // C requires monomorphization
+			useLIR = true
 		default:
 			inputs = append(inputs, args[i])
 		}
@@ -192,7 +197,11 @@ func cmdCompile(args []string) error {
 		}
 		out := output
 		if out == "" {
-			out = strings.TrimSuffix(filepath.Base(input), filepath.Ext(input)) + ".go"
+			ext := ".go"
+			if useC {
+				ext = ".c"
+			}
+			out = strings.TrimSuffix(filepath.Base(input), filepath.Ext(input)) + ext
 		}
 		files = append(files, parsedFile{file: file, input: input, output: out})
 	}
@@ -219,7 +228,11 @@ func cmdCompile(args []string) error {
 			if useMono {
 				lir.Monomorphize(prog)
 			}
-			goSrc = lir.EmitGo(prog)
+			if useC {
+				goSrc = lir.EmitC(prog)
+			} else {
+				goSrc = lir.EmitGo(prog)
+			}
 		} else {
 			tr := transpiler.New(pkg)
 			if modPath != "" {
