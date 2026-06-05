@@ -67,7 +67,7 @@ func Validate(f *Foo) (bool, error)                                   // :15
 
 ### Zone Definitions
 
-**Zone 1 — Human-curated (Grok syntax)**: Everything from the start of the file through the end of the last `grok { }` block. Contains `why:`, `doc` blocks, structural type declarations (structs, enums, interfaces, classes, functions, relations), annotations, and `source:` directives. This zone is **never modified** by `grok update`. The human (or AI with human review) maintains this.
+**Zone 1 — Human-curated (Grok syntax)**: Everything from the start of the file through the end of the last `grok { }` block. Contains `why:`, `doc` blocks, structural type declarations (structs, enums, interfaces, classes, functions, relations), annotations, and `source:` directives. The human (or AI with human review) maintains this zone, but current `grok update` parses and re-emits it so it can auto-add missing exported symbols. With `--prune`, it can also remove stale declarations. Review Zone 1 diffs after running update.
 
 **Zone 2 — Function/method index (Go syntax)**: Starts at `// --- index ---` marker. Contains every function and method in the package, organized by source file, with:
 - The first line of the Go doc comment (or `//` comment immediately preceding the func)
@@ -84,14 +84,14 @@ This zone is **completely regenerated** on every `grok update` run.
 
 #### `grok update <file.grok>`
 
-Reads an existing .grok file, preserves Zone 1 verbatim, regenerates Zones 2 and 3 from the Go source files listed in `source:` annotations.
+Reads an existing .grok file, updates Zone 1 structural declarations from Go source, then regenerates Zones 2 and 3 from the Go source files listed in `source:` annotations.
 
 **Algorithm:**
 1. Read the .grok file as raw text
 2. Find the `// --- index ---` marker (or end of file if absent)
-3. Preserve everything before the marker as Zone 1
-4. Parse Zone 1 to extract `source:` file paths from grok blocks
-5. Resolve source paths relative to the .grok file's directory
+3. Parse Zone 1 to extract `source:` file paths from grok blocks
+4. Resolve source paths relative to the .grok file's directory
+5. Extract exported Go symbols from the listed source files
 6. For each source file, use `go/parser` + `go/ast` to extract:
    - All function declarations (top-level and methods)
    - The first line of each function's doc comment
@@ -99,9 +99,9 @@ Reads an existing .grok file, preserves Zone 1 verbatim, regenerates Zones 2 and
    - The function signature as written in Go source
 7. Organize by file, sort by line number within each file
 8. For dependencies: collect all import paths across source files, filter to project-internal only (same module prefix from go.mod)
-9. Write: Zone 1 + Zone 2 (index) + Zone 3 (dependencies)
+9. Re-emit updated Zone 1, then append Zone 2 (index) and Zone 3 (dependencies)
 
-**Key detail**: Zone 1 is preserved as raw text, not parsed and re-emitted. This means formatting, comments, and any non-standard content are kept exactly as-is. No `grok fmt` needed for this operation.
+**Key detail**: Zone 1 is parsed and re-emitted by the formatter. Comments are retained, but formatting and declaration order may change. Newly exported Go symbols are added to Zone 1; `--prune` also removes stale exported declarations.
 
 #### `grok gen <package-dir>`
 
@@ -124,9 +124,7 @@ The generated Zone 1 has structural declarations but empty `why:` and no `doc` b
 
 #### `grok fmt <file.grok>`
 
-Reformats Zone 1 of a .grok file using standard formatting rules. Requires the parser to retain comments.
-
-**Deferred** — not part of this initial implementation. The parser needs comment-retention work first.
+Reformats Zone 1 of a .grok file using standard formatting rules and appends existing Zones 2 and 3 unchanged.
 
 ### Function Signature Extraction
 
@@ -172,64 +170,35 @@ For `grok update`, if the `source:` annotation is missing or empty, fall back to
 - **Generated files**: Include them (the human can add exclusion later if needed)
 - **Build-tagged files**: Include all files regardless of build tags for completeness
 
-## Implementation Plan
+## Implementation Status
 
-### Phase 1: `grok update` (MVP)
+The original phased plan has been implemented under both standalone commands and the unified `grok` CLI.
 
-New file: `cmd/grok-update/main.go` (or add as subcommand to existing tools)
-
-Actually — better to unify under a single `grok` CLI with subcommands:
+Available commands:
 
 ```
-grok verify <file.grok>     (existing, move from grok-verify)
-grok update <file.grok>     (new)
-grok gen <package-dir>      (new, phase 2)
-grok compile <file.gk>      (existing, move from grok-compile)
+grok verify <file.grok>
+grok update [--prune] <file.grok>
+grok gen <package-dir>
+grok fmt <file.grok>
+grok compile <file.gk>
 ```
 
-But for now, keep separate binaries to avoid disrupting existing tools:
-- `cmd/grok-update/main.go` — new
-
-**Steps:**
-1. Read .grok file, split at `// --- index ---` marker
-2. Parse grok blocks (reuse existing parser) to extract `source:` paths
-3. For each source file: parse with `go/parser`, extract functions
-4. Format function signatures as Go text
-5. Extract and filter dependencies
-6. Write output: Zone 1 + generated Zone 2 + generated Zone 3
-
-### Phase 2: `grok gen`
-
-New file: `cmd/grok-gen/main.go`
-
-**Steps:**
-1. Scan directory for .go files
-2. Parse all with `go/ast`
-3. Generate Grok structural declarations from Go types
-4. Generate function index + dependencies
-5. Write complete .grok file
-
-### Phase 3: Unified CLI
-
-Merge all four commands under a single `grok` binary with subcommands.
-
-### Phase 4: `grok fmt`
-
-Extend the parser to retain comments, implement pretty-printer.
+The standalone `grok-update`, `grok-gen`, `grok-verify`, and `grok-compile` commands are still present.
 
 ## Non-Goals
 
-- **Modifying Zone 1**: `grok update` never touches the human-curated zone. If the human wants to add/remove structural declarations, they edit the .grok file manually.
+- **Semantic validation of Zone 1 docs**: `grok update` only syncs structural declarations and generated indexes. It does not prove narrative docs, invariants, relations, or pre/postconditions.
 - **Semantic analysis**: The function index is purely syntactic — no type checking, no Grok type translation.
 - **Cross-language support**: This design targets Go. Other languages (Python, Rust) would need their own extractors but the .grok file format stays the same.
 - **IDE integration**: Future work. The function index with line numbers makes this possible.
-- **Comment-aware parsing**: Deferred to Phase 4 (`grok fmt`).
+- **Full comment fidelity**: Comments are retained by the parser/formatter, but Zone 1 is re-emitted in canonical format rather than preserved byte-for-byte.
 
 ## Testing Strategy
 
 - Unit tests for signature extraction (various Go func patterns: methods, generics, variadic, multi-return)
 - Unit tests for dependency filtering (module path matching)
-- Integration test: run `grok update` on existing .grok files in this project, verify Zone 1 is preserved, Zone 2 matches expected output
+- Integration test: run `grok update` on existing .grok files in this project, verify expected Zone 1 additions/pruning and Zone 2 output
 - Golden file tests: known .go input → expected .grok output
 
 ## Open Questions
