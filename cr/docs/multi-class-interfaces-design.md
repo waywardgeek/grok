@@ -12,7 +12,7 @@ either:
 - A single concrete graph type (petgraph) — not generic
 - C++ concept maps (Boost BGL) — unusable ceremony
 
-Grok solves this with multi-class interfaces: an interface declares methods
+Forge solves this with multi-class interfaces: an interface declares methods
 across multiple participant types, and `impl` blocks wire them to concrete
 classes via aliasing.
 
@@ -24,7 +24,7 @@ any data structure involving relationships between two or more types.
 The `func T.method(self)` syntax binds a method to a specific type parameter.
 `self` is always the type before the dot.
 
-```grok
+```forge
 interface Graph<G, N, E> {
     func G.nodes(self) -> gen N
     func G.edges(self) -> gen E
@@ -39,7 +39,7 @@ interface Graph<G, N, E> {
 
 Functions without a type prefix have no receiver:
 
-```grok
+```forge
 interface Graph<G, N, E> {
     // ...methods above...
     func distance(a: N, b: N) -> f64   // no receiver, neither N is privileged
@@ -53,7 +53,7 @@ Use free functions only when there's no natural receiver.
 Interfaces can provide default implementations — algorithms written once in
 terms of the required methods:
 
-```grok
+```forge
 interface Graph<G, N, E> {
     // Required
     func G.nodes(self) -> gen N
@@ -77,7 +77,7 @@ Dijkstra, min-cut, topological sort can all live as default functions.
 
 Instead of `where G: Graph<G, N, E>` (redundant `G:`), use bare constraints:
 
-```grok
+```forge
 func min_cut<G, N, E>(graph: G) -> (f64, ([N], [N]))
     where Graph<G, N, E>, E: Weighted
 {
@@ -102,7 +102,7 @@ three forms:
 
 ### `=` — Method alias
 
-```grok
+```forge
 impl Graph<CircuitGraph, Component, Wire> {
     G.nodes    = CircuitGraph.components
     G.edges    = CircuitGraph.wires
@@ -115,7 +115,7 @@ impl Graph<CircuitGraph, Component, Wire> {
 
 ### `<->` — Field binding (generates getter + setter)
 
-```grok
+```forge
 impl DoublyLinked<Folder, File> {
     P.first  <-> Folder.firstFile
     P.last   <-> Folder.lastFile
@@ -131,7 +131,7 @@ mapped to the `firstFile` field.
 
 ### `{ body }` — Inline implementation
 
-```grok
+```forge
 impl Hashed<Graph, Edge, (Node, Node)> {
     // ...other aliases...
     C.key(self) -> (Node, Node) {
@@ -147,7 +147,7 @@ field access.
 
 `gen T` is a generator return type — lazy iteration via `yield`:
 
-```grok
+```forge
 func G.nodes(self) -> gen N {
     let mut node = self.firstNode
     while !isnull(node) {
@@ -163,7 +163,7 @@ func G.nodes(self) -> gen N {
 
 Under the hood, generators compile to an `Iterator<T>` state machine:
 
-```grok
+```forge
 interface Iterator<T> {
     func next(mut self) -> T?
 }
@@ -177,7 +177,7 @@ interface Iterator<T> {
 
 ### DoublyLinked
 
-```grok
+```forge
 interface DoublyLinked<P, C> {
     // Getters
     func P.first(self) -> C?
@@ -249,7 +249,7 @@ interface DoublyLinked<P, C> {
 
 Usage with field bindings:
 
-```grok
+```forge
 impl DoublyLinked<Folder, File> {
     P.first  <-> Folder.firstFile
     P.last   <-> Folder.lastFile
@@ -260,8 +260,8 @@ impl DoublyLinked<Folder, File> {
 
 // Now append, remove, insert_after, children all work on Folder/File
 let folder = Folder.new("src")
-let f1 = File.new("main.gk")
-let f2 = File.new("lib.gk")
+let f1 = File.new("main.fg")
+let f2 = File.new("lib.fg")
 append(folder, f1)
 append(folder, f2)
 
@@ -272,7 +272,7 @@ for file in children(folder) {
 
 ### Hashed Relations
 
-```grok
+```forge
 interface Hashed<P, C, K> where K: Hashable {
     func P.lookup(self, key: K) -> C?
     func P.insert(mut self, child: C)
@@ -285,7 +285,7 @@ interface Hashed<P, C, K> where K: Hashable {
 
 Usage:
 
-```grok
+```forge
 impl Hashed<Registry, Handler, string> {
     P.lookup   = Registry.findHandler
     P.insert   = Registry.addHandler
@@ -298,7 +298,7 @@ impl Hashed<Registry, Handler, string> {
 
 ### Graph with Generic Algorithms
 
-```grok
+```forge
 interface Weighted {
     func weight(self) -> f64
 }
@@ -340,7 +340,7 @@ func topological_sort<G, N, E>(graph: G) -> [N]
 
 Concrete implementation:
 
-```grok
+```forge
 impl Graph<CircuitGraph, Component, Wire> {
     G.nodes     = CircuitGraph.components
     G.edges     = CircuitGraph.wires
@@ -360,7 +360,7 @@ let (cut_val, (partA, partB)) = min_cut(circuit)
 When a type participates in multiple relations of the same interface with
 identical type signatures, `impl` blocks need labels to disambiguate:
 
-```grok
+```forge
 impl Hashed<UserStore, User, string> as byEmail {
     P.lookup   = UserStore.findByEmail
     P.insert   = UserStore.addByEmail
@@ -382,7 +382,7 @@ impl Hashed<UserStore, User, string> as byUsername {
 
 At call sites, qualify with the label:
 
-```grok
+```forge
 byEmail.insert(store, user)
 byUsername.insert(store, user)
 

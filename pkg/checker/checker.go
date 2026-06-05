@@ -1,4 +1,4 @@
-// Package checker implements type checking and inference for Grok.
+// Package checker implements type checking and inference for Forge.
 package checker
 
 import (
@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/waywardgeek/grok/pkg/ast"
-	"github.com/waywardgeek/grok/pkg/parser"
+	"github.com/waywardgeek/forge/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/parser"
 )
 
 // TypeKind discriminates type categories.
@@ -34,7 +34,7 @@ const (
 	TyInterface               // named interface type
 	TyVar                     // type variable (for generics)
 	TyUnion                   // union type (T | U)
-	TyModule                  // imported Grok module (qualified access to exports)
+	TyModule                  // imported Forge module (qualified access to exports)
 	TyUnknown                 // not yet resolved
 	TyError                   // error sentinel
 )
@@ -341,13 +341,13 @@ func (e *CheckError) Error() string {
 	return fmt.Sprintf("%s:%d:%d: %s", e.Span.Start.File, e.Span.Start.Line, e.Span.Start.Column, e.Message)
 }
 
-// ModuleExports holds the public symbols exported by a Grok module.
+// ModuleExports holds the public symbols exported by a Forge module.
 type ModuleExports struct {
 	Types     map[string]*TypeInfo // exported type names → type info
 	Functions map[string]*Type     // exported function names → function types
 }
 
-// Checker performs type checking on a Grok AST.
+// Checker performs type checking on a Forge AST.
 type Checker struct {
 	registry       *Registry
 	errors         []error
@@ -396,7 +396,7 @@ func (c *Checker) Errors() []error {
 	return c.errors
 }
 
-// CheckModuleFile parses, checks, and caches a .gk module file.
+// CheckModuleFile parses, checks, and caches a .fg module file.
 // Returns the module's exported symbols. Uses cycle detection and caching.
 func (c *Checker) CheckModuleFile(importPath string, fromSpan ast.Span) *ModuleExports {
 	// Resolve path relative to current file
@@ -631,7 +631,7 @@ func (c *Checker) resolveNamedType(name string, args []ast.TypeExpr) *Type {
 		if t := c.scope.Lookup(name); t != nil && t.Kind == TyVar {
 			return t
 		}
-		// Unknown type — could be an error, but return TyVar for .grok compatibility
+		// Unknown type — could be an error, but return TyVar for .forge compatibility
 		return &Type{Kind: TyVar, Name: name}
 	}
 }
@@ -2132,11 +2132,11 @@ func (c *Checker) CheckFile(file *ast.File) {
 		c.currentFile = file.Filename
 	}
 	for i := range file.Blocks {
-		c.checkGrokBlock(&file.Blocks[i])
+		c.checkForgeBlock(&file.Blocks[i])
 	}
 }
 
-func (c *Checker) checkGrokBlock(block *ast.GrokBlock) {
+func (c *Checker) checkForgeBlock(block *ast.ForgeBlock) {
 	// Register interfaces first (classes may implement them)
 	for i := range block.Interfaces {
 		c.registerInterface(&block.Interfaces[i])
@@ -2159,8 +2159,8 @@ func (c *Checker) checkGrokBlock(block *ast.GrokBlock) {
 
 	// Register import aliases in scope (packages are opaque types)
 	for _, imp := range block.Imports {
-		if strings.HasSuffix(imp.Path, ".gk") {
-			// Grok module import — parse and check the imported file
+		if strings.HasSuffix(imp.Path, ".fg") {
+			// Forge module import — parse and check the imported file
 			exports := c.CheckModuleFile(imp.Path, imp.Span)
 			if exports != nil {
 				// Register as a module type with exports attached
@@ -2623,7 +2623,7 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 	}
 	for _, f := range sl.Fields {
 		valType := c.checkExpr(&f.Value)
-		// Try both the literal field name and lowercase version (Grok uses lowercase,
+		// Try both the literal field name and lowercase version (Forge uses lowercase,
 		// struct literals may use Go-exported names)
 		fieldType, ok := info.Fields[f.Name]
 		if !ok {

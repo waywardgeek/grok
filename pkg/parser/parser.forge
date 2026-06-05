@@ -1,0 +1,500 @@
+// parser.forge — the Forge parser's own understanding
+forge Parser {
+  why: "Frontend of the Forge toolchain. Transforms raw Forge source into a structured AST via a two-phase pipeline: hand-written stateful lexer + recursive descent parser. Handles both .forge (declaration-only) and .fg (full implementation with expressions and statements) files through the same parser with mode detection."
+
+  doc "Architecture": """
+    Linear pipeline: raw text → Lexer (tokens) → Parser (AST).
+
+    1. Lexical Analysis (lexer.go): Lexer scans char-by-char producing Token objects.
+    Stateful: tracks line/column for source mapping, handles triple-quoted strings,
+    collapses multiple newlines into single TNewline tokens.
+
+    2. Declaration Parsing (parser.go): Recursive descent parser for .forge and .fg
+    top-level structure. Each major construct has a corresponding method
+    (parseStruct, parseFunc, parseEnum, etc.). Largely LL(1) with state
+    save/restore lookahead for ambiguous cases.
+
+    parseTypeParams() is shared by all generic declarations — classes, structs,
+    enums, interfaces, and functions all parse `<T, U: Constraint>` the same way.
+    parseFunc checks for `<` after the function name to parse optional type params.
+
+    3. Expression/Statement Parsing (expr_parser.go): Pratt/precedence-climbing
+    parser for .fg function bodies. Activated when parseFunc detects a `{` after
+    annotations — same function handles both .forge signatures and .fg bodies.
+
+    4. AST Construction: Parser instantiates nodes from pkg/ast. Every node gets a
+    Span for precise source location. Output is ast.File.
+  """
+
+  doc "Key Decisions": """
+    PEG over LALR: no ambiguity, ordered choice, composable. Rejected tree-sitter
+    (external dependency, incremental parsing not needed) and parser generators
+    (hand-written gives full control over error messages).
+
+    Single AST for both .forge and .fg: .forge is the declaration-only subset.
+    FuncDecl.Body is nil for .forge files, *Block for .fg files.
+
+    Pratt parsing for expressions: clean precedence handling for 12 binary
+    precedence levels without explicit grammar rules. Each token maps to a
+    binding power via binaryPrec(); the parser recursively descends only when
+    the next operator has higher precedence.
+  """
+
+  doc "Contextual Keywords": """
+    Forge uses many keywords that are also common identifiers: why, doc, source,
+    requires, ensures, concurrent, etc. The lexer tokenizes them as distinct
+    TokenKinds, but the parser's expectIdentLike() accepts keyword tokens as
+    identifiers when in field/param position. This is essential for self-referential
+    .forge files where fields are named "source", "where", "requires", etc.
+
+    `null` is a keyword alias for `nil` — both map to TNil in the lexer,
+    producing the same ExprNil AST node. This avoids confusion for developers
+    coming from other languages.
+  """
+
+  doc "Lookahead and State Restoration": """
+    For constructs that aren't LL(1), the parser saves the entire Lexer state
+    (simple struct copy), performs a trial parse, and restores on failure. Used for:
+    - isWhyAnnotation(): distinguishes `why: "desc"` annotation from `why: TypeExpr`
+    field by looking ahead for string vs type
+    - Tuple field labels: determines if (x: T, y: U) has labels or is positional
+    - Generic call-site disambiguation: tryParseTypeArgs() attempts to parse
+    <TypeExpr, ...> followed by `(`. If `>` isn't followed by `(`, backtracks
+    and treats `<` as a comparison operator. Same pattern used for method calls.
+    - Struct literal detection: lookahead for `{` after identifier in expression
+    context.
+    Cost is negligible — Lexer is a small struct, and ambiguities are rare.
+  """
+
+  doc "Expression Parsing (Pratt/Precedence-Climbing)": """
+    expr_parser.go implements a Pratt parser with 10 binary precedence levels:
+
+    Level  1: || (logical or)
+    Level  2: && (logical and)
+    Level  3: == != (equality)
+    Level  4: < <= > >= (comparison)
+    Level  5: | (bitwise or)
+    Level  6: ^ (bitwise xor)
+    Level  7: & (bitwise and)
+    Level  8: << >> (shifts)
+    Level  9: + - (additive)
+    Level 10: * / % (multiplicative)
+
+    Unary prefix operators (-, !) are handled in parseUnaryExpr before entering
+    the precedence loop. Postfix operations (field access, method call, index,
+    function call) are handled in parsePostfixExpr with a tight loop.
+
+    Primary expressions: identifiers, all literal types (int, float, string, bool,
+    nil), parenthesized expressions, list literals [a, b], map literals map[K]V{...},
+    lambda |params| -> RetType { body }, match expressions, cast expressions
+    <Type>expr, f-string interpolation f"text {expr}", and .fg keywords used as
+    identifiers (true, false, nil, map).
+
+    Postfix operations include: method calls (obj.method()), field access (obj.field),
+    generic call disambiguation (tryParseTypeArgs with backtracking), function calls,
+    indexing (xs[i]), and unwrap (expr! — ExprUnwrap, for optional dereferencing).
+
+    Generic call disambiguation: when a postfix `<` is
+    encountered, tryParseTypeArgs() saves lexer state, attempts to parse type args,
+    and checks for a following `(`. On failure, backtracks and exits the postfix
+    loop so the `<` is treated as a binary comparison operator.
+  """
+
+  doc "Statement Parsing": """
+    parseStmt() dispatches on the current token:
+    - let/let mut → parseVarDecl (type annotation and/or initializer).
+    Supports tuple destructuring: `let (a, b) = expr` detects leading `(`
+    and parses comma-separated names into VarDeclStmt.Names.
+    - return → parseReturn (optional value)
+    - if → parseIf (with else if / else chains)
+    - for → parseFor (for var in collection)
+    - while → parseWhile
+    - match → parseMatchStmt (value + arms with patterns)
+    - cascade → parseCascade (deferred cleanup block)
+    - spawn → parseSpawn (spawn { body } goroutine)
+    - select → parseSelect (select { case ch.receive()/send/default })
+    - lock → parseLock (lock(mu) { body } scoped mutex)
+    - break/continue → direct AST nodes
+    - Otherwise → parseExprOrAssign (expression or assignment statement)
+
+    Compound assignment (+=, -=, *=, /=) is desugared in the parser:
+    `x += y` becomes `x = x + y` at the AST level, keeping the transpiler simple.
+
+    Pattern parsing for match arms supports: identifier, variant(bindings),
+    literal, wildcard (_), and tuple patterns.
+  """
+
+  doc ".fg Token Extensions": """
+    The lexer recognizes .fg-specific keywords (let, mut, if, else, for, in,
+    while, match, return, break, continue, cascade, spawn, select, lock,
+    true, false, nil, null, fn, type) and 22 operator tokens. These are only
+    meaningful in function body context but are always lexed — the parser
+    determines context.
+  """
+
+  doc "Recursive Type Parsing": """
+    parseTypeExpr handles Forge's full recursive type system: sequences [T],
+    tuples (T, U), maps map[K]V, channels channel<T>, optionals T?, unions A | B,
+    function types T -> U, (T, U) -> V, and fn(T, U) -> V. Uses a "base type"
+    approach to handle precedence: parse base → check for ? suffix → check for
+    | infix → check for -> infix. The fn(...) form is parsed in parseBaseType as
+    a prefix. When -> follows a tuple, the tuple fields are unwrapped as individual
+    function params (not a single tuple param).
+  """
+
+  doc "Technical Debt": """
+    - Error recovery: currently fail-fast (first error). Synchronizing on next
+    forge block would improve IDE/bulk-processing experience.
+    - Multi-line arrays: source: [...] must be single-line (parser limitation)
+    - requires/ensures: capture raw text strings, not parsed expressions
+    - Lambda param types: uses parseBaseType to avoid | ambiguity with union types,
+    so lambda params cannot have union types (use a type alias instead)
+  """
+
+  // ---- Token layer ----
+  enum TokenKind {
+    Forge
+    Func
+    Class
+    Struct
+    Enum
+    Interface
+    Relation
+    Import
+    Implements
+    Where
+    Owns
+    Refs
+    Mut
+    Self
+    Let
+    If
+    Else
+    For
+    In
+    While
+    Match
+    Return
+    Break
+    Continue
+    Cascade
+    True
+    False
+    Nil
+    Map
+    Ident
+    IntLit
+    FloatLit
+    StringLit
+    LParen
+    RParen
+    LBrace
+    RBrace
+    LBracket
+    RBracket
+    Comma
+    Colon
+    ColonColon
+    Dot
+    Arrow
+    FatArrow
+    Pipe
+    Question
+    Lt
+    Gt
+    Plus
+    Minus
+    Star
+    Slash
+    Percent
+    EqEq
+    BangEq
+    LtEq
+    GtEq
+    AmpAmp
+    PipePipe
+    Bang
+    Amp
+    Caret
+    LtLt
+    GtGt
+    Eq
+    PlusEq
+    MinusEq
+    StarEq
+    SlashEq
+    Why
+    Doc
+    Invariant
+    Requires
+    Ensures
+    Raises
+    Concurrent
+    RequiresLock
+    ExcludesLock
+    GuardedBy
+    Spawns
+    Pure
+    Source
+    Fake
+    VerifiedAt
+    Newline
+    EOF
+  }
+
+  // .forge keywords
+  // .fg keywords
+  // Literals
+  // Punctuation
+  // Operators (.fg)
+  // Annotations
+  // Special
+  struct Token {
+    Kind: TokenKind
+    Text: string
+    Span: Span
+  }
+
+  class Lexer(Source: string, Filename: string) {
+    why: "Stateful scanner. Handles triple-quoted strings, collapses newline sequences, tracks line/column. State is copyable for parser lookahead save/restore."
+    Comments: [ast.Comment]
+    func Next(mut self) -> Token
+    func Peek(self) -> Token
+  }
+
+  struct ParseError {
+    why: "Implements Go error interface. Includes Span for filename:line:column."
+    Message: string
+    Span: Span
+  }
+
+  class Parser(Lex: Lexer) {
+    why: "Recursive descent + Pratt hybrid parser. Declaration parsing via recursive descent; expression parsing via precedence climbing. Internal methods are unexported — only ParseFile/ParseString are public."
+  }
+
+  // ---- Public API ----
+  func NewLexer(source: string, filename: string) -> Lexer?
+    why: "Creates a new Lexer for the given source text and filename."
+
+  func ParseFile(source: string, filename: string) -> (File?, error)
+    why: "Primary entry point. Manages lexer/parser lifecycle, returns AST or ParseError."
+
+  func ParseString(source: string) -> (File?, error)
+    why: "Convenience wrapper using '<string>' as filename. Ideal for tests."
+
+  source: ["lexer.go", "parser.go", "expr_parser.go"]
+}
+// --- index ---
+//
+// Auto-generated function/method index with signatures in Go syntax.
+// DO NOT EDIT below this line — regenerated by `forge update`.
+//
+// file: lexer.go
+//
+// func (t Token) String() string    :192
+//
+// NewLexer creates a new lexer for the given source.
+// func NewLexer(source, filename string) *Lexer    :238
+//
+// func (l *Lexer) currentPos() ast.Pos    :247
+//
+// func (l *Lexer) advance() rune    :251
+//
+// func (l *Lexer) peek() rune    :266
+//
+// func (l *Lexer) peekAt(offset int) rune    :274
+//
+// Peek returns the next token without consuming it.
+// func (l *Lexer) Peek() Token    :284
+//
+// Next returns the next token.
+// func (l *Lexer) Next() Token    :294
+//
+// func (l *Lexer) scan() Token    :303
+//
+// func (l *Lexer) scanString(start ast.Pos) Token    :479
+//
+// scanFString scans f"..." and stores the raw content between quotes.
+// func (l *Lexer) scanFString(start ast.Pos) Token    :520
+//
+// func (l *Lexer) scanTripleString(start ast.Pos) Token    :560
+//
+// func (l *Lexer) scanNumber(start ast.Pos) Token    :576
+//
+// func (l *Lexer) scanIdent(start ast.Pos) Token    :606
+//
+// file: parser.go
+//
+// func (e *ParseError) Error() string    :16
+//
+// ParseFile parses a .forge or .fg file into an AST.
+// func ParseFile(source, filename string) (*ast.File, error)    :27
+//
+// ParseString parses from a string, using "<string>" as the filename.
+// func ParseString(source string) (*ast.File, error)    :34
+//
+// func (p *Parser) peek() Token    :38
+//
+// func (p *Parser) next() Token    :39
+//
+// func (p *Parser) skipNewlines()    :41
+//
+// isWhyAnnotation peeks ahead to determine if the current `why` token is an annotation
+// func (p *Parser) isWhyAnnotation() bool    :49
+//
+// func (p *Parser) expect(kind TokenKind) (Token, error)    :59
+//
+// expectIdentLike accepts TIdent or any annotation keyword that could be used as a name.
+// func (p *Parser) expectIdentLike() (Token, error)    :71
+//
+// func (p *Parser) parseFile() (*ast.File, error)    :91
+//
+// func (p *Parser) parseForgeBlock() (*ast.ForgeBlock, error)    :114
+//
+// func (p *Parser) parseForgeItem(block *ast.ForgeBlock) error    :146
+//
+// parseWhy parses: why: "..."
+// func (p *Parser) parseWhy() (string, error)    :274
+//
+// parseDoc parses: doc "Section": """..."""
+// func (p *Parser) parseDoc() (*ast.DocBlock, error)    :287
+//
+// parseInvariant parses: invariant: "claim" [verified_at: "hash"]
+// func (p *Parser) parseInvariant() (*ast.InvariantDecl, error)    :309
+//
+// parseImport parses: import alias from "path"
+// func (p *Parser) parseImport() (*ast.ImportDecl, error)    :341
+//
+// parseTypeAlias parses: type Name = TypeExpr
+// func (p *Parser) parseTypeAlias() (*ast.TypeAliasDecl, error)    :363
+//
+// parseStruct parses: struct Name[<TypeParams>] { fields }
+// func (p *Parser) parseStruct() (*ast.StructDecl, error)    :385
+//
+// parseEnum parses: enum Name[<TypeParams>] { Variants }
+// func (p *Parser) parseEnum() (*ast.EnumDecl, error)    :434
+//
+// func (p *Parser) parseEnumVariant() (*ast.EnumVariant, error)    :481
+//
+// func (p *Parser) parseTupleField() (*ast.TupleField, error)    :511
+//
+// parseInterface parses: interface Name[<TypeParams>] { methods }
+// func (p *Parser) parseInterface() (*ast.InterfaceDecl, error)    :536
+//
+// parseClass parses: class Name[<TypeParams>](ctor_params) [implements I1, I2] { fields, methods }
+// func (p *Parser) parseClass() (*ast.ClassDecl, error)    :596
+//
+// parseFunc parses a function/method declaration with annotations.
+// func (p *Parser) parseFunc() (*ast.FuncDecl, error)    :702
+//
+// func (p *Parser) parseWhereClause() (*ast.WhereClause, error)    :783
+//
+// func (p *Parser) parseAnnotations() ast.Annotations    :803
+//
+// parseExprText reads tokens until newline/EOF and returns them as text.
+// func (p *Parser) parseExprText() string    :879
+//
+// parseField parses: name: Type [guarded_by(lock)] [// why: "..."]
+// func (p *Parser) parseField() (*ast.Field, error)    :889
+//
+// parseParam parses a function parameter: [mut] name: Type or [mut] self
+// func (p *Parser) parseParam() (*ast.Param, error)    :928
+//
+// parseTypeExpr parses a type expression.
+// func (p *Parser) parseTypeExpr() (*ast.TypeExpr, error)    :977
+//
+// func (p *Parser) parseBaseType() (*ast.TypeExpr, error)    :1040
+//
+// parseTypeParams parses: <T> or <T: Comparable> or <T, U> etc.
+// func (p *Parser) parseTypeParams() ([]ast.TypeParam, error)    :1221
+//
+// parseRelation parses: relation [hint] Parent[:label] owns|refs [Child[:label]]
+// func (p *Parser) parseRelation() (*ast.RelationDecl, error)    :1254
+//
+// func (p *Parser) parseRelationSideFrom(nameTok Token) ast.RelationSide    :1308
+//
+// parseSource parses: source: ["file1.go", "file2.go"]
+// func (p *Parser) parseSource() ([]string, error)    :1322
+//
+// parseFake parses: fake: "file.go"
+// func (p *Parser) parseFake() (string, error)    :1348
+//
+// file: expr_parser.go
+//
+// func binaryPrec(kind TokenKind) int    :27
+//
+// func tokenToBinaryOp(kind TokenKind) ast.BinaryOp    :56
+//
+// parseExpr parses an expression using Pratt/precedence climbing.
+// func (p *Parser) parseExpr() (*ast.Expr, error)    :100
+//
+// func (p *Parser) parsePrecExpr(minPrec int) (*ast.Expr, error)    :104
+//
+// func (p *Parser) parseUnaryExpr() (*ast.Expr, error)    :129
+//
+// func (p *Parser) parsePostfixExpr() (*ast.Expr, error)    :158
+//
+// func (p *Parser) parseArgList() ([]ast.Expr, ast.Pos, error)    :340
+//
+// func (p *Parser) parsePrimaryExpr() (*ast.Expr, error)    :361
+//
+// func (p *Parser) parseMapLit(mapTok Token) (*ast.Expr, error)    :513
+//
+// func (p *Parser) parseMatchExpr() (*ast.Expr, error)    :570
+//
+// parseCastExpr parses <Type>expr — explicit type conversion.
+// func (p *Parser) parseCastExpr() (*ast.Expr, error)    :594
+//
+// parseLambdaExpr parses |params| -> ReturnType { body } or |params| { body }
+// func (p *Parser) parseLambdaExpr() (*ast.Expr, error)    :618
+//
+// parseBlock parses { stmts... }
+// func (p *Parser) parseBlock() (*ast.Block, error)    :690
+//
+// func (p *Parser) parseStmt() (*ast.Stmt, error)    :715
+//
+// func (p *Parser) parseVarDecl() (*ast.Stmt, error)    :756
+//
+// func (p *Parser) parseReturn() (*ast.Stmt, error)    :831
+//
+// func (p *Parser) parseIf() (*ast.Stmt, error)    :850
+//
+// func (p *Parser) parseFor() (*ast.Stmt, error)    :898
+//
+// func (p *Parser) parseWhile() (*ast.Stmt, error)    :933
+//
+// func (p *Parser) parseMatchStmt() (*ast.Stmt, error)    :951
+//
+// func (p *Parser) parseMatchArms() ([]ast.MatchArm, error)    :973
+//
+// func (p *Parser) parsePattern() (*ast.Pattern, error)    :1006
+//
+// func (p *Parser) parseCascade() (*ast.Stmt, error)    :1097
+//
+// func (p *Parser) parseSpawn() (*ast.Stmt, error)    :1111
+//
+// func (p *Parser) parseSelect() (*ast.Stmt, error)    :1125
+//
+// func (p *Parser) parseSelectCase() (*ast.SelectCase, error)    :1151
+//
+// func (p *Parser) parseLock() (*ast.Stmt, error)    :1201
+//
+// func (p *Parser) parseExprOrAssign() (*ast.Stmt, error)    :1225
+//
+// isStructLitAhead peeks past { to see if the first content is Ident: (field initializer).
+// func (p *Parser) isStructLitAhead() bool    :1287
+//
+// func (p *Parser) parseStructLit(nameTok Token) (*ast.Expr, error)    :1307
+//
+// parseFString processes the raw text of an f-string token, splitting on {expr}
+// func (p *Parser) parseFString(tok Token) (*ast.Expr, error)    :1344
+//
+// tryParseTypeArgs attempts to parse <TypeExpr, TypeExpr, ...> and consume the '>'.
+// func (p *Parser) tryParseTypeArgs() ([]ast.TypeExpr, bool)    :1407
+
+// --- dependencies ---
+//
+// Auto-generated internal package dependencies.
+// DO NOT EDIT below this line — regenerated by `forge update`.
+//
+// pkg/ast

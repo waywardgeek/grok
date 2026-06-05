@@ -1,4 +1,4 @@
-// Package parser implements the Grok lexer and PEG parser.
+// Package parser implements the Forge lexer and PEG parser.
 package parser
 
 import (
@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/waywardgeek/grok/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/ast"
 )
 
 // TokenKind identifies the type of a lexer token.
@@ -15,7 +15,7 @@ type TokenKind int
 
 const (
 	// Keywords
-	TGrok TokenKind = iota
+	TForge TokenKind = iota
 	TFunc
 	TClass
 	TStruct
@@ -37,7 +37,7 @@ const (
 	TFalse
 	TNil
 
-	// .gk keywords
+	// .fg keywords
 	TLet
 	TIf
 	TElse
@@ -82,7 +82,7 @@ const (
 	TLt        // <
 	TGt        // >
 
-	// Operators (.gk)
+	// Operators (.fg)
 	TAssign    // =
 	TPlus      // +
 	TMinus     // -
@@ -128,7 +128,7 @@ const (
 )
 
 var keywords = map[string]TokenKind{
-	"grok":       TGrok,
+	"forge":       TForge,
 	"func":       TFunc,
 	"fn":         TFunc,
 	"class":      TClass,
@@ -201,7 +201,7 @@ func (t Token) String() string {
 }
 
 var tokenNames = map[TokenKind]string{
-	TGrok: "grok", TFunc: "func", TClass: "class", TStruct: "struct",
+	TForge: "forge", TFunc: "func", TClass: "class", TStruct: "struct",
 	TEnum: "enum", TInterface: "interface", TRelation: "relation",
 	TImport: "import", TImplements: "implements", TImpl: "impl", TAs: "as", TWhere: "where",
 	TOwns: "owns", TRefs: "refs", TMut: "mut", TSelf: "self",
@@ -230,7 +230,7 @@ var tokenNames = map[TokenKind]string{
 	TNewline: "newline", TEOF: "EOF",
 }
 
-// Lexer tokenizes Grok source code.
+// Lexer tokenizes Forge source code.
 type Lexer struct {
 	source   string
 	filename string

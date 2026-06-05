@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/waywardgeek/grok/pkg/checker"
-	"github.com/waywardgeek/grok/pkg/parser"
+	"github.com/waywardgeek/forge/pkg/checker"
+	"github.com/waywardgeek/forge/pkg/parser"
 )
 
-// TestCBackendEmitsAllFiles tests that the C backend produces output for all .gk files.
+// TestCBackendEmitsAllFiles tests that the C backend produces output for all .fg files.
 func TestCBackendEmitsAllFiles(t *testing.T) {
 	testdataDir := filepath.Join("..", "..", "testdata")
 	entries, err := os.ReadDir(testdataDir)
@@ -21,7 +21,7 @@ func TestCBackendEmitsAllFiles(t *testing.T) {
 
 	passed, failed := 0, 0
 	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".gk") {
+		if !strings.HasSuffix(e.Name(), ".fg") {
 			continue
 		}
 		t.Run(e.Name(), func(t *testing.T) {
@@ -38,7 +38,7 @@ func TestCBackendEmitsAllFiles(t *testing.T) {
 				}
 			}()
 
-			pkgName := strings.TrimSuffix(e.Name(), ".gk")
+			pkgName := strings.TrimSuffix(e.Name(), ".fg")
 			result := cPipeline(t, string(data), pkgName)
 			if result == "" {
 				t.Error("empty output")
@@ -51,7 +51,7 @@ func TestCBackendEmitsAllFiles(t *testing.T) {
 	t.Logf("RESULTS: %d passed, %d failed", passed, failed)
 }
 
-// TestCBackendCompilesScan tries to compile ALL .gk files and reports which pass.
+// TestCBackendCompilesScan tries to compile ALL .fg files and reports which pass.
 func TestCBackendCompilesScan(t *testing.T) {
 	if _, err := exec.LookPath("cc"); err != nil {
 		t.Skip("cc not found")
@@ -64,7 +64,7 @@ func TestCBackendCompilesScan(t *testing.T) {
 
 	passed, failed := 0, 0
 	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".gk") {
+		if !strings.HasSuffix(e.Name(), ".fg") {
 			continue
 		}
 		t.Run(e.Name(), func(t *testing.T) {
@@ -74,7 +74,7 @@ func TestCBackendCompilesScan(t *testing.T) {
 				t.Skipf("can't read: %v", err)
 			}
 
-			pkgName := strings.TrimSuffix(e.Name(), ".gk")
+			pkgName := strings.TrimSuffix(e.Name(), ".fg")
 			cSrc := cPipeline(t, string(data), pkgName)
 
 			tmpDir := t.TempDir()
@@ -105,8 +105,8 @@ func TestCBackendRuns(t *testing.T) {
 	}
 	testdataDir := filepath.Join("..", "..", "testdata")
 
-	t.Run("hello_world.gk", func(t *testing.T) {
-		path := filepath.Join(testdataDir, "hello_world.gk")
+	t.Run("hello_world.fg", func(t *testing.T) {
+		path := filepath.Join(testdataDir, "hello_world.fg")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Skipf("can't read: %v", err)

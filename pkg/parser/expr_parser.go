@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/waywardgeek/grok/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/ast"
 )
 
 // --- Precedence levels for Pratt parsing ---

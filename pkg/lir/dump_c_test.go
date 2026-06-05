@@ -9,7 +9,7 @@ import (
 func TestDumpC(t *testing.T) {
 	files := []string{"interfaces", "demo", "unions", "typealias", "channels"}
 	for _, name := range files {
-		path := filepath.Join("..", "..", "testdata", name+".gk")
+		path := filepath.Join("..", "..", "testdata", name+".fg")
 		data, err := os.ReadFile(path)
 		if err != nil { continue }
 		c := cPipeline(t, string(data), name)

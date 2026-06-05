@@ -1,4 +1,4 @@
-// Package lir defines the Low-level Intermediate Representation for the Grok compiler.
+// Package lir defines the Low-level Intermediate Representation for the Forge compiler.
 // The LIR sits between the AST and backend-specific code generators. All semantic
 // complexity is resolved during the AST→LIR lowering pass, so each backend is a
 // simple syntax emitter with no semantic logic.

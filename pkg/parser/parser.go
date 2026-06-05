@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/waywardgeek/grok/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/ast"
 )
 
 // ParseError is a syntax error with source position.
@@ -17,13 +17,13 @@ func (e *ParseError) Error() string {
 	return fmt.Sprintf("%s:%d:%d: %s", e.Span.Start.File, e.Span.Start.Line, e.Span.Start.Column, e.Message)
 }
 
-// Parser is a PEG parser for .grok files.
+// Parser is a PEG parser for .forge files.
 type Parser struct {
 	lex    *Lexer
 	errors []error
 }
 
-// ParseFile parses a .grok or .gk file into an AST.
+// ParseFile parses a .forge or .fg file into an AST.
 func ParseFile(source, filename string) (*ast.File, error) {
 	lex := NewLexer(source, filename)
 	p := &Parser{lex: lex}
@@ -98,7 +98,7 @@ func (p *Parser) parseFile() (*ast.File, error) {
 		if p.peek().Kind == TEOF {
 			break
 		}
-		block, err := p.parseGrokBlock()
+		block, err := p.parseForgeBlock()
 		if err != nil {
 			return nil, err
 		}
@@ -111,9 +111,9 @@ func (p *Parser) parseFile() (*ast.File, error) {
 	return file, nil
 }
 
-func (p *Parser) parseGrokBlock() (*ast.GrokBlock, error) {
+func (p *Parser) parseForgeBlock() (*ast.ForgeBlock, error) {
 	start := p.peek().Span.Start
-	if _, err := p.expect(TGrok); err != nil {
+	if _, err := p.expect(TForge); err != nil {
 		return nil, err
 	}
 
@@ -121,7 +121,7 @@ func (p *Parser) parseGrokBlock() (*ast.GrokBlock, error) {
 	if err != nil {
 		return nil, err
 	}
-	block := &ast.GrokBlock{Name: nameTok.Text}
+	block := &ast.ForgeBlock{Name: nameTok.Text}
 
 	if _, err := p.expect(TLBrace); err != nil {
 		return nil, err
@@ -129,7 +129,7 @@ func (p *Parser) parseGrokBlock() (*ast.GrokBlock, error) {
 	p.skipNewlines()
 
 	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
-		if err := p.parseGrokItem(block); err != nil {
+		if err := p.parseForgeItem(block); err != nil {
 			return nil, err
 		}
 		p.skipNewlines()
@@ -143,7 +143,7 @@ func (p *Parser) parseGrokBlock() (*ast.GrokBlock, error) {
 	return block, nil
 }
 
-func (p *Parser) parseGrokItem(block *ast.GrokBlock) error {
+func (p *Parser) parseForgeItem(block *ast.ForgeBlock) error {
 	tok := p.peek()
 
 	// Handle `pub` visibility modifier
@@ -272,7 +272,7 @@ func (p *Parser) parseGrokItem(block *ast.GrokBlock) error {
 
 	default:
 		return &ParseError{
-			Message: fmt.Sprintf("unexpected token %s (%q) in grok block", tokenNames[tok.Kind], tok.Text),
+			Message: fmt.Sprintf("unexpected token %s (%q) in forge block", tokenNames[tok.Kind], tok.Text),
 			Span:    tok.Span,
 		}
 	}
@@ -965,7 +965,7 @@ func (p *Parser) parseFunc() (*ast.FuncDecl, error) {
 	// Annotations
 	fn.Annotations = p.parseAnnotations()
 
-	// Optional body for .gk files
+	// Optional body for .fg files
 	if p.peek().Kind == TLBrace {
 		body, err := p.parseBlock()
 		if err != nil {

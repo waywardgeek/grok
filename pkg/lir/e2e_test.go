@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/waywardgeek/grok/pkg/checker"
-	"github.com/waywardgeek/grok/pkg/parser"
+	"github.com/waywardgeek/forge/pkg/checker"
+	"github.com/waywardgeek/forge/pkg/parser"
 )
 
 // TestEndToEndSimple tests the full pipeline: parse → check → lower → emit Go
 func TestEndToEndSimple(t *testing.T) {
-	source := `grok simple {
+	source := `forge simple {
   fn main() {
     let x: i32 = 10
     let y: i32 = 20
@@ -29,7 +29,7 @@ func TestEndToEndSimple(t *testing.T) {
 
 // TestEndToEndStruct tests struct declaration and construction
 func TestEndToEndStruct(t *testing.T) {
-	source := `grok geom {
+	source := `forge geom {
   pub struct Point {
     X: f64
     Y: f64
@@ -51,7 +51,7 @@ func TestEndToEndStruct(t *testing.T) {
 
 // TestEndToEndEnum tests enum (tagged union) emission
 func TestEndToEndEnum(t *testing.T) {
-	source := `grok shapes {
+	source := `forge shapes {
   pub enum Shape {
     Circle(radius: f64)
     Rectangle(width: f64, height: f64)
@@ -81,7 +81,7 @@ func TestEndToEndEnum(t *testing.T) {
 
 // TestEndToEndControl tests if/while/for lowering
 func TestEndToEndControl(t *testing.T) {
-	source := `grok control {
+	source := `forge control {
   pub fn countdown(n: i32) {
     let mut i = n
     while i > 0 {
@@ -98,7 +98,7 @@ func TestEndToEndControl(t *testing.T) {
 	t.Logf("Output:\n%s", result)
 }
 
-// TestEndToEndAllGkFiles tests lowering of ALL .gk test files
+// TestEndToEndAllGkFiles tests lowering of ALL .fg test files
 func TestEndToEndAllGkFiles(t *testing.T) {
 	testdataDir := filepath.Join("..", "..", "testdata")
 	entries, err := os.ReadDir(testdataDir)
@@ -108,7 +108,7 @@ func TestEndToEndAllGkFiles(t *testing.T) {
 
 	passed, failed := 0, 0
 	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".gk") {
+		if !strings.HasSuffix(e.Name(), ".fg") {
 			continue
 		}
 		t.Run(e.Name(), func(t *testing.T) {
@@ -125,7 +125,7 @@ func TestEndToEndAllGkFiles(t *testing.T) {
 				}
 			}()
 
-			result := pipelineFromSource(t, string(data), strings.TrimSuffix(e.Name(), ".gk"))
+			result := pipelineFromSource(t, string(data), strings.TrimSuffix(e.Name(), ".fg"))
 			if result == "" {
 				t.Error("empty output")
 				failed++

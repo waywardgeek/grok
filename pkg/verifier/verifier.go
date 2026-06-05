@@ -1,4 +1,4 @@
-// Package verifier compares .grok understanding files against Go source code,
+// Package verifier compares .forge understanding files against Go source code,
 // reporting structural drift between the declared understanding and the implementation.
 package verifier
 
@@ -12,8 +12,8 @@ import (
 	"sort"
 	"strings"
 
-	grokast "github.com/waywardgeek/grok/pkg/ast"
-	"github.com/waywardgeek/grok/pkg/parser"
+	forgeast "github.com/waywardgeek/forge/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/parser"
 )
 
 // Severity classifies how serious a drift finding is.
@@ -21,8 +21,8 @@ type Severity int
 
 const (
 	Error   Severity = iota // missing type, wrong field type
-	Warning                 // extra fields not in .grok, naming convention mismatch
-	Info                    // informational (e.g., Go has more methods than .grok declares)
+	Warning                 // extra fields not in .forge, naming convention mismatch
+	Info                    // informational (e.g., Go has more methods than .forge declares)
 )
 
 func (s Severity) String() string {
@@ -40,15 +40,15 @@ func (s Severity) String() string {
 // Finding is a single drift report.
 type Finding struct {
 	Severity Severity
-	GrokFile string
+	ForgeFile string
 	GoFile   string
 	Message  string
 }
 
 func (f Finding) String() string {
-	loc := f.GrokFile
+	loc := f.ForgeFile
 	if f.GoFile != "" {
-		loc = fmt.Sprintf("%s ↔ %s", f.GrokFile, f.GoFile)
+		loc = fmt.Sprintf("%s ↔ %s", f.ForgeFile, f.GoFile)
 	}
 	return fmt.Sprintf("[%s] %s: %s", f.Severity, loc, f.Message)
 }
@@ -58,10 +58,10 @@ type Result struct {
 	Findings []Finding
 }
 
-func (r *Result) add(sev Severity, grokFile, goFile, msg string) {
+func (r *Result) add(sev Severity, forgeFile, goFile, msg string) {
 	r.Findings = append(r.Findings, Finding{
 		Severity: sev,
-		GrokFile: grokFile,
+		ForgeFile: forgeFile,
 		GoFile:   goFile,
 		Message:  msg,
 	})
@@ -78,27 +78,27 @@ func (r *Result) ErrorCount() int {
 	return n
 }
 
-// Verify parses a .grok file and compares it against the Go source files
+// Verify parses a .forge file and compares it against the Go source files
 // referenced in source: annotations. baseDir is the project root used to
 // resolve relative source paths.
-func Verify(grokPath string) (*Result, error) {
-	src, err := os.ReadFile(grokPath)
+func Verify(forgePath string) (*Result, error) {
+	src, err := os.ReadFile(forgePath)
 	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", grokPath, err)
+		return nil, fmt.Errorf("reading %s: %w", forgePath, err)
 	}
 
-	grokFile, err := parser.ParseFile(string(src), grokPath)
+	forgeFile, err := parser.ParseFile(string(src), forgePath)
 	if err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", grokPath, err)
+		return nil, fmt.Errorf("parsing %s: %w", forgePath, err)
 	}
 
 	result := &Result{}
 
-	grokDir := filepath.Dir(grokPath)
+	forgeDir := filepath.Dir(forgePath)
 
-	for _, block := range grokFile.Blocks {
+	for _, block := range forgeFile.Blocks {
 		if len(block.Source) == 0 {
-			result.add(Info, grokPath, "", fmt.Sprintf("grok block %q has no source: annotations", block.Name))
+			result.add(Info, forgePath, "", fmt.Sprintf("forge block %q has no source: annotations", block.Name))
 			continue
 		}
 
@@ -111,14 +111,14 @@ func Verify(grokPath string) (*Result, error) {
 		}
 
 		for _, srcPath := range block.Source {
-			// Resolve source paths relative to the .grok file's directory
-			goFullPath := filepath.Join(grokDir, srcPath)
+			// Resolve source paths relative to the .forge file's directory
+			goFullPath := filepath.Join(forgeDir, srcPath)
 			info, err := os.Stat(goFullPath)
 			if err != nil {
 				if os.IsNotExist(err) {
-					result.add(Error, grokPath, srcPath, "source file does not exist")
+					result.add(Error, forgePath, srcPath, "source file does not exist")
 				} else {
-					result.add(Error, grokPath, srcPath, fmt.Sprintf("cannot stat: %v", err))
+					result.add(Error, forgePath, srcPath, fmt.Sprintf("cannot stat: %v", err))
 				}
 				continue
 			}
@@ -130,14 +130,14 @@ func Verify(grokPath string) (*Result, error) {
 				fileInfo, err = parseGoFile(goFullPath)
 			}
 			if err != nil {
-				result.add(Error, grokPath, srcPath, fmt.Sprintf("failed to parse Go file: %v", err))
+				result.add(Error, forgePath, srcPath, fmt.Sprintf("failed to parse Go file: %v", err))
 				continue
 			}
 			mergeGoInfo(goInfo, fileInfo)
 		}
 
-		// Now compare the grok block against the aggregated Go types
-		verifyBlock(block, goInfo, grokPath, result)
+		// Now compare the forge block against the aggregated Go types
+		verifyBlock(block, goInfo, forgePath, result)
 	}
 
 	return result, nil
@@ -195,90 +195,90 @@ func mergeGoInfo(dst, src *goTypeInfo) {
 	}
 }
 
-func verifyBlock(block grokast.GrokBlock, goInfo *goTypeInfo, grokPath string, result *Result) {
+func verifyBlock(block forgeast.ForgeBlock, goInfo *goTypeInfo, forgePath string, result *Result) {
 	srcStr := strings.Join(block.Source, ", ")
 
 	for _, s := range block.Structs {
-		verifyStruct(s, goInfo, grokPath, srcStr, result)
+		verifyStruct(s, goInfo, forgePath, srcStr, result)
 	}
 	for _, c := range block.Classes {
-		verifyClass(c, goInfo, grokPath, srcStr, result)
+		verifyClass(c, goInfo, forgePath, srcStr, result)
 	}
 	for _, e := range block.Enums {
-		verifyEnum(e, goInfo, grokPath, srcStr, result)
+		verifyEnum(e, goInfo, forgePath, srcStr, result)
 	}
 	for _, i := range block.Interfaces {
-		verifyInterface(i, goInfo, grokPath, srcStr, result)
+		verifyInterface(i, goInfo, forgePath, srcStr, result)
 	}
 	for _, f := range block.Functions {
-		verifyFunction(f, goInfo, grokPath, srcStr, result)
+		verifyFunction(f, goInfo, forgePath, srcStr, result)
 	}
 
-	// Check for exported Go symbols not documented in .grok
-	verifyCompleteness(block, goInfo, grokPath, srcStr, result)
+	// Check for exported Go symbols not documented in .forge
+	verifyCompleteness(block, goInfo, forgePath, srcStr, result)
 }
 
 // verifyCompleteness checks that all exported Go symbols in the source files
-// are documented in the .grok block. Reports errors for missing symbols.
-func verifyCompleteness(block grokast.GrokBlock, goInfo *goTypeInfo, grokPath, goFile string, result *Result) {
-	// Build set of all names declared in .grok
-	grokNames := make(map[string]bool)
+// are documented in the .forge block. Reports errors for missing symbols.
+func verifyCompleteness(block forgeast.ForgeBlock, goInfo *goTypeInfo, forgePath, goFile string, result *Result) {
+	// Build set of all names declared in .forge
+	forgeNames := make(map[string]bool)
 	for _, s := range block.Structs {
-		grokNames[s.Name] = true
+		forgeNames[s.Name] = true
 	}
 	for _, c := range block.Classes {
-		grokNames[c.Name] = true
+		forgeNames[c.Name] = true
 	}
 	for _, e := range block.Enums {
-		grokNames[e.Name] = true
+		forgeNames[e.Name] = true
 	}
 	for _, i := range block.Interfaces {
-		grokNames[i.Name] = true
+		forgeNames[i.Name] = true
 	}
 	for _, f := range block.Functions {
-		// Try PascalCase conversion since .grok may use snake_case
-		grokNames[f.Name] = true
-		grokNames[snakeToPascal(f.Name)] = true
+		// Try PascalCase conversion since .forge may use snake_case
+		forgeNames[f.Name] = true
+		forgeNames[snakeToPascal(f.Name)] = true
 	}
 
-	// Check exported structs (which represent both structs and classes in .grok)
+	// Check exported structs (which represent both structs and classes in .forge)
 	var missingTypes []string
 	for name := range goInfo.Structs {
-		if isExported(name) && !grokNames[name] {
+		if isExported(name) && !forgeNames[name] {
 			missingTypes = append(missingTypes, name)
 		}
 	}
 
 	// Check exported interfaces
 	for name := range goInfo.Interfaces {
-		if isExported(name) && !grokNames[name] {
+		if isExported(name) && !forgeNames[name] {
 			missingTypes = append(missingTypes, name)
 		}
 	}
 
 	// Check exported typedefs
 	for name := range goInfo.TypeDefs {
-		if isExported(name) && !grokNames[name] {
+		if isExported(name) && !forgeNames[name] {
 			missingTypes = append(missingTypes, name)
 		}
 	}
 
 	sort.Strings(missingTypes)
 	for _, name := range missingTypes {
-		result.add(Error, grokPath, goFile, fmt.Sprintf("exported type %s not documented in .grok", name))
+		result.add(Error, forgePath, goFile, fmt.Sprintf("exported type %s not documented in .forge", name))
 	}
 
 	// Check exported functions (not methods — those are checked per-struct already)
 	var missingFuncs []string
 	for name := range goInfo.Functions {
-		if isExported(name) && !grokNames[name] {
+		if isExported(name) && !forgeNames[name] {
 			missingFuncs = append(missingFuncs, name)
 		}
 	}
 
 	sort.Strings(missingFuncs)
 	for _, name := range missingFuncs {
-		result.add(Error, grokPath, goFile, fmt.Sprintf("exported function %s not documented in .grok", name))
+		result.add(Error, forgePath, goFile, fmt.Sprintf("exported function %s not documented in .forge", name))
 	}
 
 }
@@ -484,68 +484,68 @@ func typeExprString(expr ast.Expr) string {
 	}
 }
 
-// ---- Grok type → Go type string conversion ----
+// ---- Forge type → Go type string conversion ----
 
-// grokTypeToGoString converts a grok TypeExpr into the string format that
+// forgeTypeToGoString converts a forge TypeExpr into the string format that
 // typeExprString produces from Go AST, enabling structural comparison.
-func grokTypeToGoString(t grokast.TypeExpr) string {
+func forgeTypeToGoString(t forgeast.TypeExpr) string {
 	switch t.Kind {
-	case grokast.TypeNamed:
+	case forgeast.TypeNamed:
 		if t.Data == nil {
 			return "?"
 		}
-		nt := t.Data.(grokast.NamedType)
-		name := grokNameToGo(nt.Name)
+		nt := t.Data.(forgeast.NamedType)
+		name := forgeNameToGo(nt.Name)
 		if len(nt.Args) == 0 {
 			return name
 		}
 		// Generic: Stack<T> → Stack[T], Map<K,V> → Map[K, V]
 		var args []string
 		for _, a := range nt.Args {
-			args = append(args, grokTypeToGoString(a))
+			args = append(args, forgeTypeToGoString(a))
 		}
 		return name + "[" + strings.Join(args, ", ") + "]"
 
-	case grokast.TypeOptional:
+	case forgeast.TypeOptional:
 		if t.Data == nil {
 			return "?"
 		}
-		ot := t.Data.(grokast.OptionalType)
-		// T? in grok → *T in Go
-		return "*" + grokTypeToGoString(ot.Inner)
+		ot := t.Data.(forgeast.OptionalType)
+		// T? in forge → *T in Go
+		return "*" + forgeTypeToGoString(ot.Inner)
 
-	case grokast.TypeSequence:
+	case forgeast.TypeSequence:
 		if t.Data == nil {
 			return "[]?"
 		}
-		st := t.Data.(grokast.SequenceType)
-		return "[]" + grokTypeToGoString(st.Elem)
+		st := t.Data.(forgeast.SequenceType)
+		return "[]" + forgeTypeToGoString(st.Elem)
 
-	case grokast.TypeMap:
+	case forgeast.TypeMap:
 		if t.Data == nil {
 			return "map[?]?"
 		}
-		mt := t.Data.(grokast.MapType)
-		return "map[" + grokTypeToGoString(mt.Key) + "]" + grokTypeToGoString(mt.Value)
+		mt := t.Data.(forgeast.MapType)
+		return "map[" + forgeTypeToGoString(mt.Key) + "]" + forgeTypeToGoString(mt.Value)
 
-	case grokast.TypeTuple:
+	case forgeast.TypeTuple:
 		// Go doesn't have tuples; skip comparison
 		return "?"
 
-	case grokast.TypeFunc:
+	case forgeast.TypeFunc:
 		return "func(...)"
 
-	case grokast.TypeChannel:
+	case forgeast.TypeChannel:
 		if t.Data == nil {
 			return "chan ?"
 		}
-		ct := t.Data.(grokast.ChannelType)
-		return "chan " + grokTypeToGoString(ct.Elem)
+		ct := t.Data.(forgeast.ChannelType)
+		return "chan " + forgeTypeToGoString(ct.Elem)
 
-	case grokast.TypeLock:
+	case forgeast.TypeLock:
 		return "sync.Mutex"
 
-	case grokast.TypeUnit:
+	case forgeast.TypeUnit:
 		return ""
 
 	default:
@@ -553,8 +553,8 @@ func grokTypeToGoString(t grokast.TypeExpr) string {
 	}
 }
 
-// grokNameToGo maps grok primitive type names to Go equivalents.
-func grokNameToGo(name string) string {
+// forgeNameToGo maps forge primitive type names to Go equivalents.
+func forgeNameToGo(name string) string {
 	switch name {
 	case "string":
 		return "string"
@@ -595,27 +595,27 @@ func grokNameToGo(name string) string {
 	}
 }
 
-// typesMatch compares a grok type string against a Go type string.
-// Returns true if they match or if the grok type is "?" (unknown/unconvertible).
-func typesMatch(grokStr, goStr string) bool {
-	if grokStr == "?" || grokStr == "" {
+// typesMatch compares a forge type string against a Go type string.
+// Returns true if they match or if the forge type is "?" (unknown/unconvertible).
+func typesMatch(forgeStr, goStr string) bool {
+	if forgeStr == "?" || forgeStr == "" {
 		return true // can't compare, don't report false positive
 	}
-	if grokStr == goStr {
+	if forgeStr == goStr {
 		return true
 	}
 	// Go 1.18+: "any" is an alias for "interface{}"
-	if (grokStr == "any" && goStr == "interface{}") || (grokStr == "interface{}" && goStr == "any") {
+	if (forgeStr == "any" && goStr == "interface{}") || (forgeStr == "interface{}" && goStr == "any") {
 		return true
 	}
 	// Also handle in composite types: map[string]any == map[string]interface{}, etc.
-	if strings.ReplaceAll(grokStr, "any", "interface{}") == goStr || grokStr == strings.ReplaceAll(goStr, "interface{}", "any") {
+	if strings.ReplaceAll(forgeStr, "any", "interface{}") == goStr || forgeStr == strings.ReplaceAll(goStr, "interface{}", "any") {
 		return true
 	}
 	// Strip Go package prefix: "ast.Span" → "Span", "*ast.File" → "*File"
-	// since .grok files use unqualified type names
+	// since .forge files use unqualified type names
 	stripped := stripPackagePrefix(goStr)
-	if grokStr == stripped {
+	if forgeStr == stripped {
 		return true
 	}
 	return false
@@ -674,59 +674,59 @@ func findGoName(name string, names map[string]*goFuncInfo) (string, bool) {
 	return pascal, false
 }
 
-func verifyStruct(s grokast.StructDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result) {
+func verifyStruct(s forgeast.StructDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result) {
 	goStruct, ok := goInfo.Structs[s.Name]
 	if !ok {
-		result.add(Error, grokFile, goFile, fmt.Sprintf("struct %s declared in .grok but not found in Go", s.Name))
+		result.add(Error, forgeFile, goFile, fmt.Sprintf("struct %s declared in .forge but not found in Go", s.Name))
 		return
 	}
 
-	for _, grokField := range s.Fields {
-		goType, found := findGoFieldType(grokField.Name, goStruct.Fields)
+	for _, forgeField := range s.Fields {
+		goType, found := findGoFieldType(forgeField.Name, goStruct.Fields)
 		if !found {
-			result.add(Error, grokFile, goFile, fmt.Sprintf("struct %s: field %s not found in Go", s.Name, grokField.Name))
+			result.add(Error, forgeFile, goFile, fmt.Sprintf("struct %s: field %s not found in Go", s.Name, forgeField.Name))
 			continue
 		}
-		grokType := grokTypeToGoString(grokField.Type)
-		if !typesMatch(grokType, goType) {
-			result.add(Error, grokFile, goFile, fmt.Sprintf("struct %s: field %s type mismatch: .grok=%s, Go=%s", s.Name, grokField.Name, grokType, goType))
+		forgeType := forgeTypeToGoString(forgeField.Type)
+		if !typesMatch(forgeType, goType) {
+			result.add(Error, forgeFile, goFile, fmt.Sprintf("struct %s: field %s type mismatch: .forge=%s, Go=%s", s.Name, forgeField.Name, forgeType, goType))
 		}
 	}
 
-	grokFieldSet := make(map[string]bool)
+	forgeFieldSet := make(map[string]bool)
 	for _, f := range s.Fields {
-		grokFieldSet[snakeToPascal(f.Name)] = true
-		grokFieldSet[snakeToCamel(f.Name)] = true
-		grokFieldSet[f.Name] = true
+		forgeFieldSet[snakeToPascal(f.Name)] = true
+		forgeFieldSet[snakeToCamel(f.Name)] = true
+		forgeFieldSet[f.Name] = true
 	}
 	var extras []string
 	for goField := range goStruct.Fields {
-		if !grokFieldSet[goField] {
+		if !forgeFieldSet[goField] {
 			extras = append(extras, goField)
 		}
 	}
 	sort.Strings(extras)
 	for _, extra := range extras {
-		result.add(Warning, grokFile, goFile, fmt.Sprintf("struct %s: Go has field %s not in .grok", s.Name, extra))
+		result.add(Warning, forgeFile, goFile, fmt.Sprintf("struct %s: Go has field %s not in .forge", s.Name, extra))
 	}
 }
 
-func verifyClass(c grokast.ClassDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result) {
+func verifyClass(c forgeast.ClassDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result) {
 	goStruct, ok := goInfo.Structs[c.Name]
 	if !ok {
-		result.add(Error, grokFile, goFile, fmt.Sprintf("class %s declared in .grok but not found as Go struct", c.Name))
+		result.add(Error, forgeFile, goFile, fmt.Sprintf("class %s declared in .forge but not found as Go struct", c.Name))
 		return
 	}
 
-	for _, grokField := range c.Fields {
-		goType, found := findGoFieldType(grokField.Name, goStruct.Fields)
+	for _, forgeField := range c.Fields {
+		goType, found := findGoFieldType(forgeField.Name, goStruct.Fields)
 		if !found {
-			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: field %s not found in Go", c.Name, grokField.Name))
+			result.add(Error, forgeFile, goFile, fmt.Sprintf("class %s: field %s not found in Go", c.Name, forgeField.Name))
 			continue
 		}
-		grokType := grokTypeToGoString(grokField.Type)
-		if !typesMatch(grokType, goType) {
-			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: field %s type mismatch: .grok=%s, Go=%s", c.Name, grokField.Name, grokType, goType))
+		forgeType := forgeTypeToGoString(forgeField.Type)
+		if !typesMatch(forgeType, goType) {
+			result.add(Error, forgeFile, goFile, fmt.Sprintf("class %s: field %s type mismatch: .forge=%s, Go=%s", c.Name, forgeField.Name, forgeType, goType))
 		}
 	}
 
@@ -735,45 +735,45 @@ func verifyClass(c grokast.ClassDecl, goInfo *goTypeInfo, grokFile, goFile strin
 			continue
 		}
 		if !findGoField(param.Name, goStruct.Fields) {
-			result.add(Warning, grokFile, goFile, fmt.Sprintf("class %s: ctor param %s not found as field", c.Name, param.Name))
+			result.add(Warning, forgeFile, goFile, fmt.Sprintf("class %s: ctor param %s not found as field", c.Name, param.Name))
 		}
 	}
 
-	for _, grokMethod := range c.Methods {
-		goName, found := findGoName(grokMethod.Name, goStruct.Methods)
+	for _, forgeMethod := range c.Methods {
+		goName, found := findGoName(forgeMethod.Name, goStruct.Methods)
 		if !found {
-			pascal := snakeToPascal(grokMethod.Name)
-			camel := snakeToCamel(grokMethod.Name)
-			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: method %s (tried Go: %s, %s) not found", c.Name, grokMethod.Name, pascal, camel))
+			pascal := snakeToPascal(forgeMethod.Name)
+			camel := snakeToCamel(forgeMethod.Name)
+			result.add(Error, forgeFile, goFile, fmt.Sprintf("class %s: method %s (tried Go: %s, %s) not found", c.Name, forgeMethod.Name, pascal, camel))
 			continue
 		}
 		goFunc := goStruct.Methods[goName]
-		verifyFuncSignature(fmt.Sprintf("class %s method %s", c.Name, grokMethod.Name), grokMethod, goFunc, grokFile, goFile, result)
+		verifyFuncSignature(fmt.Sprintf("class %s method %s", c.Name, forgeMethod.Name), forgeMethod, goFunc, forgeFile, goFile, result)
 	}
 
-	grokMethodSet := make(map[string]bool)
+	forgeMethodSet := make(map[string]bool)
 	for _, m := range c.Methods {
-		grokMethodSet[snakeToPascal(m.Name)] = true
-		grokMethodSet[snakeToCamel(m.Name)] = true
-		grokMethodSet[m.Name] = true
+		forgeMethodSet[snakeToPascal(m.Name)] = true
+		forgeMethodSet[snakeToCamel(m.Name)] = true
+		forgeMethodSet[m.Name] = true
 	}
 	var extras []string
 	for goMethod := range goStruct.Methods {
-		if !grokMethodSet[goMethod] {
+		if !forgeMethodSet[goMethod] {
 			extras = append(extras, goMethod)
 		}
 	}
 	sort.Strings(extras)
 	for _, extra := range extras {
 		if isExported(extra) {
-			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: exported method %s not documented in .grok", c.Name, extra))
+			result.add(Error, forgeFile, goFile, fmt.Sprintf("class %s: exported method %s not documented in .forge", c.Name, extra))
 		} else {
-			result.add(Info, grokFile, goFile, fmt.Sprintf("class %s: Go has method %s not in .grok", c.Name, extra))
+			result.add(Info, forgeFile, goFile, fmt.Sprintf("class %s: Go has method %s not in .forge", c.Name, extra))
 		}
 	}
 }
 
-func verifyEnum(e grokast.EnumDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result) {
+func verifyEnum(e forgeast.EnumDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result) {
 	// Go enums are typically: type FooKind int (typedef) or type Foo int
 	// Check for the type as a typedef, struct, or interface
 	_, hasStruct := goInfo.Structs[e.Name]
@@ -790,28 +790,28 @@ func verifyEnum(e grokast.EnumDecl, goInfo *goTypeInfo, grokFile, goFile string,
 		return
 	}
 
-	result.add(Warning, grokFile, goFile, fmt.Sprintf("enum %s: no matching Go type found (looked for %s, %s as typedef/struct/interface)", e.Name, e.Name, kindName))
+	result.add(Warning, forgeFile, goFile, fmt.Sprintf("enum %s: no matching Go type found (looked for %s, %s as typedef/struct/interface)", e.Name, e.Name, kindName))
 }
 
-func verifyInterface(i grokast.InterfaceDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result) {
+func verifyInterface(i forgeast.InterfaceDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result) {
 	goIface, ok := goInfo.Interfaces[i.Name]
 	if !ok {
-		result.add(Error, grokFile, goFile, fmt.Sprintf("interface %s declared in .grok but not found in Go", i.Name))
+		result.add(Error, forgeFile, goFile, fmt.Sprintf("interface %s declared in .forge but not found in Go", i.Name))
 		return
 	}
 
-	for _, grokMethod := range i.Methods {
-		goName := toGoMethodName(grokMethod.Name)
+	for _, forgeMethod := range i.Methods {
+		goName := toGoMethodName(forgeMethod.Name)
 		goFunc, ok := goIface.Methods[goName]
 		if !ok {
-			result.add(Error, grokFile, goFile, fmt.Sprintf("interface %s: method %s (Go: %s) not found", i.Name, grokMethod.Name, goName))
+			result.add(Error, forgeFile, goFile, fmt.Sprintf("interface %s: method %s (Go: %s) not found", i.Name, forgeMethod.Name, goName))
 			continue
 		}
-		verifyFuncSignature(fmt.Sprintf("interface %s method %s", i.Name, grokMethod.Name), grokMethod, goFunc, grokFile, goFile, result)
+		verifyFuncSignature(fmt.Sprintf("interface %s method %s", i.Name, forgeMethod.Name), forgeMethod, goFunc, forgeFile, goFile, result)
 	}
 }
 
-func verifyFunction(f grokast.FuncDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result) {
+func verifyFunction(f forgeast.FuncDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result) {
 	pascal := snakeToPascal(f.Name)
 	camel := snakeToCamel(f.Name)
 
@@ -825,11 +825,11 @@ func verifyFunction(f grokast.FuncDecl, goInfo *goTypeInfo, grokFile, goFile str
 	}
 
 	if goFunc == nil {
-		result.add(Error, grokFile, goFile, fmt.Sprintf("function %s (tried Go: %s, %s) not found", f.Name, pascal, camel))
+		result.add(Error, forgeFile, goFile, fmt.Sprintf("function %s (tried Go: %s, %s) not found", f.Name, pascal, camel))
 		return
 	}
 
-	verifyFuncSignature(fmt.Sprintf("function %s", f.Name), f, goFunc, grokFile, goFile, result)
+	verifyFuncSignature(fmt.Sprintf("function %s", f.Name), f, goFunc, forgeFile, goFile, result)
 }
 
 // ---- Naming convention helpers ----
@@ -861,35 +861,35 @@ func findGoFieldType(name string, fields map[string]string) (string, bool) {
 	return "", false
 }
 
-// verifyFuncSignature checks parameter count and return type of a grok function against Go.
-func verifyFuncSignature(context string, grokFunc grokast.FuncDecl, goFunc *goFuncInfo, grokFile, goFile string, result *Result) {
-	// Count grok params excluding self
-	grokParamCount := 0
-	for _, p := range grokFunc.Params {
+// verifyFuncSignature checks parameter count and return type of a forge function against Go.
+func verifyFuncSignature(context string, forgeFunc forgeast.FuncDecl, goFunc *goFuncInfo, forgeFile, goFile string, result *Result) {
+	// Count forge params excluding self
+	forgeParamCount := 0
+	for _, p := range forgeFunc.Params {
 		if !p.IsSelf {
-			grokParamCount++
+			forgeParamCount++
 		}
 	}
 	goParamCount := len(goFunc.Params)
 
-	if grokParamCount != goParamCount {
-		result.add(Error, grokFile, goFile, fmt.Sprintf("%s: param count mismatch: .grok=%d, Go=%d", context, grokParamCount, goParamCount))
+	if forgeParamCount != goParamCount {
+		result.add(Error, forgeFile, goFile, fmt.Sprintf("%s: param count mismatch: .forge=%d, Go=%d", context, forgeParamCount, goParamCount))
 	} else {
 		// Check param types positionally
 		gi := 0
-		for _, grokParam := range grokFunc.Params {
-			if grokParam.IsSelf {
+		for _, forgeParam := range forgeFunc.Params {
+			if forgeParam.IsSelf {
 				continue
 			}
 			if gi < len(goFunc.Params) {
-				grokType := grokTypeToGoString(grokParam.Type)
+				forgeType := forgeTypeToGoString(forgeParam.Type)
 				goType := goFunc.Params[gi].Type
-				if !typesMatch(grokType, goType) {
-					paramName := grokParam.Name
+				if !typesMatch(forgeType, goType) {
+					paramName := forgeParam.Name
 					if paramName == "" {
 						paramName = fmt.Sprintf("#%d", gi+1)
 					}
-					result.add(Error, grokFile, goFile, fmt.Sprintf("%s: param %s type mismatch: .grok=%s, Go=%s", context, paramName, grokType, goType))
+					result.add(Error, forgeFile, goFile, fmt.Sprintf("%s: param %s type mismatch: .forge=%s, Go=%s", context, paramName, forgeType, goType))
 				}
 			}
 			gi++
@@ -897,37 +897,37 @@ func verifyFuncSignature(context string, grokFunc grokast.FuncDecl, goFunc *goFu
 	}
 
 	// Check return types
-	grokReturnCount := 0
-	var grokReturnStr string
-	if grokFunc.ReturnType != nil {
-		grokReturnStr = grokTypeToGoString(*grokFunc.ReturnType)
-		if grokFunc.ReturnType.Kind == grokast.TypeTuple {
-			if grokFunc.ReturnType.Data != nil {
-				tt := grokFunc.ReturnType.Data.(grokast.TupleType)
-				grokReturnCount = len(tt.Fields)
+	forgeReturnCount := 0
+	var forgeReturnStr string
+	if forgeFunc.ReturnType != nil {
+		forgeReturnStr = forgeTypeToGoString(*forgeFunc.ReturnType)
+		if forgeFunc.ReturnType.Kind == forgeast.TypeTuple {
+			if forgeFunc.ReturnType.Data != nil {
+				tt := forgeFunc.ReturnType.Data.(forgeast.TupleType)
+				forgeReturnCount = len(tt.Fields)
 			}
-		} else if grokFunc.ReturnType.Kind == grokast.TypeUnit {
-			grokReturnCount = 0
+		} else if forgeFunc.ReturnType.Kind == forgeast.TypeUnit {
+			forgeReturnCount = 0
 		} else {
-			grokReturnCount = 1
+			forgeReturnCount = 1
 		}
 	}
 	goReturnCount := len(goFunc.Returns)
 
-	if grokReturnCount != goReturnCount {
-		result.add(Error, grokFile, goFile, fmt.Sprintf("%s: return count mismatch: .grok=%d, Go=%d", context, grokReturnCount, goReturnCount))
-	} else if grokReturnCount == 1 && goReturnCount == 1 {
-		if !typesMatch(grokReturnStr, goFunc.Returns[0]) {
-			result.add(Error, grokFile, goFile, fmt.Sprintf("%s: return type mismatch: .grok=%s, Go=%s", context, grokReturnStr, goFunc.Returns[0]))
+	if forgeReturnCount != goReturnCount {
+		result.add(Error, forgeFile, goFile, fmt.Sprintf("%s: return count mismatch: .forge=%d, Go=%d", context, forgeReturnCount, goReturnCount))
+	} else if forgeReturnCount == 1 && goReturnCount == 1 {
+		if !typesMatch(forgeReturnStr, goFunc.Returns[0]) {
+			result.add(Error, forgeFile, goFile, fmt.Sprintf("%s: return type mismatch: .forge=%s, Go=%s", context, forgeReturnStr, goFunc.Returns[0]))
 		}
-	} else if grokReturnCount > 1 && grokFunc.ReturnType != nil && grokFunc.ReturnType.Kind == grokast.TypeTuple {
+	} else if forgeReturnCount > 1 && forgeFunc.ReturnType != nil && forgeFunc.ReturnType.Kind == forgeast.TypeTuple {
 		// Element-wise comparison for tuple returns
-		tt := grokFunc.ReturnType.Data.(grokast.TupleType)
+		tt := forgeFunc.ReturnType.Data.(forgeast.TupleType)
 		for i, field := range tt.Fields {
 			if i < len(goFunc.Returns) {
-				grokElemStr := grokTypeToGoString(field.Type)
-				if !typesMatch(grokElemStr, goFunc.Returns[i]) {
-					result.add(Error, grokFile, goFile, fmt.Sprintf("%s: return #%d type mismatch: .grok=%s, Go=%s", context, i+1, grokElemStr, goFunc.Returns[i]))
+				forgeElemStr := forgeTypeToGoString(field.Type)
+				if !typesMatch(forgeElemStr, goFunc.Returns[i]) {
+					result.add(Error, forgeFile, goFile, fmt.Sprintf("%s: return #%d type mismatch: .forge=%s, Go=%s", context, i+1, forgeElemStr, goFunc.Returns[i]))
 				}
 			}
 		}

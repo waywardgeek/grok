@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/waywardgeek/grok/pkg/parser"
+	"github.com/waywardgeek/forge/pkg/parser"
 )
 
 func parseAndCheck(t *testing.T, source string) *Checker {
@@ -39,7 +39,7 @@ func expectErrors(t *testing.T, c *Checker, count int) {
 }
 
 func TestTypeInferenceFromLiteral(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x = 42
 			let y = "hello"
@@ -51,7 +51,7 @@ func TestTypeInferenceFromLiteral(t *testing.T) {
 }
 
 func TestTypeAnnotationMatches(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 42
 			let y: string = "hello"
@@ -61,7 +61,7 @@ func TestTypeAnnotationMatches(t *testing.T) {
 }
 
 func TestTypeMismatchInLetDecl(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: string = 42
 		}
@@ -70,7 +70,7 @@ func TestTypeMismatchInLetDecl(t *testing.T) {
 }
 
 func TestNoTypeNoInit(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x
 		}
@@ -79,7 +79,7 @@ func TestNoTypeNoInit(t *testing.T) {
 }
 
 func TestArithmetic(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 1
 			let y: i32 = 2
@@ -90,7 +90,7 @@ func TestArithmetic(t *testing.T) {
 }
 
 func TestArithmeticTypeMismatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 1
 			let y: f64 = 2.0
@@ -101,7 +101,7 @@ func TestArithmeticTypeMismatch(t *testing.T) {
 }
 
 func TestStringConcat(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x = "hello" + " world"
 		}
@@ -110,7 +110,7 @@ func TestStringConcat(t *testing.T) {
 }
 
 func TestBooleanLogic(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x = true && false
 			let y = true || false
@@ -121,7 +121,7 @@ func TestBooleanLogic(t *testing.T) {
 }
 
 func TestComparisonReturnsBool(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 1
 			let y: i32 = 2
@@ -132,7 +132,7 @@ func TestComparisonReturnsBool(t *testing.T) {
 }
 
 func TestUndefinedVariable(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x = y
 		}
@@ -141,7 +141,7 @@ func TestUndefinedVariable(t *testing.T) {
 }
 
 func TestIfConditionMustBeBool(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			if 42 {
 				let x = 1
@@ -152,7 +152,7 @@ func TestIfConditionMustBeBool(t *testing.T) {
 }
 
 func TestIfConditionBoolOk(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let done = true
 			if done {
@@ -164,7 +164,7 @@ func TestIfConditionBoolOk(t *testing.T) {
 }
 
 func TestWhileConditionMustBeBool(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			while 1 {
 				let x = 1
@@ -175,7 +175,7 @@ func TestWhileConditionMustBeBool(t *testing.T) {
 }
 
 func TestForLoopInfersElemType(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let items: [i32] = [1, 2, 3]
 			for item in items {
@@ -187,7 +187,7 @@ func TestForLoopInfersElemType(t *testing.T) {
 }
 
 func TestForLoopElemTypeMismatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let items: [i32] = [1, 2, 3]
 			for item in items {
@@ -199,7 +199,7 @@ func TestForLoopElemTypeMismatch(t *testing.T) {
 }
 
 func TestFunctionCall(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func add(x: i32, y: i32) -> i32 {
 			return x + y
 		}
@@ -211,7 +211,7 @@ func TestFunctionCall(t *testing.T) {
 }
 
 func TestFunctionCallWrongArgCount(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func add(x: i32, y: i32) -> i32 {
 			return x + y
 		}
@@ -223,7 +223,7 @@ func TestFunctionCallWrongArgCount(t *testing.T) {
 }
 
 func TestListLiteralHomogeneous(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let xs = [1, 2, 3]
 		}
@@ -232,7 +232,7 @@ func TestListLiteralHomogeneous(t *testing.T) {
 }
 
 func TestListLiteralHeterogeneous(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let xs = [1, "two", 3]
 		}
@@ -241,7 +241,7 @@ func TestListLiteralHeterogeneous(t *testing.T) {
 }
 
 func TestStructFieldAccess(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		struct Point {
 			x: f64
 			y: f64
@@ -256,7 +256,7 @@ func TestStructFieldAccess(t *testing.T) {
 }
 
 func TestStructFieldNotFound(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		struct Point {
 			x: f64
 			y: f64
@@ -270,7 +270,7 @@ func TestStructFieldNotFound(t *testing.T) {
 }
 
 func TestNegateNonNumeric(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x = -"hello"
 		}
@@ -279,7 +279,7 @@ func TestNegateNonNumeric(t *testing.T) {
 }
 
 func TestNotNonBool(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x = !42
 		}
@@ -288,7 +288,7 @@ func TestNotNonBool(t *testing.T) {
 }
 
 func TestListIndexing(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let xs: [i32] = [1, 2, 3]
 			let x = xs[0]
@@ -298,7 +298,7 @@ func TestListIndexing(t *testing.T) {
 }
 
 func TestAssignmentTypeCheck(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let mut x: i32 = 1
 			x = 2
@@ -308,7 +308,7 @@ func TestAssignmentTypeCheck(t *testing.T) {
 }
 
 func TestAssignmentTypeMismatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let mut x: i32 = 1
 			x = "hello"
@@ -318,7 +318,7 @@ func TestAssignmentTypeMismatch(t *testing.T) {
 }
 
 func TestScopeIsolation(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			if true {
 				let x = 42
@@ -375,7 +375,7 @@ func TestTypeString(t *testing.T) {
 
 
 func TestStructLiteralTypeCheck(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		struct Point {
 			X: f64
 			Y: f64
@@ -389,7 +389,7 @@ func TestStructLiteralTypeCheck(t *testing.T) {
 }
 
 func TestStructLiteralBadField(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		struct Point {
 			X: f64
 			Y: f64
@@ -403,7 +403,7 @@ func TestStructLiteralBadField(t *testing.T) {
 }
 
 func TestReturnTypeCheck(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func add(x: i32, y: i32) -> i32 {
 			return x + y
 		}
@@ -412,7 +412,7 @@ func TestReturnTypeCheck(t *testing.T) {
 }
 
 func TestReturnTypeMismatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func bad() -> i32 {
 			return true
 		}
@@ -421,7 +421,7 @@ func TestReturnTypeMismatch(t *testing.T) {
 }
 
 func TestMissingReturnValue(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func bad() -> i32 {
 			return
 		}
@@ -430,7 +430,7 @@ func TestMissingReturnValue(t *testing.T) {
 }
 
 func TestMutabilityEnforcement(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func test() {
 			let x: i32 = 1
 			x = 2
@@ -440,7 +440,7 @@ func TestMutabilityEnforcement(t *testing.T) {
 }
 
 func TestMutabilityAllowed(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func test() {
 			let mut x: i32 = 1
 			x = 2
@@ -450,7 +450,7 @@ func TestMutabilityAllowed(t *testing.T) {
 }
 
 func TestBreakOutsideLoop(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			break
 		}
@@ -459,7 +459,7 @@ func TestBreakOutsideLoop(t *testing.T) {
 }
 
 func TestContinueOutsideLoop(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			continue
 		}
@@ -468,7 +468,7 @@ func TestContinueOutsideLoop(t *testing.T) {
 }
 
 func TestBreakInsideLoop(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			while true {
 				break
@@ -479,7 +479,7 @@ func TestBreakInsideLoop(t *testing.T) {
 }
 
 func TestContinueInsideForLoop(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let xs: [i32] = [1, 2, 3]
 			for x in xs {
@@ -491,7 +491,7 @@ func TestContinueInsideForLoop(t *testing.T) {
 }
 
 func TestBreakNestedLoop(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			while true {
 				while true {
@@ -505,7 +505,7 @@ func TestBreakNestedLoop(t *testing.T) {
 }
 
 func TestPatternBindingInMatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 42
 			match x {
@@ -519,7 +519,7 @@ func TestPatternBindingInMatch(t *testing.T) {
 }
 
 func TestPatternBindingTypeMismatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 42
 			match x {
@@ -533,7 +533,7 @@ func TestPatternBindingTypeMismatch(t *testing.T) {
 }
 
 func TestNumericWidening(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 1
 			let y: i64 = x
@@ -543,7 +543,7 @@ func TestNumericWidening(t *testing.T) {
 }
 
 func TestNumericWideningInArithmetic(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 1
 			let y: i64 = 2
@@ -554,7 +554,7 @@ func TestNumericWideningInArithmetic(t *testing.T) {
 }
 
 func TestNumericNoNarrow(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i64 = 1
 			let y: i32 = x
@@ -564,7 +564,7 @@ func TestNumericNoNarrow(t *testing.T) {
 }
 
 func TestNumericCrossKindNoCoerce(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: i32 = 1
 			let y: f64 = x
@@ -574,7 +574,7 @@ func TestNumericCrossKindNoCoerce(t *testing.T) {
 }
 
 func TestNumericWideningInReturn(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() -> i64 {
 			let x: i32 = 1
 			return x
@@ -584,7 +584,7 @@ func TestNumericWideningInReturn(t *testing.T) {
 }
 
 func TestNumericWideningInFuncArgs(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func take64(x: i64) -> i64 {
 			return x
 		}
@@ -597,7 +597,7 @@ func TestNumericWideningInFuncArgs(t *testing.T) {
 }
 
 func TestFloatWidening(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f(x: f32) {
 			let y: f64 = 1.0
 			let z = x + y
@@ -607,7 +607,7 @@ func TestFloatWidening(t *testing.T) {
 }
 
 func TestInterfaceRegistration(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Greeter {
     func greet(self) -> string
   }
@@ -626,7 +626,7 @@ func TestInterfaceRegistration(t *testing.T) {
 }
 
 func TestInterfaceImplementsSatisfied(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Greeter {
     func greet(self) -> string
   }
@@ -641,7 +641,7 @@ func TestInterfaceImplementsSatisfied(t *testing.T) {
 }
 
 func TestInterfaceMissingMethod(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Greeter {
     func greet(self) -> string
   }
@@ -656,7 +656,7 @@ func TestInterfaceMissingMethod(t *testing.T) {
 }
 
 func TestInterfaceWrongReturnType(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Greeter {
     func greet(self) -> string
   }
@@ -671,7 +671,7 @@ func TestInterfaceWrongReturnType(t *testing.T) {
 }
 
 func TestInterfaceWrongParamCount(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Greeter {
     func greet(self) -> string
   }
@@ -686,7 +686,7 @@ func TestInterfaceWrongParamCount(t *testing.T) {
 }
 
 func TestInterfaceComposition(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Reader {
     func read(self) -> string
   }
@@ -720,7 +720,7 @@ func TestInterfaceComposition(t *testing.T) {
 }
 
 func TestInterfaceCompositionMissingMethod(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Reader {
     func read(self) -> string
   }
@@ -744,7 +744,7 @@ func TestInterfaceCompositionMissingMethod(t *testing.T) {
 }
 
 func TestInterfaceSubtyping(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Greeter {
     func greet(self) -> string
   }
@@ -768,7 +768,7 @@ func TestInterfaceSubtyping(t *testing.T) {
 }
 
 func TestInterfaceSubtypingFails(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   interface Greeter {
     func greet(self) -> string
   }
@@ -793,7 +793,7 @@ func TestInterfaceSubtypingFails(t *testing.T) {
 
 
 func TestFStringTypeChecks(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   func main() {
     let name = "world"
     let greeting = f"hello {name}!"
@@ -802,7 +802,7 @@ func TestFStringTypeChecks(t *testing.T) {
 	expectNoErrors(t, c)
 }
 func TestCastNumeric(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   func f() {
     let x: i32 = 42
     let y: i64 = <i64>x
@@ -813,7 +813,7 @@ func TestCastNumeric(t *testing.T) {
 }
 
 func TestCastInvalidNonNumeric(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   func f() {
     let s: string = "hello"
     let x = <i32>s
@@ -826,7 +826,7 @@ func TestCastInvalidNonNumeric(t *testing.T) {
 }
 
 func TestCastPlatformInt(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   func f() {
     let x: i32 = 42
     let y = <int>x
@@ -837,7 +837,7 @@ func TestCastPlatformInt(t *testing.T) {
 
 
 func TestEnumVariantConstructor(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   enum Color {
     Red
     Green
@@ -854,7 +854,7 @@ func TestEnumVariantConstructor(t *testing.T) {
 }
 
 func TestEnumVariantConstructorWrongArgs(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   enum Color {
     RGB(r: i32, g: i32, b: i32)
   }
@@ -866,7 +866,7 @@ func TestEnumVariantConstructorWrongArgs(t *testing.T) {
 }
 
 func TestEnumVariantPatternTyped(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   enum Shape {
     Circle(radius: f64)
     Empty
@@ -882,7 +882,7 @@ func TestEnumVariantPatternTyped(t *testing.T) {
 }
 
 func TestTupleReturnType(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func divide(a: i32, b: i32) -> (i32, error) {
 			return (0, nil)
 		}
@@ -891,7 +891,7 @@ func TestTupleReturnType(t *testing.T) {
 }
 
 func TestTupleDestructuring(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func getTwo() -> (i32, string) {
 			return (42, "hello")
 		}
@@ -903,7 +903,7 @@ func TestTupleDestructuring(t *testing.T) {
 }
 
 func TestTupleReturnMismatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func bad() -> (i32, string) {
 			return (true, 42)
 		}
@@ -912,7 +912,7 @@ func TestTupleReturnMismatch(t *testing.T) {
 }
 
 func TestErrorType(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func mayFail() -> (i32, error) {
 			if true {
 				return (0, nil)
@@ -924,7 +924,7 @@ func TestErrorType(t *testing.T) {
 }
 
 func TestGenericFuncTypeCheck(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func identity<T>(x: T) -> T {
 			return x
 		}
@@ -936,7 +936,7 @@ func TestGenericFuncTypeCheck(t *testing.T) {
 }
 
 func TestGenericFuncTypeMismatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func first<T>(a: T, b: T) -> T {
 			return a
 		}
@@ -948,7 +948,7 @@ func TestGenericFuncTypeMismatch(t *testing.T) {
 }
 
 func TestGenericFuncWrongTypeArgCount(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func pair<T, U>(a: T, b: U) -> T {
 			return a
 		}
@@ -960,7 +960,7 @@ func TestGenericFuncWrongTypeArgCount(t *testing.T) {
 }
 
 func TestGenericReturnTypeSubstitution(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func identity<T>(x: T) -> T {
 			return x
 		}
@@ -973,7 +973,7 @@ func TestGenericReturnTypeSubstitution(t *testing.T) {
 }
 
 func TestUnwrapOptional(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f(x: i32?) -> i32 {
 			return x!
 		}
@@ -982,7 +982,7 @@ func TestUnwrapOptional(t *testing.T) {
 }
 
 func TestUnwrapNonOptionalError(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f(x: i32) -> i32 {
 			return x!
 		}
@@ -993,7 +993,7 @@ func TestUnwrapNonOptionalError(t *testing.T) {
 }
 
 func TestAssignToOptional(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() -> i32? {
 			return 42
 		}
@@ -1002,7 +1002,7 @@ func TestAssignToOptional(t *testing.T) {
 }
 
 func TestIsnullBuiltin(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f(x: i32?) -> bool {
 			return isnull(x)
 		}
@@ -1011,7 +1011,7 @@ func TestIsnullBuiltin(t *testing.T) {
 }
 
 func TestLenBuiltin(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f(xs: [i32]) -> i32 {
 			return len(xs)
 		}
@@ -1021,7 +1021,7 @@ func TestLenBuiltin(t *testing.T) {
 
 
 func TestBuiltinStringMethods(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let s = "hello"
 			let l = s.len()
@@ -1041,7 +1041,7 @@ func TestBuiltinStringMethods(t *testing.T) {
 }
 
 func TestBuiltinStringMethodBadArgs(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let s = "hello"
 			let _ = s.contains(42)
@@ -1051,7 +1051,7 @@ func TestBuiltinStringMethodBadArgs(t *testing.T) {
 }
 
 func TestBuiltinListMethods(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let mut xs: [i32] = []
 			xs.push(10)
@@ -1064,7 +1064,7 @@ func TestBuiltinListMethods(t *testing.T) {
 }
 
 func TestBuiltinListJoin(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let words = ["a", "b", "c"]
 			let joined = words.join(", ")
@@ -1074,7 +1074,7 @@ func TestBuiltinListJoin(t *testing.T) {
 }
 
 func TestBuiltinMapMethods(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let m = map[string]i32{"a": 1}
 			let l = m.len()
@@ -1088,7 +1088,7 @@ func TestBuiltinMapMethods(t *testing.T) {
 
 
 func TestTypeInferenceSingleParam(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func identity<T>(x: T) -> T { return x }
 		func f() {
 			let x = identity(42)
@@ -1099,7 +1099,7 @@ func TestTypeInferenceSingleParam(t *testing.T) {
 }
 
 func TestTypeInferenceFromList(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func first<T>(xs: [T]) -> T? {
 			return nil
 		}
@@ -1112,7 +1112,7 @@ func TestTypeInferenceFromList(t *testing.T) {
 }
 
 func TestTypeInferenceConstraint(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func max_val<T: Comparable>(a: T, b: T) -> T {
 			if a > b { return a }
 			return b
@@ -1125,7 +1125,7 @@ func TestTypeInferenceConstraint(t *testing.T) {
 }
 
 func TestTypeInferenceExplicitStillWorks(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func identity<T>(x: T) -> T { return x }
 		func f() {
 			let x = identity<i64>(100)
@@ -1136,7 +1136,7 @@ func TestTypeInferenceExplicitStillWorks(t *testing.T) {
 
 func TestTypeInferenceNoArgsRequiresExplicit(t *testing.T) {
 	// Zero-arg generic functions can't infer — uses TyVar passthrough
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func make_list<T>() -> [T] {
 			let xs: [T] = []
 			return xs
@@ -1149,7 +1149,7 @@ func TestTypeInferenceNoArgsRequiresExplicit(t *testing.T) {
 }
 
 func TestLambdaTypeChecking(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let add = |a: i32, b: i32| -> i32 { return a + b }
 		}
@@ -1158,7 +1158,7 @@ func TestLambdaTypeChecking(t *testing.T) {
 }
 
 func TestLambdaInferenceMultiTypeParam(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func transform<T, U>(xs: [T], f: (T) -> U) -> [U] {
 			let mut result: [U] = []
 			return result
@@ -1173,7 +1173,7 @@ func TestLambdaInferenceMultiTypeParam(t *testing.T) {
 }
 
 func TestUnionTypeBasic(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let a: string | i32 = 42
 			let b: string | i32 = "hello"
@@ -1183,7 +1183,7 @@ func TestUnionTypeBasic(t *testing.T) {
 }
 
 func TestUnionTypeParam(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func describe(val: string | i32) -> string {
 			return "got a value"
 		}
@@ -1196,7 +1196,7 @@ func TestUnionTypeParam(t *testing.T) {
 }
 
 func TestUnionTypeThreeVariants(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: string | i32 | bool = true
 		}
@@ -1205,7 +1205,7 @@ func TestUnionTypeThreeVariants(t *testing.T) {
 }
 
 func TestUnionTypeMismatch(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() {
 			let x: string | i32 = true
 		}
@@ -1216,7 +1216,7 @@ func TestUnionTypeMismatch(t *testing.T) {
 }
 
 func TestUnionMatchTypes(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f(val: string | i32) -> string {
 			return match val {
 				string => { "str" }
@@ -1230,7 +1230,7 @@ func TestUnionMatchTypes(t *testing.T) {
 }
 
 func TestUnionMatchInvalidType(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f(val: string | i32) {
 			match val {
 				bool => { println("oops") }
@@ -1243,7 +1243,7 @@ func TestUnionMatchInvalidType(t *testing.T) {
 }
 
 func TestConstraintViolation(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func max<T: Comparable>(a: T, b: T) -> T {
 			if a > b { return a }
 			return b
@@ -1259,7 +1259,7 @@ func TestConstraintViolation(t *testing.T) {
 }
 
 func TestConstraintSatisfied(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func max<T: Comparable>(a: T, b: T) -> T {
 			if a > b { return a }
 			return b
@@ -1274,7 +1274,7 @@ func TestConstraintSatisfied(t *testing.T) {
 }
 
 func TestConstraintInferred(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func max<T: Comparable>(a: T, b: T) -> T {
 			if a > b { return a }
 			return b
@@ -1289,7 +1289,7 @@ func TestConstraintInferred(t *testing.T) {
 }
 
 func TestNullKeyword(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func main() {
 			let x: string? = null
 		}
@@ -1298,7 +1298,7 @@ func TestNullKeyword(t *testing.T) {
 }
 
 func TestNullWithoutTypeAnnotation(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func main() {
 			let x = null
 		}
@@ -1318,7 +1318,7 @@ func TestNullWithoutTypeAnnotation(t *testing.T) {
 }
 
 func TestEnumMatchExhaustive(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		enum Shape {
 			Circle(radius: f64)
 			Square(side: f64)
@@ -1334,7 +1334,7 @@ func TestEnumMatchExhaustive(t *testing.T) {
 }
 
 func TestEnumMatchNonExhaustive(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		enum Shape {
 			Circle(radius: f64)
 			Square(side: f64)
@@ -1361,7 +1361,7 @@ func TestEnumMatchNonExhaustive(t *testing.T) {
 }
 
 func TestEnumMatchWildcardExhaustive(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		enum Shape {
 			Circle(radius: f64)
 			Square(side: f64)
@@ -1377,7 +1377,7 @@ func TestEnumMatchWildcardExhaustive(t *testing.T) {
 }
 
 func TestTypeAlias(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		type StringList = [string]
 		func f() {
 			let names: StringList = ["hello"]
@@ -1387,7 +1387,7 @@ func TestTypeAlias(t *testing.T) {
 }
 
 func TestTypeAliasUnion(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		type Result = i32 | string
 		func f() {
 			let x: Result = 42
@@ -1397,7 +1397,7 @@ func TestTypeAliasUnion(t *testing.T) {
 }
 
 func TestTryOperatorValid(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		import errors from "errors"
 		func divide(a: i32, b: i32) -> (i32, error) {
 			if b == 0 {
@@ -1414,7 +1414,7 @@ func TestTryOperatorValid(t *testing.T) {
 }
 
 func TestTryOperatorNotErrorReturn(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		import errors from "errors"
 		func divide(a: i32, b: i32) -> (i32, error) {
 			return (a / b, nil)
@@ -1428,7 +1428,7 @@ func TestTryOperatorNotErrorReturn(t *testing.T) {
 }
 
 func TestTryOperatorNonTupleOperand(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		func f() -> (i32, error) {
 			let x: i32 = 42
 			let y = x?
@@ -1439,7 +1439,7 @@ func TestTryOperatorNonTupleOperand(t *testing.T) {
 }
 
 func TestTryOperatorExprStmt(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		import errors from "errors"
 		func side_effect() -> (i32, error) {
 			return (0, nil)
@@ -1454,7 +1454,7 @@ func TestTryOperatorExprStmt(t *testing.T) {
 
 
 func TestUserDefinedConstraintSatisfied(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		interface Printable {
 			func to_string(self) -> string
 		}
@@ -1475,7 +1475,7 @@ func TestUserDefinedConstraintSatisfied(t *testing.T) {
 }
 
 func TestUserDefinedConstraintViolated(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
 		interface Printable {
 			func to_string(self) -> string
 		}
@@ -1496,10 +1496,10 @@ func TestUserDefinedConstraintViolated(t *testing.T) {
 
 
 func TestModuleImport(t *testing.T) {
-	// Create a temporary .gk module file
+	// Create a temporary .fg module file
 	dir := t.TempDir()
-	mathFile := dir + "/mathlib.gk"
-	os.WriteFile(mathFile, []byte(`grok mathlib {
+	mathFile := dir + "/mathlib.fg"
+	os.WriteFile(mathFile, []byte(`forge mathlib {
 		pub struct Point {
 			x: i32
 			y: i32
@@ -1513,7 +1513,7 @@ func TestModuleImport(t *testing.T) {
 	}`), 0644)
 
 	// Parse the main file that imports the module
-	mainSrc := `grok main {
+	mainSrc := `forge main {
 		import math from "` + mathFile + `"
 		func test() -> i32 {
 			let result = math.add(1, 2)
@@ -1531,14 +1531,14 @@ func TestModuleImport(t *testing.T) {
 
 func TestModuleImportUndefinedSymbol(t *testing.T) {
 	dir := t.TempDir()
-	mathFile := dir + "/mathlib.gk"
-	os.WriteFile(mathFile, []byte(`grok mathlib {
+	mathFile := dir + "/mathlib.fg"
+	os.WriteFile(mathFile, []byte(`forge mathlib {
 		pub func add(a: i32, b: i32) -> i32 {
 			return a + b
 		}
 	}`), 0644)
 
-	mainSrc := `grok main {
+	mainSrc := `forge main {
 		import math from "` + mathFile + `"
 		func test() -> i32 {
 			return math.nonexistent(1, 2)
@@ -1557,14 +1557,14 @@ func TestModuleImportUndefinedSymbol(t *testing.T) {
 
 func TestModuleImportPrivateNotExported(t *testing.T) {
 	dir := t.TempDir()
-	mathFile := dir + "/mathlib.gk"
-	os.WriteFile(mathFile, []byte(`grok mathlib {
+	mathFile := dir + "/mathlib.fg"
+	os.WriteFile(mathFile, []byte(`forge mathlib {
 		func private_fn() -> i32 {
 			return 42
 		}
 	}`), 0644)
 
-	mainSrc := `grok main {
+	mainSrc := `forge main {
 		import math from "` + mathFile + `"
 		func test() -> i32 {
 			return math.private_fn()
@@ -1583,12 +1583,12 @@ func TestModuleImportPrivateNotExported(t *testing.T) {
 
 func TestModuleImportCycle(t *testing.T) {
 	dir := t.TempDir()
-	aFile := dir + "/a.gk"
-	bFile := dir + "/b.gk"
-	os.WriteFile(aFile, []byte(`grok a {
+	aFile := dir + "/a.fg"
+	bFile := dir + "/b.fg"
+	os.WriteFile(aFile, []byte(`forge a {
 		import b from "`+bFile+`"
 	}`), 0644)
-	os.WriteFile(bFile, []byte(`grok b {
+	os.WriteFile(bFile, []byte(`forge b {
 		import a from "`+aFile+`"
 	}`), 0644)
 
@@ -1611,8 +1611,8 @@ func TestModuleImportCycle(t *testing.T) {
 }
 
 func TestModuleImportFileNotFound(t *testing.T) {
-	mainSrc := `grok main {
-		import math from "/nonexistent/path/math.gk"
+	mainSrc := `forge main {
+		import math from "/nonexistent/path/math.fg"
 		func test() -> i32 {
 			return math.add(1, 2)
 		}
@@ -1629,7 +1629,7 @@ func TestModuleImportFileNotFound(t *testing.T) {
 }
 
 func TestGuardedByAccessInsideLock(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   class Counter() {
     count: i32 guarded_by(mu)
     mu: lock
@@ -1645,7 +1645,7 @@ func TestGuardedByAccessInsideLock(t *testing.T) {
 }
 
 func TestGuardedByAccessOutsideLock(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   class Counter() {
     count: i32 guarded_by(mu)
     mu: lock
@@ -1662,7 +1662,7 @@ func TestGuardedByAccessOutsideLock(t *testing.T) {
 }
 
 func TestGuardedByWrongLock(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   class TwoLocks() {
     data: i32 guarded_by(mu1)
     mu1: lock
@@ -1679,7 +1679,7 @@ func TestGuardedByWrongLock(t *testing.T) {
 }
 
 func TestGuardedByFreeFieldAccess(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   class Mixed() {
     label: string
     count: i32 guarded_by(mu)
@@ -1694,7 +1694,7 @@ func TestGuardedByFreeFieldAccess(t *testing.T) {
 }
 
 func TestGuardedByTopLevelLock(t *testing.T) {
-	c := parseAndCheck(t, `grok test {
+	c := parseAndCheck(t, `forge test {
   class Counter() {
     count: i32 guarded_by(mu)
     mu: lock

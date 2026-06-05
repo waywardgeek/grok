@@ -1,5 +1,5 @@
-// Package ast defines the AST node types for the Grok language.
-// Both .grok (declaration-only) and .gk (full code) files parse into these types.
+// Package ast defines the AST node types for the Forge language.
+// Both .forge (declaration-only) and .fg (full code) files parse into these types.
 package ast
 
 // Pos is a position in source code.
@@ -15,7 +15,7 @@ type Span struct {
 	End   Pos
 }
 
-// TypeExpr represents any type expression in Grok.
+// TypeExpr represents any type expression in Forge.
 type TypeExpr struct {
 	Kind TypeExprKind
 	Data any // one of NamedType, OptionalType, UnionType, SequenceType, MapType, TupleType, FuncType, ChannelType, or nil for Lock/Unit
@@ -138,10 +138,10 @@ type FuncDecl struct {
 	ReceiverType string // non-empty for multi-class interface methods: func T.method(self)
 	TypeParams   []TypeParam
 	Params       []Param
-	ReturnType   *TypeExpr // nil for missing (error in .grok)
+	ReturnType   *TypeExpr // nil for missing (error in .forge)
 	Where        []WhereClause
 	Annotations  Annotations
-	// Body is nil in .grok files, holds the function body in .gk files.
+	// Body is nil in .forge files, holds the function body in .fg files.
 	Body *Block
 	Span Span
 }
@@ -291,8 +291,8 @@ type TypeAliasDecl struct {
 	Span Span
 }
 
-// GrokBlock is the top-level grok { ... } block.
-type GrokBlock struct {
+// ForgeBlock is the top-level forge { ... } block.
+type ForgeBlock struct {
 	Name        string
 	Why         string
 	Imports     []ImportDecl
@@ -320,7 +320,7 @@ type Comment struct {
 // File is the top-level AST node.
 type File struct {
 	Filename string
-	Blocks   []GrokBlock
+	Blocks   []ForgeBlock
 	Comments []Comment // all comments in the file, ordered by position
 	Span     Span
 }

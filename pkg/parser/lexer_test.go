@@ -5,11 +5,11 @@ import (
 )
 
 func TestLexerKeywords(t *testing.T) {
-	input := "grok func class struct enum interface relation import implements where owns refs mut self"
-	lex := NewLexer(input, "test.grok")
+	input := "forge func class struct enum interface relation import implements where owns refs mut self"
+	lex := NewLexer(input, "test.forge")
 
 	expected := []TokenKind{
-		TGrok, TFunc, TClass, TStruct, TEnum, TInterface,
+		TForge, TFunc, TClass, TStruct, TEnum, TInterface,
 		TRelation, TImport, TImplements, TWhere, TOwns, TRefs, TMut, TSelf,
 		TEOF,
 	}
@@ -24,7 +24,7 @@ func TestLexerKeywords(t *testing.T) {
 
 func TestLexerAnnotations(t *testing.T) {
 	input := "concurrent requires ensures raises requires_lock excludes_lock guarded_by spawns pure source fake verified_at"
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	expected := []TokenKind{
 		TConcurrent, TRequires, TEnsures, TRaises,
@@ -43,7 +43,7 @@ func TestLexerAnnotations(t *testing.T) {
 
 func TestLexerPunctuation(t *testing.T) {
 	input := "( ) { } [ ] , : . | ? < > -> =>"
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	expected := []TokenKind{
 		TLParen, TRParen, TLBrace, TRBrace, TLBracket, TRBracket,
@@ -61,7 +61,7 @@ func TestLexerPunctuation(t *testing.T) {
 
 func TestLexerStrings(t *testing.T) {
 	input := `"hello" "with \"escape\""`
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	tok := lex.Next()
 	if tok.Kind != TStringLit || tok.Text != "hello" {
@@ -79,7 +79,7 @@ func TestLexerTripleString(t *testing.T) {
   This is a triple-quoted string.
   It spans multiple lines.
 """`
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	tok := lex.Next() // doc
 	if tok.Kind != TDoc {
@@ -107,7 +107,7 @@ func TestLexerTripleString(t *testing.T) {
 
 func TestLexerNumbers(t *testing.T) {
 	input := "42 3.14 1_000_000"
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	tok := lex.Next()
 	if tok.Kind != TIntLit || tok.Text != "42" {
@@ -128,7 +128,7 @@ func TestLexerNumbers(t *testing.T) {
 func TestLexerComments(t *testing.T) {
 	input := `func foo // this is a comment
 class bar`
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	tok := lex.Next()
 	if tok.Kind != TFunc {
@@ -153,7 +153,7 @@ class bar`
 
 func TestLexerPositions(t *testing.T) {
 	input := "func\nclass"
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	tok := lex.Next()
 	if tok.Span.Start.Line != 1 || tok.Span.Start.Column != 1 {
@@ -170,7 +170,7 @@ func TestLexerPositions(t *testing.T) {
 
 func TestLexerPeek(t *testing.T) {
 	input := "func class"
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	peeked := lex.Peek()
 	if peeked.Kind != TFunc {
@@ -196,9 +196,9 @@ func TestLexerPeek(t *testing.T) {
 	}
 }
 
-func TestLexerGrokSnippet(t *testing.T) {
-	input := `grok Parser {
-  why: "PEG parser for .grok files."
+func TestLexerForgeSnippet(t *testing.T) {
+	input := `forge Parser {
+  why: "PEG parser for .forge files."
 
   struct Pos {
     file: string
@@ -208,7 +208,7 @@ func TestLexerGrokSnippet(t *testing.T) {
   func parse(mut self) -> (File, error)
     raises: ParseError
 }`
-	lex := NewLexer(input, "test.grok")
+	lex := NewLexer(input, "test.forge")
 
 	// Just verify it tokenizes without panicking and produces the expected stream
 	var tokens []Token
@@ -220,9 +220,9 @@ func TestLexerGrokSnippet(t *testing.T) {
 		}
 	}
 
-	// Verify first few tokens: grok Ident LBrace
-	if tokens[0].Kind != TGrok {
-		t.Errorf("expected grok, got %v", tokenNames[tokens[0].Kind])
+	// Verify first few tokens: forge Ident LBrace
+	if tokens[0].Kind != TForge {
+		t.Errorf("expected forge, got %v", tokenNames[tokens[0].Kind])
 	}
 	if tokens[1].Kind != TIdent || tokens[1].Text != "Parser" {
 		t.Errorf("expected ident Parser, got %v %q", tokenNames[tokens[1].Kind], tokens[1].Text)

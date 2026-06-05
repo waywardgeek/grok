@@ -25,11 +25,11 @@ func findProjectRoot(t *testing.T) string {
 	}
 }
 
-func TestVerifyParserGrok(t *testing.T) {
+func TestVerifyParserForge(t *testing.T) {
 	dir := findProjectRoot(t)
 
-	grokFile := filepath.Join(dir, "pkg", "parser", "parser.grok")
-	result, err := Verify(grokFile)
+	forgeFile := filepath.Join(dir, "pkg", "parser", "parser.forge")
+	result, err := Verify(forgeFile)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -46,10 +46,10 @@ func TestVerifyParserGrok(t *testing.T) {
 	}
 }
 
-func TestVerifyAstGrok(t *testing.T) {
+func TestVerifyAstForge(t *testing.T) {
 	dir := findProjectRoot(t)
-	grokFile := filepath.Join(dir, "pkg", "ast", "ast.grok")
-	result, err := Verify(grokFile)
+	forgeFile := filepath.Join(dir, "pkg", "ast", "ast.forge")
+	result, err := Verify(forgeFile)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestVerifyAstGrok(t *testing.T) {
 }
 
 func TestTypeDriftDetected(t *testing.T) {
-	// Create a temporary Go file and .grok file with deliberate type mismatches
+	// Create a temporary Go file and .forge file with deliberate type mismatches
 	dir := t.TempDir()
 
 	// Write a Go source file
@@ -88,8 +88,8 @@ func NewWidget(name string, count int) *Widget {
 		t.Fatal(err)
 	}
 
-	// Write a .grok file with deliberate drift
-	grokSrc := `grok Example {
+	// Write a .forge file with deliberate drift
+	forgeSrc := `forge Example {
   struct Widget {
     name:    string
     count:   string
@@ -103,12 +103,12 @@ func NewWidget(name string, count int) *Widget {
   source: ["widget.go"]
 }
 `
-	grokFile := filepath.Join(dir, "example.grok")
-	if err := os.WriteFile(grokFile, []byte(grokSrc), 0644); err != nil {
+	forgeFile := filepath.Join(dir, "example.forge")
+	if err := os.WriteFile(forgeFile, []byte(forgeSrc), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := Verify(grokFile)
+	result, err := Verify(forgeFile)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestSnakeToPascal(t *testing.T) {
 		{"type_params", "TypeParams"},
 		{"is_many", "IsMany"},
 		{"return_type", "ReturnType"},
-		{"parse_grok_block", "ParseGrokBlock"},
+		{"parse_forge_block", "ParseForgeBlock"},
 	}
 	for _, tt := range tests {
 		got := snakeToPascal(tt.in)
@@ -195,8 +195,8 @@ func helper() {}
 		t.Fatal(err)
 	}
 
-	// .grok only documents Widget — Config and ParseConfig are missing
-	grokSrc := `grok Example {
+	// .forge only documents Widget — Config and ParseConfig are missing
+	forgeSrc := `forge Example {
   struct Widget {
     Name: string
   }
@@ -206,12 +206,12 @@ func helper() {}
   source: ["example.go"]
 }
 `
-	grokFile := filepath.Join(dir, "example.grok")
-	if err := os.WriteFile(grokFile, []byte(grokSrc), 0644); err != nil {
+	forgeFile := filepath.Join(dir, "example.forge")
+	if err := os.WriteFile(forgeFile, []byte(forgeSrc), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := Verify(grokFile)
+	result, err := Verify(forgeFile)
 	if err != nil {
 		t.Fatalf("Verify failed: %v", err)
 	}

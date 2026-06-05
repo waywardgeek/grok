@@ -3,14 +3,14 @@ package parser
 import (
 	"testing"
 
-	"github.com/waywardgeek/grok/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/ast"
 )
 
-// Helper to parse a function body from a .gk-style grok block.
+// Helper to parse a function body from a .fg-style forge block.
 func parseFuncBody(t *testing.T, source string) *ast.FuncDecl {
 	t.Helper()
-	// Wrap in a grok block with a function
-	wrapped := "grok test {\n" + source + "\n}"
+	// Wrap in a forge block with a function
+	wrapped := "forge test {\n" + source + "\n}"
 	file, err := ParseString(wrapped)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -367,9 +367,9 @@ func TestWildcardPattern(t *testing.T) {
 	}
 }
 
-// Verify that existing .grok parsing still works fine with the new keywords.
-func TestExistingGrokStillWorks(t *testing.T) {
-	source := `grok Example {
+// Verify that existing .forge parsing still works fine with the new keywords.
+func TestExistingForgeStillWorks(t *testing.T) {
+	source := `forge Example {
 		struct Point {
 			x: f64
 			y: f64
@@ -385,7 +385,7 @@ func TestExistingGrokStillWorks(t *testing.T) {
 	}
 	fn := file.Blocks[0].Functions[0]
 	if fn.Body != nil {
-		t.Error("expected nil body for .grok func")
+		t.Error("expected nil body for .forge func")
 	}
 }
 

@@ -504,7 +504,7 @@ func rewriteAppendReassign(stmts []LStmt) []LStmt {
 // ---------------------------------------------------------------------------
 // Pass 3: For-range index type coercion
 // ---------------------------------------------------------------------------
-// In Go, for-range index is `int`. Grok uses i32 by default.
+// In Go, for-range index is `int`. Forge uses i32 by default.
 // When the index variable is used with i32 context, insert a cast.
 // For now: if a For stmt has an IndexVar and the body uses it in
 // expressions with int32 types, we insert a shadow variable.

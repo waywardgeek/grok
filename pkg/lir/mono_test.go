@@ -7,19 +7,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/waywardgeek/grok/pkg/checker"
-	"github.com/waywardgeek/grok/pkg/parser"
+	"github.com/waywardgeek/forge/pkg/checker"
+	"github.com/waywardgeek/forge/pkg/parser"
 )
 
-// genericFiles are the .gk files that use generics and exercise monomorphization.
+// genericFiles are the .fg files that use generics and exercise monomorphization.
 var genericFiles = []string{
-	"generics.gk",
-	"classes.gk",
-	"collections.gk",
-	"inference.gk",
-	"lambdas.gk",
-	"where_clause.gk",
-	"user_constraint.gk",
+	"generics.fg",
+	"classes.fg",
+	"collections.fg",
+	"inference.fg",
+	"lambdas.fg",
+	"where_clause.fg",
+	"user_constraint.fg",
 }
 
 
@@ -36,7 +36,7 @@ func TestMonomorphizeCompiles(t *testing.T) {
 				t.Skipf("can't read: %v", err)
 			}
 
-			pkgName := strings.TrimSuffix(name, ".gk")
+			pkgName := strings.TrimSuffix(name, ".fg")
 			goSrc := monoPipeline(t, string(data), pkgName)
 			if goSrc == "" {
 				t.Fatal("empty output")
@@ -76,7 +76,7 @@ func TestMonomorphizeOutputMatches(t *testing.T) {
 				t.Skipf("can't read: %v", err)
 			}
 
-			pkgName := strings.TrimSuffix(name, ".gk")
+			pkgName := strings.TrimSuffix(name, ".fg")
 			source := string(data)
 
 			// Run without monomorphization
@@ -111,7 +111,7 @@ func TestMonomorphizeAllFiles(t *testing.T) {
 
 	passed, failed := 0, 0
 	for _, e := range entries {
-		if !strings.HasSuffix(e.Name(), ".gk") {
+		if !strings.HasSuffix(e.Name(), ".fg") {
 			continue
 		}
 		t.Run(e.Name(), func(t *testing.T) {
@@ -128,7 +128,7 @@ func TestMonomorphizeAllFiles(t *testing.T) {
 				}
 			}()
 
-			pkgName := strings.TrimSuffix(e.Name(), ".gk")
+			pkgName := strings.TrimSuffix(e.Name(), ".fg")
 			result := monoPipeline(t, string(data), pkgName)
 			if result == "" {
 				t.Error("empty output")

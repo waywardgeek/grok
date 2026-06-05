@@ -3,13 +3,13 @@ package lir
 import (
 	"testing"
 
-	"github.com/waywardgeek/grok/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/ast"
 )
 
 func TestLowerEmptyProgram(t *testing.T) {
 	l := NewLowerer()
 	file := &ast.File{
-		Blocks: []ast.GrokBlock{{Name: "main"}},
+		Blocks: []ast.ForgeBlock{{Name: "main"}},
 	}
 	prog := l.Lower(file)
 	if prog.Package != "main" {
@@ -23,7 +23,7 @@ func TestLowerEmptyProgram(t *testing.T) {
 func TestLowerStructDecl(t *testing.T) {
 	l := NewLowerer()
 	file := &ast.File{
-		Blocks: []ast.GrokBlock{{
+		Blocks: []ast.ForgeBlock{{
 			Name: "test",
 			Structs: []ast.StructDecl{{
 				Name:     "Point",
@@ -57,7 +57,7 @@ func TestLowerStructDecl(t *testing.T) {
 func TestLowerEnumDecl(t *testing.T) {
 	l := NewLowerer()
 	file := &ast.File{
-		Blocks: []ast.GrokBlock{{
+		Blocks: []ast.ForgeBlock{{
 			Name: "test",
 			Enums: []ast.EnumDecl{{
 				Name:     "Color",
@@ -86,7 +86,7 @@ func TestLowerEnumDecl(t *testing.T) {
 func TestLowerSimpleFunction(t *testing.T) {
 	l := NewLowerer()
 	file := &ast.File{
-		Blocks: []ast.GrokBlock{{
+		Blocks: []ast.ForgeBlock{{
 			Name: "test",
 			Functions: []ast.FuncDecl{{
 				Name:     "add",
@@ -199,7 +199,7 @@ func TestLowerWhileCondBlock(t *testing.T) {
 	// while x > 0 { ... } should produce CondBlock with temps + CondVar
 	l := NewLowerer()
 	file := &ast.File{
-		Blocks: []ast.GrokBlock{{
+		Blocks: []ast.ForgeBlock{{
 			Name: "test",
 			Functions: []ast.FuncDecl{{
 				Name: "loop",
@@ -311,7 +311,7 @@ func TestLowerErrorResultTuple(t *testing.T) {
 func TestLowerIfElse(t *testing.T) {
 	l := NewLowerer()
 	file := &ast.File{
-		Blocks: []ast.GrokBlock{{
+		Blocks: []ast.ForgeBlock{{
 			Name: "test",
 			Functions: []ast.FuncDecl{{
 				Name: "decide",
@@ -355,7 +355,7 @@ func TestLowerIfElse(t *testing.T) {
 func TestLowerUnitVariant(t *testing.T) {
 	l := NewLowerer()
 	file := &ast.File{
-		Blocks: []ast.GrokBlock{{
+		Blocks: []ast.ForgeBlock{{
 			Name: "test",
 			Enums: []ast.EnumDecl{{
 				Name: "Color",

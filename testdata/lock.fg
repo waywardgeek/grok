@@ -1,0 +1,33 @@
+// lock.fg — lock statement (mutex scoping)
+
+forge lock_demo {
+  import sync from "sync"
+
+  func main() {
+    let mut mu = sync.Mutex{}
+    let mut count: i32 = 0
+    let done = make_channel<bool>()
+
+    // Spawn multiple goroutines that increment under lock
+    let mut i: i32 = 0
+    while i < 5 {
+      spawn {
+        lock(mu) {
+          count = count + 1
+          println(f"count is now: {count}")
+        }
+        done.send(true)
+      }
+      i = i + 1
+    }
+
+    // Wait for all
+    let mut j: i32 = 0
+    while j < 5 {
+      done.receive()
+      j = j + 1
+    }
+
+    println(f"final count: {count}")
+  }
+}

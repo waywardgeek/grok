@@ -1,5 +1,5 @@
-grok main {
-	import math from "mathlib.gk"
+forge main {
+	import math from "mathlib.fg"
 	import fmt from "fmt"
 
 	pub func main() {

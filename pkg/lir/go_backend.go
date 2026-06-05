@@ -366,7 +366,7 @@ func (g *GoBackend) emitTypeArgs(tas []*LType) {
 	g.writef("]")
 }
 
-// goConstraint maps a Grok constraint name to a Go constraint.
+// goConstraint maps a Forge constraint name to a Go constraint.
 func (g *GoBackend) goConstraint(c string) string {
 	switch c {
 	case "":
@@ -864,7 +864,7 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 		g.writef(" {\n")
 		g.indent++
 		if f.IndexVar != "" {
-			// Cast index to int32 (Grok's default integer type)
+			// Cast index to int32 (Forge's default integer type)
 			g.writeIndent()
 			g.writef("%s := int32(_idx_%s)\n", f.IndexVar, f.IndexVar)
 		}

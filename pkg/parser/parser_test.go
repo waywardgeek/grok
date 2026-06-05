@@ -4,11 +4,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/waywardgeek/grok/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/ast"
 )
 
-func TestParseMinimalGrok(t *testing.T) {
-	input := `grok Foo {
+func TestParseMinimalForge(t *testing.T) {
+	input := `forge Foo {
   why: "A test module."
 }`
 	file, err := ParseString(input)
@@ -27,7 +27,7 @@ func TestParseMinimalGrok(t *testing.T) {
 }
 
 func TestParseStruct(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   struct Point {
     x: f64
     y: f64
@@ -50,7 +50,7 @@ func TestParseStruct(t *testing.T) {
 }
 
 func TestParseEnum(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   enum Direction { North South East West }
   enum Shape {
     Circle(radius: f64)
@@ -78,7 +78,7 @@ func TestParseEnum(t *testing.T) {
 }
 
 func TestParseInterface(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   interface Writer {
     func write(mut self, data: [u8]) -> (u64, error)
     func close(mut self) -> unit
@@ -101,7 +101,7 @@ func TestParseInterface(t *testing.T) {
 }
 
 func TestParseMultiClassInterface(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   interface Graph<G, N, E> {
     func G.nodes(self) -> [N]
     func G.edges(self) -> [E]
@@ -139,7 +139,7 @@ func TestParseMultiClassInterface(t *testing.T) {
 }
 
 func TestParseImplBlock(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   impl Graph<MyGraph, MyNode, MyEdge> {
     G.nodes = MyGraph.components
     G.edges = MyGraph.wires
@@ -172,7 +172,7 @@ func TestParseImplBlock(t *testing.T) {
 }
 
 func TestParseImplBlockFieldBinding(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   impl DoublyLinked<Folder, File> {
     P.first <-> Folder.firstFile
     P.last <-> Folder.lastFile
@@ -197,7 +197,7 @@ func TestParseImplBlockFieldBinding(t *testing.T) {
 }
 
 func TestParseImplBlockNamedLabel(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   impl Hashed<UserStore, User, string> as byEmail {
     P.lookup = UserStore.findByEmail
   }
@@ -213,7 +213,7 @@ func TestParseImplBlockNamedLabel(t *testing.T) {
 }
 
 func TestParseBareRelationalConstraint(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   func min_cut<G, N, E>(graph: G) -> i32
     where Graph<G, N, E>, E: Weighted
   {
@@ -241,7 +241,7 @@ func TestParseBareRelationalConstraint(t *testing.T) {
 }
 
 func TestParseClass(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   class HttpClient(base_url: string, timeout: u32) {
     why: "Manages HTTP connections."
 
@@ -290,7 +290,7 @@ func TestParseClass(t *testing.T) {
 }
 
 func TestParseRelation(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   relation DoublyLinked Node:outEdges owns [Edge:fromNode]
   relation Agent refs Config
 }`
@@ -328,7 +328,7 @@ func TestParseRelation(t *testing.T) {
 }
 
 func TestParseDoc(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   doc "Architecture": """
     This is the architecture.
     It spans lines.
@@ -347,7 +347,7 @@ func TestParseDoc(t *testing.T) {
 }
 
 func TestParseInvariant(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   invariant: "count never exceeds max"
     verified_at: "a3f9c12"
 }`
@@ -368,7 +368,7 @@ func TestParseInvariant(t *testing.T) {
 }
 
 func TestParseSource(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   source: ["pkg/foo.go", "pkg/bar.go"]
   fake: "pkg/fake_foo.go"
 }`
@@ -385,8 +385,8 @@ func TestParseSource(t *testing.T) {
 }
 
 func TestParseImport(t *testing.T) {
-	input := `grok Test {
-  import database from "database.grok"
+	input := `forge Test {
+  import database from "database.forge"
 }`
 	file, err := ParseString(input)
 	if err != nil {
@@ -395,13 +395,13 @@ func TestParseImport(t *testing.T) {
 	if len(file.Blocks[0].Imports) != 1 {
 		t.Fatalf("expected 1 import, got %d", len(file.Blocks[0].Imports))
 	}
-	if file.Blocks[0].Imports[0].Alias != "database" || file.Blocks[0].Imports[0].Path != "database.grok" {
+	if file.Blocks[0].Imports[0].Alias != "database" || file.Blocks[0].Imports[0].Path != "database.forge" {
 		t.Errorf("unexpected import: %+v", file.Blocks[0].Imports[0])
 	}
 }
 
 func TestParseGenericClass(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   class MutableStack<T>() {
     items: [T] guarded_by(mu)
     mu: lock
@@ -436,7 +436,7 @@ func TestParseGenericClass(t *testing.T) {
 }
 
 func TestParseWhereClause(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   func factorial(n: T) -> T
     where T: Integer
     requires: n >= 0
@@ -458,7 +458,7 @@ func TestParseWhereClause(t *testing.T) {
 }
 
 func TestParseClassImplements(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   class MemBuf() implements Reader, Writer {
     data: [u8] guarded_by(mu)
     mu: lock
@@ -475,7 +475,7 @@ func TestParseClassImplements(t *testing.T) {
 }
 
 func TestParsePureFunc(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   func transform(xs: [T], f: T -> U) -> [U]
     pure:
 }`
@@ -489,18 +489,18 @@ func TestParsePureFunc(t *testing.T) {
 	}
 }
 
-// TestParseOwnGrokFile parses grok/parser.grok — the parser's own understanding.
-func TestParseOwnGrokFile(t *testing.T) {
-	data, err := os.ReadFile("../../grok/parser.grok")
+// TestParseOwnForgeFile parses forge/parser.forge — the parser's own understanding.
+func TestParseOwnForgeFile(t *testing.T) {
+	data, err := os.ReadFile("../../forge/parser.forge")
 	if err != nil {
 		t.Skipf("skipping: %v", err)
 	}
-	file, err := ParseFile(string(data), "parser.grok")
+	file, err := ParseFile(string(data), "parser.forge")
 	if err != nil {
-		t.Fatalf("failed to parse own grok file: %v", err)
+		t.Fatalf("failed to parse own forge file: %v", err)
 	}
 	if len(file.Blocks) != 1 {
-		t.Fatalf("expected 1 grok block, got %d", len(file.Blocks))
+		t.Fatalf("expected 1 forge block, got %d", len(file.Blocks))
 	}
 	block := file.Blocks[0]
 	if block.Name != "Parser" {
@@ -526,7 +526,7 @@ func TestParseOwnGrokFile(t *testing.T) {
 
 func TestLexFString(t *testing.T) {
 	input := `f"hello {name}!"`
-	lex := NewLexer(input, "test.gk")
+	lex := NewLexer(input, "test.fg")
 	tok := lex.Next()
 	if tok.Kind != TFStringLit {
 		t.Fatalf("expected TFStringLit, got %v", tokenNames[tok.Kind])
@@ -537,7 +537,7 @@ func TestLexFString(t *testing.T) {
 }
 
 func TestParseFString(t *testing.T) {
-	input := `grok test {
+	input := `forge test {
   func main() {
     let x = f"hello {name}!"
   }
@@ -554,7 +554,7 @@ func TestParseFString(t *testing.T) {
 
 
 func TestParseCastExpr(t *testing.T) {
-	input := `grok test {
+	input := `forge test {
   func f() {
     let x = <i64>42
     let y = <int>x
@@ -587,7 +587,7 @@ func TestParseCastExpr(t *testing.T) {
 }
 
 func TestParseFuncTypeParams(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   func identity<T>(x: T) -> T
   func clamp<T: Comparable>(value: T, lo: T, hi: T) -> T
   func transform<T, U>(xs: [T], f: T -> U) -> [U]
@@ -630,7 +630,7 @@ func TestParseFuncTypeParams(t *testing.T) {
 }
 
 func TestParseFnTypeSyntax(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   func apply(f: fn(i32) -> string, x: i32) -> string
   func combine(f: fn(i32, i32) -> i32) -> i32
 }`
@@ -662,7 +662,7 @@ func TestParseFnTypeSyntax(t *testing.T) {
 }
 
 func TestParseGenericCallSite(t *testing.T) {
-	input := `grok Test {
+	input := `forge Test {
   func identity<T>(x: T) -> T {
     return x
   }
@@ -698,7 +698,7 @@ func TestParseGenericCallSite(t *testing.T) {
 }
 
 func TestParseUnwrapExpr(t *testing.T) {
-	input := `grok test {
+	input := `forge test {
   func f(x: i32?) {
     let y = x!
   }
@@ -722,7 +722,7 @@ func TestParseUnwrapExpr(t *testing.T) {
 }
 
 func TestParseTypeAlias(t *testing.T) {
-	input := `grok test {
+	input := `forge test {
 		type StringList = [string]
 	}`
 	file, err := ParseString(input)

@@ -1,22 +1,22 @@
-# Grok
+# Forge
 
 A typed language for design and implementation — describe your architecture, verify it hasn't drifted, compile it to Go.
 
-**Repository:** [github.com/waywardgeek/grok](https://github.com/waywardgeek/grok)
+**Repository:** [github.com/waywardgeek/forge](https://github.com/waywardgeek/forge)
 
-## What is Grok?
+## What is Forge?
 
-Grok has two modes:
+Forge has two modes:
 
-**`.grok` files — understandings.** Declaration-only design artifacts: data structures, APIs, interfaces, annotations, doc blocks, invariants, ownership relations. No function bodies. The AI writes them after implementation; the human reviews them. A structural verifier checks they haven't drifted from the source. This is the core of [Grok-Driven Development (GDD)](https://coderhapsody.ai/docs/grok-driven-development).
+**`.forge` files — understandings.** Declaration-only design artifacts: data structures, APIs, interfaces, annotations, doc blocks, invariants, ownership relations. No function bodies. The AI writes them after implementation; the human reviews them. A structural verifier checks they haven't drifted from the source. This is the core of [Forge-Driven Development (GDD)](https://coderhapsody.ai/docs/forge-driven-development).
 
-**`.gk` files — code.** Full Grok with function bodies and executable semantics. Compiles to Go. An existence proof that the language design is sound: if the notation is precise enough to verify against real implementations, function bodies are all that's missing to make it a real language.
+**`.fg` files — code.** Full Forge with function bodies and executable semantics. Compiles to Go. An existence proof that the language design is sound: if the notation is precise enough to verify against real implementations, function bodies are all that's missing to make it a real language.
 
 ## Why?
 
-The real bottleneck in AI-assisted software development is **human review**, not code generation. As AI generates code faster, reviewers drown in PRs. A `.grok` file contains *only* the decisions that matter — data structures, API boundaries, type relationships, concurrency contracts — at 5-10x the information density of source code. The reviewer validates architecture, not syntax. The verifier confirms the source matches.
+The real bottleneck in AI-assisted software development is **human review**, not code generation. As AI generates code faster, reviewers drown in PRs. A `.forge` file contains *only* the decisions that matter — data structures, API boundaries, type relationships, concurrency contracts — at 5-10x the information density of source code. The reviewer validates architecture, not syntax. The verifier confirms the source matches.
 
-See [Grok-Driven Development](https://coderhapsody.ai/docs/grok-driven-development) for the full methodology.
+See [Forge-Driven Development](https://coderhapsody.ai/docs/forge-driven-development) for the full methodology.
 
 ---
 
@@ -27,38 +27,38 @@ See [Grok-Driven Development](https://coderhapsody.ai/docs/grok-driven-developme
 Build the unified CLI from source:
 
 ```bash
-git clone https://github.com/waywardgeek/grok.git
-cd grok
-go build -o grok ./cmd/grok/
+git clone https://github.com/waywardgeek/forge.git
+cd forge
+go build -o forge ./cmd/forge/
 # Optionally move to your PATH:
-# mv grok /usr/local/bin/
+# mv forge /usr/local/bin/
 ```
 
 Or install individual tools:
 
 ```bash
-go install github.com/waywardgeek/grok/cmd/grok-verify@latest
-go install github.com/waywardgeek/grok/cmd/grok-compile@latest
+go install github.com/waywardgeek/forge/cmd/forge-verify@latest
+go install github.com/waywardgeek/forge/cmd/forge-compile@latest
 ```
 
-### Verify a `.grok` file
+### Verify a `.forge` file
 
 ```bash
-$ grok verify pkg/parser/parser.grok
+$ forge verify pkg/parser/parser.forge
 0 errors, 0 warnings
 ```
 
 If the code drifts:
 
 ```
-[ERROR] parser.grok ↔ parser.go: function ParseString: param count mismatch: .grok=2, Go=1
-[WARNING] parser.grok ↔ parser.go: exported type Config not documented in .grok
+[ERROR] parser.forge ↔ parser.go: function ParseString: param count mismatch: .forge=2, Go=1
+[WARNING] parser.forge ↔ parser.go: exported type Config not documented in .forge
 ```
 
-### Compile a `.gk` file
+### Compile a `.fg` file
 
 ```bash
-$ grok compile testdata/demo.gk
+$ forge compile testdata/demo.fg
 wrote demo.go
 $ go run demo.go
 Task Manager Demo
@@ -66,24 +66,24 @@ Added: Buy groceries (priority 2)
 ...
 ```
 
-### Generate a `.grok` file from Go source
+### Generate a `.forge` file from Go source
 
 ```bash
-$ grok gen pkg/ast/        # scaffolds ast.grok from Go source
-$ grok update ast.grok     # auto-adds missing exported symbols
-$ grok fmt ast.grok        # formats to canonical style
+$ forge gen pkg/ast/        # scaffolds ast.forge from Go source
+$ forge update ast.forge     # auto-adds missing exported symbols
+$ forge fmt ast.forge        # formats to canonical style
 ```
 
 ---
 
 ## The Compiler
 
-The `.gk` compiler is a full-stack transpiler: parser → type checker → Go code generator.
+The `.fg` compiler is a full-stack transpiler: parser → type checker → Go code generator.
 
 ```
-// demo.gk
+// demo.fg
 
-grok task_demo {
+forge task_demo {
   enum Priority { Low Medium High Critical }
 
   struct Task {
@@ -149,7 +149,7 @@ class Counter() {
 
 **Pattern matching:** Enum/union type switches, nested patterns (`Some(Circle(r)) =>`), guard clauses (`x if x > 0 =>`), exhaustiveness warnings, tuple destructuring.
 
-**Other:** Lambdas, f-strings, visibility (`pub`/private), built-in methods on string/list/map/channel, numeric types (i8–i256, u8–u256, f32–f128), type casts, modules (`import X from "file.gk"`), `cascade` (defer).
+**Other:** Lambdas, f-strings, visibility (`pub`/private), built-in methods on string/list/map/channel, numeric types (i8–i256, u8–u256, f32–f128), type casts, modules (`import X from "file.fg"`), `cascade` (defer).
 
 ---
 
@@ -157,40 +157,40 @@ class Counter() {
 
 | Command | Description |
 |---|---|
-| `grok compile file.gk` | Compile `.gk` to `.go` |
-| `grok verify file.grok` | Check `.grok` against Go source for structural drift |
-| `grok update file.grok` | Auto-add missing exported symbols, regenerate function index |
-| `grok update --prune file.grok` | Also remove stale declarations not in Go source |
-| `grok gen pkg/dir/` | Scaffold a new `.grok` file from Go source |
-| `grok fmt file.grok` | Format `.grok` to canonical style |
+| `forge compile file.fg` | Compile `.fg` to `.go` |
+| `forge verify file.forge` | Check `.forge` against Go source for structural drift |
+| `forge update file.forge` | Auto-add missing exported symbols, regenerate function index |
+| `forge update --prune file.forge` | Also remove stale declarations not in Go source |
+| `forge gen pkg/dir/` | Scaffold a new `.forge` file from Go source |
+| `forge fmt file.forge` | Format `.forge` to canonical style |
 
 ---
 
 ## Key Principles
 
-- **`.grok` files live next to the code** they describe (`pkg/ast/ast.grok` alongside `pkg/ast/ast.go`)
+- **`.forge` files live next to the code** they describe (`pkg/ast/ast.forge` alongside `pkg/ast/ast.go`)
 - **Cross-file concepts only** — data structures, APIs, interfaces. Not single-file implementation details.
 - **Adopt the implementation language's conventions** — PascalCase for Go, snake_case for Python
-- **AI writes, human reviews** — implement first, write `.grok` after, human validates architecture
-- **Completeness checking** — the verifier warns about exported Go symbols not documented in `.grok`
-- **Self-referential** — every compiler package has its own `.grok` file, verified by the tool it contains
+- **AI writes, human reviews** — implement first, write `.forge` after, human validates architecture
+- **Completeness checking** — the verifier warns about exported Go symbols not documented in `.forge`
+- **Self-referential** — every compiler package has its own `.forge` file, verified by the tool it contains
 
 ---
 
 ## Project Structure
 
 ```
-cmd/grok/              Unified CLI (compile, verify, update, gen, fmt)
-cmd/grok-compile/      Standalone compiler CLI
-cmd/grok-verify/       Standalone verifier CLI
-cmd/grok-gen/          Standalone scaffolding CLI
-cmd/grok-update/       Standalone update CLI
-pkg/ast/               AST node types + ast.grok
-pkg/parser/            PEG parser for .grok and .gk files + parser.grok
-pkg/checker/           Type checker with inference + checker.grok
-pkg/transpiler/        Go code generator + transpiler.grok
-pkg/verifier/          Structural drift detector + verifier.grok
-testdata/              36 .gk test files (all compile, 33 go-build clean)
+cmd/forge/              Unified CLI (compile, verify, update, gen, fmt)
+cmd/forge-compile/      Standalone compiler CLI
+cmd/forge-verify/       Standalone verifier CLI
+cmd/forge-gen/          Standalone scaffolding CLI
+cmd/forge-update/       Standalone update CLI
+pkg/ast/               AST node types + ast.forge
+pkg/parser/            PEG parser for .forge and .fg files + parser.forge
+pkg/checker/           Type checker with inference + checker.forge
+pkg/transpiler/        Go code generator + transpiler.forge
+pkg/verifier/          Structural drift detector + verifier.forge
+testdata/              36 .fg test files (all compile, 33 go-build clean)
 testdata/modules/      Module system test files
 ```
 
@@ -198,20 +198,20 @@ testdata/modules/      Module system test files
 
 ## Test Status
 
-233 tests across parser, checker, transpiler, and verifier. 36 `.gk` test files all compile; 33 produce Go that passes `go build` (1 known issue: `typealias.gk`). 6 self-referential `.grok` files verify clean (0 errors, 0 warnings).
+233 tests across parser, checker, transpiler, and verifier. 36 `.fg` test files all compile; 33 produce Go that passes `go build` (1 known issue: `typealias.fg`). 6 self-referential `.forge` files verify clean (0 errors, 0 warnings).
 
 ```bash
 $ go test ./...
-ok  github.com/waywardgeek/grok/pkg/checker     0.018s
-ok  github.com/waywardgeek/grok/pkg/parser       0.006s
-ok  github.com/waywardgeek/grok/pkg/transpiler   0.005s
-ok  github.com/waywardgeek/grok/pkg/verifier     0.004s
+ok  github.com/waywardgeek/forge/pkg/checker     0.018s
+ok  github.com/waywardgeek/forge/pkg/parser       0.006s
+ok  github.com/waywardgeek/forge/pkg/transpiler   0.005s
+ok  github.com/waywardgeek/forge/pkg/verifier     0.004s
 ```
 
 ### Known Issues
 
-- `typealias.gk`: optional type alias wrapping generates Go that doesn't build in all cases
-- `features.gk`: `go vet` warns about unreachable code after exhaustive match
+- `typealias.fg`: optional type alias wrapping generates Go that doesn't build in all cases
+- `features.fg`: `go vet` warns about unreachable code after exhaustive match
 - i128/i256 types silently downcast to int64/uint64 (math/big support planned)
 - No LSP server yet (planned)
 
@@ -219,8 +219,8 @@ ok  github.com/waywardgeek/grok/pkg/verifier     0.004s
 
 ## Documentation
 
-- [Grok Language Specification](https://coderhapsody.ai/docs/grok-language) — full type system, syntax, and examples
-- [Grok-Driven Development](https://coderhapsody.ai/docs/grok-driven-development) — the methodology
+- [Forge Language Specification](https://coderhapsody.ai/docs/forge-language) — full type system, syntax, and examples
+- [Forge-Driven Development](https://coderhapsody.ai/docs/forge-driven-development) — the methodology
 
 ---
 
@@ -232,4 +232,4 @@ Apache 2.0 — see [LICENSE](LICENSE).
 
 Bill Cox & [CodeRhapsody](https://coderhapsody.ai)
 
-*"grok" is a 60-year-old word from Heinlein's Stranger in a Strange Land meaning deep, complete understanding. We are reclaiming it.*
+*"forge" is a 60-year-old word from Heinlein's Stranger in a Strange Land meaning deep, complete understanding. We are reclaiming it.*

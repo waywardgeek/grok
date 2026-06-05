@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/waywardgeek/grok/pkg/ast"
-	"github.com/waywardgeek/grok/pkg/checker"
+	"github.com/waywardgeek/forge/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/checker"
 )
 
 // dataAs extracts a value from an any-typed Data field, handling both pointer and value storage.
@@ -184,7 +184,7 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 }
 
 // registerTypes populates variant/class lookup tables before lowering.
-func (l *Lowerer) registerTypes(block *ast.GrokBlock) {
+func (l *Lowerer) registerTypes(block *ast.ForgeBlock) {
 	// Register visibility for all named types
 	for _, e := range block.Enums {
 		l.exported[e.Name] = e.IsPublic
@@ -1411,7 +1411,7 @@ func (l *Lowerer) emitUnionTypeSwitch(ms *ast.MatchStmt, matchVal LValue, result
 			} else {
 				// Fallback: use pattern name as-is
 				ip := dataAs[ast.IdentPattern](arm.Pattern.Data)
-				caseType = l.grokNameToLType(ip.Name)
+				caseType = l.forgeNameToLType(ip.Name)
 			}
 			body := l.lowerArmBody(&arm.Body, result)
 			cases = append(cases, LTypeSwitchCase{
@@ -1426,8 +1426,8 @@ func (l *Lowerer) emitUnionTypeSwitch(ms *ast.MatchStmt, matchVal LValue, result
 	}})
 }
 
-// grokNameToLType converts a Grok type name to an LType (fallback for union patterns).
-func (l *Lowerer) grokNameToLType(name string) *LType {
+// forgeNameToLType converts a Forge type name to an LType (fallback for union patterns).
+func (l *Lowerer) forgeNameToLType(name string) *LType {
 	switch name {
 	case "string":
 		return &LType{Kind: LTyString}
