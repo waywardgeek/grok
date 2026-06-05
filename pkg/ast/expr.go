@@ -207,6 +207,7 @@ const (
 	StmtContinue                 // continue
 	StmtSpawn                    // spawn { ... } (goroutine)
 	StmtSelect                   // select { case ... }
+	StmtYield                    // yield expr
 	StmtLock                     // lock(mu) { ... }
 )
 
@@ -283,6 +284,10 @@ type MatchArm struct {
 
 type SpawnStmt struct {
 	Body Block
+}
+
+type YieldStmt struct {
+	Value *Expr // the expression to yield
 }
 
 type SelectStmt struct {

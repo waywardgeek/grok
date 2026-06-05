@@ -169,6 +169,10 @@ grok AST {
     Elem: TypeExpr
   }
 
+  struct GeneratorType {
+    Elem: TypeExpr
+  }
+
   // ---- Expressions (.gk) ----
   enum ExprKind {
     Ident
@@ -449,6 +453,11 @@ grok AST {
   struct SpawnStmt {
     why: "spawn { body } — launches a goroutine. Transpiles to go func() { body }()."
     Body: Block
+  }
+
+  struct YieldStmt {
+    why: "yield expr — yields a value from a generator function."
+    Value: Expr?
   }
 
   struct SelectStmt {

@@ -296,6 +296,9 @@ func (l *Lowerer) lowerTypeExpr(te *ast.TypeExpr) *LType {
 	case ast.TypeChannel:
 		ct := dataAs[ast.ChannelType](te.Data)
 		return &LType{Kind: LTyChannel, Elem: l.lowerTypeExpr(&ct.Elem)}
+	case ast.TypeGenerator:
+		gt := dataAs[ast.GeneratorType](te.Data)
+		return &LType{Kind: LTyGenerator, Elem: l.lowerTypeExpr(&gt.Elem)}
 	case ast.TypeLock:
 		return &LType{Kind: LTyMutex}
 	case ast.TypeUnit:
@@ -393,6 +396,8 @@ func (l *Lowerer) lowerCheckerType(ct *checker.Type) *LType {
 		return &LType{Kind: LTyOptional, Elem: l.lowerCheckerType(ct.Elem)}
 	case checker.TyChannel:
 		return &LType{Kind: LTyChannel, Elem: l.lowerCheckerType(ct.Elem)}
+	case checker.TyGenerator:
+		return &LType{Kind: LTyGenerator, Elem: l.lowerCheckerType(ct.Elem)}
 	case checker.TyStruct:
 		return &LType{Kind: LTyStruct, Name: ct.Name, IsExported: l.exported[ct.Name]}
 	case checker.TyClass:
@@ -683,6 +688,10 @@ func (l *Lowerer) lowerStmt(stmt *ast.Stmt) {
 			Mutex: mutexVal,
 			Body:  l.lowerBlock(&ls.Body),
 		}})
+	case ast.StmtYield:
+		ys := dataAs[ast.YieldStmt](stmt.Data)
+		val := l.lowerExpr(ys.Value)
+		l.emit(LStmt{Kind: LStmtYield, Data: val})
 	}
 }
 
@@ -882,6 +891,12 @@ func (l *Lowerer) lowerForStmt(stmt *ast.Stmt) {
 	fs := dataAs[ast.ForStmt](stmt.Data)
 	coll := l.lowerExpr(&fs.Collection)
 
+	// Generator: desugar to while loop calling iterator
+	if coll.Type != nil && coll.Type.Kind == LTyGenerator {
+		l.lowerForGenerator(fs, coll)
+		return
+	}
+
 	// Infer element type from collection
 	var varType *LType
 	if coll.Type != nil {
@@ -902,6 +917,32 @@ func (l *Lowerer) lowerForStmt(stmt *ast.Stmt) {
 		VarType:    varType,
 		IndexVar:   fs.IndexVar,
 		Collection: coll,
+		Body:       l.lowerBlock(&fs.Body),
+	}})
+}
+
+// lowerForGenerator desugars `for x in gen_expr` into:
+//
+//	_iter := gen_expr
+//	for {
+//	    _val, _ok := _iter()
+//	    if !_ok { break }
+//	    x := _val
+//	    // body
+//	}
+//
+// In LIR terms, we emit this as a LStmtWhile with the iterator call in the cond block.
+func (l *Lowerer) lowerForGenerator(fs *ast.ForStmt, iterVal LValue) {
+	elemType := iterVal.Type.Elem
+
+	// The generator value IS the iterator closure already.
+	// Emit: for x in iterVal — the Go backend will handle gen types specially.
+	// For now, we lower it as a regular for-in and let the backend handle gen types.
+	l.emit(LStmt{Kind: LStmtFor, Data: &LFor{
+		Var:        fs.Var,
+		VarType:    elemType,
+		IndexVar:   fs.IndexVar,
+		Collection: iterVal,
 		Body:       l.lowerBlock(&fs.Body),
 	}})
 }

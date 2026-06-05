@@ -225,6 +225,8 @@ func (g *GoBackend) goType(t *LType) string {
 		return "map[" + g.goType(t.Key) + "]" + g.goType(t.Elem)
 	case LTyChannel:
 		return "chan " + g.goType(t.Elem)
+	case LTyGenerator:
+		return "func() (" + g.goType(t.Elem) + ", bool)"
 	case LTyMutex:
 		g.autoImport("sync")
 		return "sync.Mutex"
@@ -435,7 +437,35 @@ func (g *GoBackend) emitFuncDecl(f *LFuncDecl) {
 	g.writef(" {\n")
 	g.indent++
 	g.scanFieldWritebacks(f.Body)
-	g.emitStmts(f.Body)
+
+	// Generator function: wrap body in goroutine+channel pattern
+	if f.ReturnType != nil && f.ReturnType.Kind == LTyGenerator {
+		elemType := g.goType(f.ReturnType.Elem)
+		g.writeIndent()
+		g.writef("_ch := make(chan %s)\n", elemType)
+		g.writeIndent()
+		g.writef("go func() {\n")
+		g.indent++
+		g.emitStmts(f.Body)
+		g.writeIndent()
+		g.writef("close(_ch)\n")
+		g.indent--
+		g.writeIndent()
+		g.writef("}()\n")
+		g.writeIndent()
+		g.writef("return func() (%s, bool) {\n", elemType)
+		g.indent++
+		g.writeIndent()
+		g.writef("v, ok := <-_ch\n")
+		g.writeIndent()
+		g.writef("return v, ok\n")
+		g.indent--
+		g.writeIndent()
+		g.writef("}\n")
+	} else {
+		g.emitStmts(f.Body)
+	}
+
 	g.indent--
 	g.writef("}\n\n")
 }
@@ -608,6 +638,27 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 
 	case LStmtFor:
 		f := s.Data.(*LFor)
+		// Generator iteration: for x in gen_expr → call closure repeatedly
+		if f.Collection.Type != nil && f.Collection.Type.Kind == LTyGenerator {
+			g.writeIndent()
+			g.writef("for {\n")
+			g.indent++
+			g.writeIndent()
+			g.writef("%s, _ok := ", f.Var)
+			g.emitValue(&f.Collection)
+			g.writef("()\n")
+			g.writeIndent()
+			g.writef("if !_ok { break }\n")
+			if f.IndexVar != "" {
+				g.writeIndent()
+				g.writef("%s++\n", f.IndexVar)
+			}
+			g.emitStmts(f.Body)
+			g.indent--
+			g.writeIndent()
+			g.writef("}\n")
+			break
+		}
 		g.writeIndent()
 		if f.IndexVar != "" {
 			g.writef("for _idx_%s, %s := range ", f.IndexVar, f.Var)
@@ -752,6 +803,13 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 		g.emitValue(&snd.Channel)
 		g.writef(" <- ")
 		g.emitValue(&snd.Value)
+		g.writef("\n")
+
+	case LStmtYield:
+		val := s.Data.(LValue)
+		g.writeIndent()
+		g.writef("_ch <- ")
+		g.emitValue(&val)
 		g.writef("\n")
 
 	case LStmtSelect:

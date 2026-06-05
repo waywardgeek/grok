@@ -52,6 +52,7 @@ const (
 	TCase      // case
 	TLock      // lock (statement keyword)
 	TPub       // pub (visibility modifier)
+	TYield     // yield
 
 	// Literals
 	TIdent
@@ -160,6 +161,7 @@ var keywords = map[string]TokenKind{
 	"select":     TSelect,
 	"case":       TCase,
 	"lock":       TLock,
+	"yield":      TYield,
 	"pub":        TPub,
 }
 
@@ -202,7 +204,7 @@ var tokenNames = map[TokenKind]string{
 	TLet: "let", TIf: "if", TElse: "else", TFor: "for", TIn: "in",
 	TWhile: "while", TMatch: "match", TReturn: "return",
 	TBreak: "break", TContinue: "continue", TCascadeKw: "cascade",
-	TSpawn: "spawn", TSelect: "select", TCase: "case", TLock: "lock", TPub: "pub",
+	TSpawn: "spawn", TSelect: "select", TCase: "case", TLock: "lock", TPub: "pub", TYield: "yield",
 	TIdent: "ident", TIntLit: "int", TFloatLit: "float",
 	TStringLit: "string", TTripleStringLit: "triple_string", TFStringLit: "fstring",
 	TLParen: "(", TRParen: ")", TLBrace: "{", TRBrace: "}",

@@ -741,6 +741,8 @@ func (p *Parser) parseStmt() (*ast.Stmt, error) {
 		return p.parseSelect()
 	case TLock:
 		return p.parseLock()
+	case TYield:
+		return p.parseYield()
 	case TLBrace:
 		blk, err := p.parseBlock()
 		if err != nil {
@@ -843,6 +845,20 @@ func (p *Parser) parseReturn() (*ast.Stmt, error) {
 	return &ast.Stmt{
 		Kind: ast.StmtReturn,
 		Data: ret,
+		Span: ast.Span{Start: start, End: p.peek().Span.Start},
+	}, nil
+}
+
+func (p *Parser) parseYield() (*ast.Stmt, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'yield'
+	val, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.Stmt{
+		Kind: ast.StmtYield,
+		Data: &ast.YieldStmt{Value: val},
 		Span: ast.Span{Start: start, End: p.peek().Span.Start},
 	}, nil
 }

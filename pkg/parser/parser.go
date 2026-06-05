@@ -1140,6 +1140,19 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 			}, nil
 		}
 
+		// Special case: gen T (generator type)
+		if name.Text == "gen" {
+			elem, err := p.parseBaseType()
+			if err != nil {
+				return nil, err
+			}
+			return &ast.TypeExpr{
+				Kind: ast.TypeGenerator,
+				Data: ast.GeneratorType{Elem: *elem},
+				Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: elem.Span.End},
+			}, nil
+		}
+
 		// Special case: channel<T>
 		if name.Text == "channel" && p.peek().Kind == TLt {
 			p.next() // <

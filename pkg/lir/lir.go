@@ -54,6 +54,7 @@ const (
 	LTySlice                        // dynamic array
 	LTyMap                          // hash table
 	LTyChannel                      // typed channel
+	LTyGenerator                    // generator (yields values lazily)
 	LTyMutex                        // lock type
 	LTyOptional                     // {has_value bool, value T}
 	LTyTaggedUnion                  // {tag enum, union of variant structs}
@@ -389,6 +390,7 @@ const (
 	LStmtLock   // lock(mutex) { body }
 	LStmtSend   // channel <- value
 	LStmtSelect // select { case... }
+	LStmtYield  // yield value (in generators)
 
 	// Optimization-introduced statement kinds
 	LStmtSideEffect  // bare expression statement (no assignment)

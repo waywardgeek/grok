@@ -27,6 +27,7 @@ const (
 	TyFunc                    // T -> U
 	TyOptional                // T?
 	TyChannel                 // channel<T>
+	TyGenerator               // gen T
 	TyStruct                  // named struct type
 	TyClass                   // named class type
 	TyEnum                    // named enum type
@@ -91,6 +92,8 @@ func (t *Type) String() string {
 		return fmt.Sprintf("%s?", t.Elem)
 	case TyChannel:
 		return fmt.Sprintf("channel<%s>", t.Elem)
+	case TyGenerator:
+		return fmt.Sprintf("gen %s", t.Elem)
 	case TyStruct, TyClass, TyEnum, TyInterface:
 		return t.Name
 	case TyTuple:
@@ -171,7 +174,7 @@ func (t *Type) Equal(other *Type) bool {
 		return true
 	case TyStruct, TyClass, TyEnum, TyInterface, TyVar:
 		return t.Name == other.Name
-	case TyList, TyOptional, TyChannel:
+	case TyList, TyOptional, TyChannel, TyGenerator:
 		return t.Elem.Equal(other.Elem)
 	case TyMap:
 		return t.Key.Equal(other.Key) && t.Val.Equal(other.Val)
@@ -566,6 +569,10 @@ func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type {
 		ct := te.Data.(ast.ChannelType)
 		elem := c.resolveTypeExpr(&ct.Elem)
 		return &Type{Kind: TyChannel, Elem: elem}
+	case ast.TypeGenerator:
+		gt := te.Data.(ast.GeneratorType)
+		elem := c.resolveTypeExpr(&gt.Elem)
+		return &Type{Kind: TyGenerator, Elem: elem}
 	default:
 		return TypeUnknown
 	}
@@ -760,6 +767,8 @@ func substituteType(t *Type, subst map[string]*Type) *Type {
 		return &Type{Kind: TyUnion, Variants: variants}
 	case TyChannel:
 		return &Type{Kind: TyChannel, Elem: substituteType(t.Elem, subst)}
+	case TyGenerator:
+		return &Type{Kind: TyGenerator, Elem: substituteType(t.Elem, subst)}
 	default:
 		return t
 	}
@@ -836,6 +845,10 @@ func matchTypeVars(param, arg *Type, subst map[string]*Type) {
 		}
 	case TyChannel:
 		if arg.Kind == TyChannel {
+			matchTypeVars(param.Elem, arg.Elem, subst)
+		}
+	case TyGenerator:
+		if arg.Kind == TyGenerator {
 			matchTypeVars(param.Elem, arg.Elem, subst)
 		}
 	}
@@ -1716,6 +1729,11 @@ func (c *Checker) checkStmt(stmt *ast.Stmt) {
 		if c.loopDepth == 0 {
 			c.error(stmt.Span, "continue outside of loop")
 		}
+	case ast.StmtYield:
+		ys := stmt.Data.(*ast.YieldStmt)
+		if ys.Value != nil {
+			c.checkExpr(ys.Value)
+		}
 	}
 }
 
@@ -1855,6 +1873,8 @@ func (c *Checker) checkFor(stmt *ast.Stmt) {
 	var elemType *Type
 	switch collType.Kind {
 	case TyList:
+		elemType = collType.Elem
+	case TyGenerator:
 		elemType = collType.Elem
 	case TyString:
 		elemType = TypeString // iterate characters as strings

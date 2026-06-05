@@ -5,7 +5,7 @@
 //	grok verify <file.grok> [file.grok...]    Check .grok files against Go source
 //	grok update <file.grok> [file.grok...]    Regenerate function index and dependencies
 //	grok gen <package-dir>                    Scaffold a new .grok file from Go source
-//	grok compile <file.gk> [-o out] [-pkg p] [--lir]  Compile .gk files to Go
+//	grok compile <file.gk> [-o out] [-pkg p] [--mono] [--c]  Compile .gk files
 package main
 
 import (
@@ -18,7 +18,6 @@ import (
 	"github.com/waywardgeek/grok/pkg/checker"
 	"github.com/waywardgeek/grok/pkg/lir"
 	"github.com/waywardgeek/grok/pkg/parser"
-	"github.com/waywardgeek/grok/pkg/transpiler"
 	"github.com/waywardgeek/grok/pkg/verifier"
 )
 
@@ -29,7 +28,7 @@ Commands:
   update   <file.grok> [...]          Regenerate function index and dependencies
   gen      <package-dir>              Scaffold a new .grok file from Go source
   fmt      <file.grok> [...]          Format .grok files
-  compile  <file.gk> [...] [-o out] [--lir] [--mono]   Compile .gk files to Go
+  compile  <file.gk> [...] [-o out] [--mono] [--c]   Compile .gk files
 `
 
 func main() {
@@ -141,7 +140,7 @@ func cmdCompile(args []string) error {
 	output := ""
 	pkg := "main"
 	modPath := ""
-	useLIR := false
+	_ = modPath // reserved for future multi-file module support
 	useMono := false
 	useC := false
 
@@ -162,15 +161,11 @@ func cmdCompile(args []string) error {
 			if i < len(args) {
 				modPath = args[i]
 			}
-		case "--lir":
-			useLIR = true
 		case "--mono":
 			useMono = true
-			useLIR = true // mono requires LIR pipeline
 		case "--c":
 			useC = true
 			useMono = true // C requires monomorphization
-			useLIR = true
 		default:
 			inputs = append(inputs, args[i])
 		}
@@ -218,30 +213,21 @@ func cmdCompile(args []string) error {
 
 	for _, pf := range files {
 		out := pf.output
-		var goSrc string
-
-		if useLIR {
-			lowerer := lir.NewLowerer()
-			prog := lowerer.Lower(pf.file)
-			prog.Package = pkg
-			lir.Optimize(prog)
-			if useMono {
-				lir.Monomorphize(prog)
-			}
-			if useC {
-				goSrc = lir.EmitC(prog)
-			} else {
-				goSrc = lir.EmitGo(prog)
-			}
+		lowerer := lir.NewLowerer()
+		prog := lowerer.Lower(pf.file)
+		prog.Package = pkg
+		lir.Optimize(prog)
+		if useMono {
+			lir.Monomorphize(prog)
+		}
+		var src string
+		if useC {
+			src = lir.EmitC(prog)
 		} else {
-			tr := transpiler.New(pkg)
-			if modPath != "" {
-				tr.SetModulePath(modPath)
-			}
-			goSrc = tr.Transpile(pf.file)
+			src = lir.EmitGo(prog)
 		}
 
-		if err := os.WriteFile(out, []byte(goSrc), 0644); err != nil {
+		if err := os.WriteFile(out, []byte(src), 0644); err != nil {
 			return fmt.Errorf("writing %s: %w", out, err)
 		}
 		fmt.Printf("wrote %s\n", out)

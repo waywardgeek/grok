@@ -33,6 +33,7 @@ const (
 	TypeTuple                        // (T, U) or (x: T, y: U)
 	TypeFunc                         // T -> U
 	TypeChannel                      // channel<T>
+	TypeGenerator                    // gen T
 	TypeLock                         // lock
 	TypeUnit                         // unit
 )
@@ -83,6 +84,11 @@ type FuncType struct {
 
 // ChannelType holds the element type for channel<T>.
 type ChannelType struct {
+	Elem TypeExpr
+}
+
+// GeneratorType holds the element type for gen T.
+type GeneratorType struct {
 	Elem TypeExpr
 }
 
