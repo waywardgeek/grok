@@ -236,8 +236,9 @@ type LSliceData struct {
 }
 
 type LCallData struct {
-	Func string
-	Args []LValue
+	Func       string
+	Args       []LValue
+	IsExported bool
 }
 
 type LBuiltinData struct {

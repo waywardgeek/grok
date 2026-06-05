@@ -303,7 +303,11 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 		vd := s.Data.(*LVarDecl)
 		g.writeIndent()
 		if vd.Init != nil {
-			g.writef("%s := ", vd.Name)
+			if vd.Name == "_" {
+				g.writef("_ = ")
+			} else {
+				g.writef("%s := ", vd.Name)
+			}
 			g.emitValue(vd.Init)
 		} else {
 			g.writef("var %s %s", vd.Name, g.goType(vd.Type))
@@ -693,7 +697,7 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 
 	case LExprCall:
 		d := e.Data.(*LCallData)
-		g.writef("%s(", d.Func)
+		g.writef("%s(", g.visName(d.Func, d.IsExported))
 		for i, arg := range d.Args {
 			if i > 0 {
 				g.writef(", ")

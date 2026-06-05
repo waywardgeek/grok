@@ -5,7 +5,7 @@
 //	grok verify <file.grok> [file.grok...]    Check .grok files against Go source
 //	grok update <file.grok> [file.grok...]    Regenerate function index and dependencies
 //	grok gen <package-dir>                    Scaffold a new .grok file from Go source
-//	grok compile <file.gk> [-o out] [-pkg p]  Compile .gk files to Go
+//	grok compile <file.gk> [-o out] [-pkg p] [--lir]  Compile .gk files to Go
 package main
 
 import (
@@ -16,6 +16,7 @@ import (
 
 	"github.com/waywardgeek/grok/pkg/ast"
 	"github.com/waywardgeek/grok/pkg/checker"
+	"github.com/waywardgeek/grok/pkg/lir"
 	"github.com/waywardgeek/grok/pkg/parser"
 	"github.com/waywardgeek/grok/pkg/transpiler"
 	"github.com/waywardgeek/grok/pkg/verifier"
@@ -28,7 +29,7 @@ Commands:
   update   <file.grok> [...]          Regenerate function index and dependencies
   gen      <package-dir>              Scaffold a new .grok file from Go source
   fmt      <file.grok> [...]          Format .grok files
-  compile  <file.gk> [...] [-o out]   Compile .gk files to Go
+  compile  <file.gk> [...] [-o out] [--lir]   Compile .gk files to Go
 `
 
 func main() {
@@ -140,6 +141,7 @@ func cmdCompile(args []string) error {
 	output := ""
 	pkg := "main"
 	modPath := ""
+	useLIR := false
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -158,6 +160,8 @@ func cmdCompile(args []string) error {
 			if i < len(args) {
 				modPath = args[i]
 			}
+		case "--lir":
+			useLIR = true
 		default:
 			inputs = append(inputs, args[i])
 		}
@@ -200,15 +204,26 @@ func cmdCompile(args []string) error {
 	}
 
 	for _, pf := range files {
-		tr := transpiler.New(pkg)
-		if modPath != "" {
-			tr.SetModulePath(modPath)
+		out := pf.output
+		var goSrc string
+
+		if useLIR {
+			lowerer := lir.NewLowerer()
+			prog := lowerer.Lower(pf.file)
+			prog.Package = pkg
+			goSrc = lir.EmitGo(prog)
+		} else {
+			tr := transpiler.New(pkg)
+			if modPath != "" {
+				tr.SetModulePath(modPath)
+			}
+			goSrc = tr.Transpile(pf.file)
 		}
-		goSrc := tr.Transpile(pf.file)
-		if err := os.WriteFile(pf.output, []byte(goSrc), 0644); err != nil {
-			return fmt.Errorf("writing %s: %w", pf.output, err)
+
+		if err := os.WriteFile(out, []byte(goSrc), 0644); err != nil {
+			return fmt.Errorf("writing %s: %w", out, err)
 		}
-		fmt.Printf("wrote %s\n", pf.output)
+		fmt.Printf("wrote %s\n", out)
 	}
 	return nil
 }

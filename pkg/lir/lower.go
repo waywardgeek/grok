@@ -41,7 +41,7 @@ type Lowerer struct {
 	classFields     map[string][]LField // class name → all fields
 
 	// Visibility tracking
-	exportedTypes map[string]bool // type name → is exported (pub)
+	exported map[string]bool // name → is exported (pub) — types, functions, methods
 }
 
 type variantCtorInfo struct {
@@ -58,7 +58,7 @@ func NewLowerer() *Lowerer {
 		enumVariants:    make(map[string][]LVariant),
 		classCtorFields: make(map[string][]string),
 		classFields:     make(map[string][]LField),
-		exportedTypes:   make(map[string]bool),
+		exported:   make(map[string]bool),
 	}
 }
 
@@ -125,22 +125,22 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 func (l *Lowerer) registerTypes(block *ast.GrokBlock) {
 	// Register visibility for all named types
 	for _, e := range block.Enums {
-		l.exportedTypes[e.Name] = e.IsPublic
+		l.exported[e.Name] = e.IsPublic
 		for _, v := range e.Variants {
-			l.exportedTypes[v.Name] = e.IsPublic
+			l.exported[v.Name] = e.IsPublic
 		}
 	}
 	for _, s := range block.Structs {
-		l.exportedTypes[s.Name] = s.IsPublic
+		l.exported[s.Name] = s.IsPublic
 	}
 	for _, c := range block.Classes {
-		l.exportedTypes[c.Name] = c.IsPublic
+		l.exported[c.Name] = c.IsPublic
 	}
 	for _, ta := range block.TypeAliases {
-		l.exportedTypes[ta.Name] = ta.IsPublic
+		l.exported[ta.Name] = ta.IsPublic
 	}
 	for _, iface := range block.Interfaces {
-		l.exportedTypes[iface.Name] = iface.IsPublic
+		l.exported[iface.Name] = iface.IsPublic
 	}
 
 	for _, e := range block.Enums {
@@ -189,6 +189,16 @@ func (l *Lowerer) registerTypes(block *ast.GrokBlock) {
 		}
 		l.classCtorFields[cls.Name] = fieldNames
 		l.classFields[cls.Name] = fields
+	}
+
+	// Register function and method visibility
+	for _, fn := range block.Functions {
+		l.exported[fn.Name] = fn.IsPublic
+	}
+	for _, cls := range block.Classes {
+		for _, m := range cls.Methods {
+			l.exported[cls.Name+"_"+m.Name] = m.IsPublic
+		}
 	}
 }
 
@@ -286,14 +296,14 @@ func (l *Lowerer) lowerNamedType(nt *ast.NamedType) *LType {
 	}
 	// User-defined type — check if it's an enum
 	if _, ok := l.enumVariants[nt.Name]; ok {
-		return &LType{Kind: LTyTaggedUnion, Name: nt.Name, IsExported: l.exportedTypes[nt.Name]}
+		return &LType{Kind: LTyTaggedUnion, Name: nt.Name, IsExported: l.exported[nt.Name]}
 	}
 	// Check if it's a class
 	if _, ok := l.classFields[nt.Name]; ok {
-		return &LType{Kind: LTyClassHandle, Name: nt.Name, IsExported: l.exportedTypes[nt.Name]}
+		return &LType{Kind: LTyClassHandle, Name: nt.Name, IsExported: l.exported[nt.Name]}
 	}
 	// Default to struct
-	return &LType{Kind: LTyStruct, Name: nt.Name, IsExported: l.exportedTypes[nt.Name]}
+	return &LType{Kind: LTyStruct, Name: nt.Name, IsExported: l.exported[nt.Name]}
 }
 
 // lowerCheckerType converts a checker.Type to an LType.
@@ -332,13 +342,13 @@ func (l *Lowerer) lowerCheckerType(ct *checker.Type) *LType {
 	case checker.TyChannel:
 		return &LType{Kind: LTyChannel, Elem: l.lowerCheckerType(ct.Elem)}
 	case checker.TyStruct:
-		return &LType{Kind: LTyStruct, Name: ct.Name, IsExported: l.exportedTypes[ct.Name]}
+		return &LType{Kind: LTyStruct, Name: ct.Name, IsExported: l.exported[ct.Name]}
 	case checker.TyClass:
-		return &LType{Kind: LTyClassHandle, Name: ct.Name, IsExported: l.exportedTypes[ct.Name]}
+		return &LType{Kind: LTyClassHandle, Name: ct.Name, IsExported: l.exported[ct.Name]}
 	case checker.TyEnum:
-		return &LType{Kind: LTyTaggedUnion, Name: ct.Name, IsExported: l.exportedTypes[ct.Name]}
+		return &LType{Kind: LTyTaggedUnion, Name: ct.Name, IsExported: l.exported[ct.Name]}
 	case checker.TyInterface:
-		return &LType{Kind: LTyAny, Name: ct.Name, IsExported: l.exportedTypes[ct.Name]}
+		return &LType{Kind: LTyAny, Name: ct.Name, IsExported: l.exported[ct.Name]}
 	case checker.TyFunc:
 		var params []*LType
 		for _, p := range ct.Params {
@@ -1107,7 +1117,7 @@ func (l *Lowerer) lowerIdent(expr *ast.Expr) LValue {
 		tag := l.findVariantTag(enumName, ie.Name)
 		return l.emitTemp(LExpr{
 			Kind: LExprVariantConstruct,
-			Type: &LType{Kind: LTyTaggedUnion, Name: enumName, IsExported: l.exportedTypes[enumName]},
+			Type: &LType{Kind: LTyTaggedUnion, Name: enumName, IsExported: l.exported[enumName]},
 			Data: &LVariantConstructData{
 				Enum:    enumName,
 				Variant: ie.Name,
@@ -1274,7 +1284,7 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 		fieldVals = append(fieldVals, args...)
 		return l.emitTemp(LExpr{
 			Kind: LExprVariantConstruct,
-			Type: &LType{Kind: LTyTaggedUnion, Name: info.enumName, IsExported: l.exportedTypes[info.enumName]},
+			Type: &LType{Kind: LTyTaggedUnion, Name: info.enumName, IsExported: l.exported[info.enumName]},
 			Data: &LVariantConstructData{
 				Enum:    info.enumName,
 				Variant: funcName,
@@ -1298,7 +1308,7 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 		}
 		return l.emitTemp(LExpr{
 			Kind: LExprClassAlloc,
-			Type: &LType{Kind: LTyClassHandle, Name: funcName, IsExported: l.exportedTypes[funcName]},
+			Type: &LType{Kind: LTyClassHandle, Name: funcName, IsExported: l.exported[funcName]},
 			Data: &LClassAllocData{Class: funcName},
 		})
 	}
@@ -1307,7 +1317,7 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 	return l.emitTemp(LExpr{
 		Kind: LExprCall,
 		Type: l.exprType(expr),
-		Data: &LCallData{Func: funcName, Args: args},
+		Data: &LCallData{Func: funcName, Args: args, IsExported: l.exported[funcName]},
 	})
 }
 
@@ -1349,7 +1359,7 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 	return l.emitTemp(LExpr{
 		Kind: LExprCall,
 		Type: resultType,
-		Data: &LCallData{Func: funcName, Args: allArgs},
+		Data: &LCallData{Func: funcName, Args: allArgs, IsExported: l.exported[funcName]},
 	})
 }
 
@@ -1512,7 +1522,7 @@ func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue {
 
 	resultType := l.exprType(expr)
 	if resultType.Kind == LTyAny {
-		resultType = &LType{Kind: LTyStruct, Name: sl.TypeName, IsExported: l.exportedTypes[sl.TypeName]}
+		resultType = &LType{Kind: LTyStruct, Name: sl.TypeName, IsExported: l.exported[sl.TypeName]}
 	}
 
 	return l.emitTemp(LExpr{
