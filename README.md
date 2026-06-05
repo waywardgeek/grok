@@ -8,13 +8,13 @@ A typed language for design and implementation — describe your architecture, v
 
 Grok has two modes:
 
-**`.grok` files — understandings.** Declaration-only design artifacts: data structures, APIs, interfaces, annotations, doc blocks, invariants, ownership relations. No function bodies. The AI writes them after implementation; the human reviews them. A structural verifier checks they haven't drifted from the source. This is the core of [Grok-Driven Development (GDD)](https://coderhapsody.ai/docs/grok-driven-development).
+**`.grok` files — understandings.** Declaration-only design artifacts: data structures, APIs, interfaces, annotations, doc blocks, invariants, ownership relations. No function bodies. The AI writes them after implementation; the human reviews them. A structural verifier checks the exported API and type structure against Go source. Narrative annotations such as docs, invariants, and relations are design context; they are parsed, but not semantically proven by the verifier. This is the core of [Grok-Driven Development (GDD)](https://coderhapsody.ai/docs/grok-driven-development).
 
 **`.gk` files — code.** Full Grok with function bodies and executable semantics. Compiles to Go. An existence proof that the language design is sound: if the notation is precise enough to verify against real implementations, function bodies are all that's missing to make it a real language.
 
 ## Why?
 
-The real bottleneck in AI-assisted software development is **human review**, not code generation. As AI generates code faster, reviewers drown in PRs. A `.grok` file contains *only* the decisions that matter — data structures, API boundaries, type relationships, concurrency contracts — at 5-10x the information density of source code. The reviewer validates architecture, not syntax. The verifier confirms the source matches.
+The real bottleneck in AI-assisted software development is **human review**, not code generation. As AI generates code faster, reviewers drown in PRs. A `.grok` file contains *only* the decisions that matter — data structures, API boundaries, type relationships, concurrency contracts — at 5-10x the information density of source code. The reviewer validates architecture, not syntax. The verifier confirms that the source matches the verifiable structural declarations.
 
 See [Grok-Driven Development](https://coderhapsody.ai/docs/grok-driven-development) for the full methodology.
 
@@ -45,14 +45,18 @@ go install github.com/waywardgeek/grok/cmd/grok-compile@latest
 
 ```bash
 $ grok verify pkg/parser/parser.grok
-0 errors, 0 warnings
+[WARNING] pkg/parser/parser.grok ↔ lexer.go, parser.go, expr_parser.go: class Lexer: ctor param Source not found as field
+...
+0 errors, 3 warnings
 ```
+
+Warnings and informational findings can appear when a `.grok` file intentionally omits implementation details or when constructor/field conventions do not line up exactly.
 
 If the code drifts:
 
 ```
 [ERROR] parser.grok ↔ parser.go: function ParseString: param count mismatch: .grok=2, Go=1
-[WARNING] parser.grok ↔ parser.go: exported type Config not documented in .grok
+[ERROR] parser.grok ↔ parser.go: exported type Config not documented in .grok
 ```
 
 ### Compile a `.gk` file
@@ -172,7 +176,7 @@ class Counter() {
 - **Cross-file concepts only** — data structures, APIs, interfaces. Not single-file implementation details.
 - **Adopt the implementation language's conventions** — PascalCase for Go, snake_case for Python
 - **AI writes, human reviews** — implement first, write `.grok` after, human validates architecture
-- **Completeness checking** — the verifier warns about exported Go symbols not documented in `.grok`
+- **Completeness checking** — the verifier reports errors for exported Go symbols not documented in `.grok`
 - **Self-referential** — every compiler package has its own `.grok` file, verified by the tool it contains
 
 ---
@@ -190,7 +194,7 @@ pkg/parser/            PEG parser for .grok and .gk files + parser.grok
 pkg/checker/           Type checker with inference + checker.grok
 pkg/transpiler/        Go code generator + transpiler.grok
 pkg/verifier/          Structural drift detector + verifier.grok
-testdata/              36 .gk test files (all compile, 33 go-build clean)
+testdata/              34 top-level .gk sample files (all produce Go output; generated Go passes go test)
 testdata/modules/      Module system test files
 ```
 
@@ -198,7 +202,7 @@ testdata/modules/      Module system test files
 
 ## Test Status
 
-233 tests across parser, checker, transpiler, and verifier. 36 `.gk` test files all compile; 33 produce Go that passes `go build` (1 known issue: `typealias.gk`). 6 self-referential `.grok` files verify clean (0 errors, 0 warnings).
+234 tests across parser, checker, transpiler, and verifier. 34 top-level `.gk` sample files produce Go output, and the generated Go for those samples passes `go test`. The project/package `.grok` files currently verify with 0 errors and 3 warnings; informational findings report intentionally omitted internal methods.
 
 ```bash
 $ go test ./...
@@ -210,9 +214,10 @@ ok  github.com/waywardgeek/grok/pkg/verifier     0.004s
 
 ### Known Issues
 
-- `typealias.gk`: optional type alias wrapping generates Go that doesn't build in all cases
 - `features.gk`: `go vet` warns about unreachable code after exhaustive match
 - i128/i256 types silently downcast to int64/uint64 (math/big support planned)
+- Verification is structural: `requires`, `ensures`, `invariant`, `relation`, and most narrative annotations are not semantically checked
+- Some complex or unconvertible type forms are matched permissively to avoid false positives
 - No LSP server yet (planned)
 
 ---
