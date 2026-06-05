@@ -150,6 +150,79 @@ func NewWidget(name string, count int) *Widget {
 	assertContains("param count mismatch")
 }
 
+func TestUnavailableTypeComparisonsWarn(t *testing.T) {
+	dir := t.TempDir()
+
+	goSrc := `package example
+
+type Widget struct {
+	Pair any
+}
+
+func UsePair(pair any) {}
+`
+	if err := os.WriteFile(filepath.Join(dir, "example.go"), []byte(goSrc), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	grokSrc := `grok Example {
+  struct Widget {
+    pair: (string, i32)
+  }
+
+  func use_pair(pair: (string, i32))
+
+  source: ["example.go"]
+}
+`
+	grokFile := filepath.Join(dir, "example.grok")
+	if err := os.WriteFile(grokFile, []byte(grokSrc), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Verify(grokFile)
+	if err != nil {
+		t.Fatalf("Verify failed: %v", err)
+	}
+
+	var errors []string
+	var warnings []string
+	for _, f := range result.Findings {
+		switch f.Severity {
+		case Error:
+			errors = append(errors, f.Message)
+		case Warning:
+			warnings = append(warnings, f.Message)
+		}
+	}
+
+	if len(errors) > 0 {
+		t.Fatalf("expected no errors, got: %v", errors)
+	}
+	if len(warnings) != 2 {
+		t.Fatalf("expected 2 warnings, got %d: %v", len(warnings), warnings)
+	}
+
+	assertWarning := func(substrs ...string) {
+		for _, w := range warnings {
+			matched := true
+			for _, substr := range substrs {
+				if !strings.Contains(w, substr) {
+					matched = false
+					break
+				}
+			}
+			if matched {
+				return
+			}
+		}
+		t.Errorf("expected warning containing %v, got: %v", substrs, warnings)
+	}
+
+	assertWarning("struct Widget field pair", "type comparison skipped", ".grok=?", "Go=any")
+	assertWarning("function use_pair param pair", "type comparison skipped", ".grok=?", "Go=any")
+}
+
 func TestSnakeToPascal(t *testing.T) {
 	tests := []struct {
 		in, want string
@@ -167,7 +240,6 @@ func TestSnakeToPascal(t *testing.T) {
 		}
 	}
 }
-
 
 func TestCompletenessCheck(t *testing.T) {
 	dir := t.TempDir()
