@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/waywardgeek/forge/pkg/ast"
 	"github.com/waywardgeek/forge/pkg/checker"
 	"github.com/waywardgeek/forge/pkg/parser"
 )
@@ -131,6 +132,12 @@ func cPipeline(t *testing.T, source, pkgName string) string {
 	if len(file.Blocks) > 0 && file.Blocks[0].Name == "" {
 		file.Blocks[0].Name = pkgName
 	}
+
+	// Run desugar passes (interface fields → relations → destructors → default impls)
+	ast.DesugarInterfaceFields(file)
+	ast.DesugarRelations(file)
+	ast.DesugarDestructors(file)
+	ast.DesugarDefaultImpls(file)
 
 	c := checker.New()
 	c.CheckFile(file)
