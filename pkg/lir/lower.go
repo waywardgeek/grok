@@ -54,6 +54,9 @@ type Lowerer struct {
 
 	// Variable types for assignment coercion
 	varTypes map[string]*LType // variable name → declared type
+
+	// Interface declarations for impl block resolution
+	ifaceDecls map[string]*LInterfaceDecl // interface name → lowered decl
 }
 
 type variantCtorInfo struct {
@@ -74,6 +77,7 @@ func NewLowerer() *Lowerer {
 		exported:        make(map[string]bool),
 		classTypeParams: make(map[string][]LTypeParam),
 		varTypes:        make(map[string]*LType),
+		ifaceDecls:      make(map[string]*LInterfaceDecl),
 	}
 }
 
@@ -140,7 +144,9 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 
 		// Lower interfaces
 		for _, iface := range block.Interfaces {
-			prog.Interfaces = append(prog.Interfaces, l.lowerInterfaceDecl(&iface))
+			lowered := l.lowerInterfaceDecl(&iface)
+			prog.Interfaces = append(prog.Interfaces, lowered)
+			l.ifaceDecls[iface.Name] = &prog.Interfaces[len(prog.Interfaces)-1]
 		}
 
 		// Lower functions (including class methods)
@@ -159,6 +165,12 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 				prog.Functions = append(prog.Functions, l.lowerFuncDecl(&m, cls.Name))
 			}
 			l.typeParamsInScope = nil
+		}
+
+		// Process impl blocks — generate wrapper methods for aliased methods
+		for _, implBlock := range block.ImplBlocks {
+			wrappers := l.lowerImplBlock(&implBlock)
+			prog.Functions = append(prog.Functions, wrappers...)
 		}
 	}
 
@@ -557,6 +569,134 @@ func (l *Lowerer) lowerInterfaceDecl(iface *ast.InterfaceDecl) LInterfaceDecl {
 		Methods:    methods,
 		Embeds:     iface.Implements,
 		IsExported: iface.IsPublic,
+	}
+}
+
+// lowerImplBlock generates forwarding wrapper methods for impl block aliases.
+// For `G.nodes = SimpleGraph.get_nodes`, it emits:
+//
+// lowerImplBlock generates forwarding wrapper methods for impl block aliases.
+// For `G.nodes = SimpleGraph.get_nodes`, it emits a method on SimpleGraph
+// that forwards to get_nodes, making it satisfy the split Go interface.
+func (l *Lowerer) lowerImplBlock(impl *ast.ImplBlock) []LFuncDecl {
+	iface := l.ifaceDecls[impl.InterfaceName]
+	if iface == nil {
+		return nil
+	}
+
+	// Build type param → concrete type mapping from impl block type args
+	typeArgMap := make(map[string]string)
+	for i, tp := range iface.TypeParams {
+		if i < len(impl.TypeArgs) {
+			if nt, ok := impl.TypeArgs[i].Data.(ast.NamedType); ok {
+				typeArgMap[tp.Name] = nt.Name
+			}
+		}
+	}
+
+	var wrappers []LFuncDecl
+
+	for _, mapping := range impl.Mappings {
+		if mapping.Kind == ast.ImplAlias {
+			// Find the interface method this alias maps to
+			var ifaceMethod *LInterfaceMethod
+			for i := range iface.Methods {
+				if iface.Methods[i].ReceiverType == mapping.TypeParam && iface.Methods[i].Name == mapping.MethodName {
+					ifaceMethod = &iface.Methods[i]
+					break
+				}
+			}
+			if ifaceMethod == nil {
+				continue
+			}
+
+			className := typeArgMap[mapping.TypeParam]
+			if className == "" {
+				continue
+			}
+
+			// Substitute type vars with concrete types
+			params := l.substImplParams(ifaceMethod.Params, typeArgMap)
+			retType := l.substImplType(ifaceMethod.ReturnType, typeArgMap)
+
+			// Build forwarding body using proper LIR temps
+			var body []LStmt
+
+			// Build LValue args from params
+			var callArgs []LValue
+			for _, p := range params {
+				callArgs = append(callArgs, LValue{Kind: LValVar, Name: p.Name, Type: p.Type})
+			}
+
+			// _t0 = self.targetMethod(args...)
+			callExpr := LExpr{
+				Kind: LExprMethodCall,
+				Data: &LMethodCallData{
+					Receiver:   LValue{Kind: LValVar, Name: "self", Type: &LType{Kind: LTyClassHandle, Name: className}},
+					Method:     mapping.TargetMember,
+					Args:       callArgs,
+					IsExported: l.exported[mapping.TargetMember],
+				},
+				Type: retType,
+			}
+
+			if retType != nil && retType.Kind != LTyUnit {
+				body = append(body, LStmt{Kind: LStmtTempDef, Data: &LTempDef{ID: 0, Expr: callExpr}})
+				body = append(body, LStmt{Kind: LStmtReturn, Data: &LReturn{Values: []LValue{{Kind: LValTemp, TempID: 0, Type: retType}}}})
+			} else {
+				body = append(body, LStmt{Kind: LStmtTempDef, Data: &LTempDef{ID: 0, Expr: callExpr}})
+				body = append(body, LStmt{Kind: LStmtExpr, Data: &LExprStmt{TempID: 0}})
+			}
+
+			wrappers = append(wrappers, LFuncDecl{
+				Name:       ifaceMethod.Name,
+				Receiver:   className,
+				Params:     params,
+				ReturnType: retType,
+				Body:       body,
+				IsExported: true,
+			})
+		}
+		// TODO: ImplFieldBind (<->), ImplInline ({body})
+	}
+
+	return wrappers
+}
+
+// substImplParams substitutes type variables in method params with concrete types.
+func (l *Lowerer) substImplParams(params []LParam, typeArgMap map[string]string) []LParam {
+	result := make([]LParam, len(params))
+	for i, p := range params {
+		result[i] = LParam{Name: p.Name, Type: l.substImplType(p.Type, typeArgMap)}
+	}
+	return result
+}
+
+// substImplType replaces type variables with their concrete types from the impl block.
+func (l *Lowerer) substImplType(t *LType, typeArgMap map[string]string) *LType {
+	if t == nil {
+		return nil
+	}
+	switch t.Kind {
+	case LTyTypeVar:
+		if concrete, ok := typeArgMap[t.Name]; ok {
+			if _, isClass := l.classFields[concrete]; isClass {
+				return &LType{Kind: LTyClassHandle, Name: concrete}
+			}
+			return &LType{Kind: LTyStruct, Name: concrete}
+		}
+		return t
+	case LTySlice:
+		return &LType{Kind: LTySlice, Elem: l.substImplType(t.Elem, typeArgMap)}
+	case LTyOptional:
+		return &LType{Kind: LTyOptional, Elem: l.substImplType(t.Elem, typeArgMap)}
+	case LTyMap:
+		cp := *t
+		cp.Key = l.substImplType(t.Key, typeArgMap)
+		cp.Elem = l.substImplType(t.Elem, typeArgMap)
+		return &cp
+	default:
+		return t
 	}
 }
 

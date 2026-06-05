@@ -5,28 +5,30 @@ grok Interfaces {
     func E.tgt_node(self) -> N
   }
 
+  // Classes use DIFFERENT method names than the interface
   class SimpleGraph(node_list: [SimpleNode]) {
-    pub func nodes(self) -> [SimpleNode] {
+    pub func get_nodes(self) -> [SimpleNode] {
       return self.node_list
     }
   }
 
   class SimpleNode(name: string, edges: [SimpleEdge]) {
-    pub func out_edges(self) -> [SimpleEdge] {
+    pub func get_edges(self) -> [SimpleEdge] {
       return self.edges
     }
   }
 
   class SimpleEdge(target: SimpleNode) {
-    pub func tgt_node(self) -> SimpleNode {
+    pub func get_target(self) -> SimpleNode {
       return self.target
     }
   }
 
+  // impl block wires different-named methods to interface methods
   impl Graph<SimpleGraph, SimpleNode, SimpleEdge> {
-    G.nodes = SimpleGraph.nodes
-    N.out_edges = SimpleNode.out_edges
-    E.tgt_node = SimpleEdge.tgt_node
+    G.nodes = SimpleGraph.get_nodes
+    N.out_edges = SimpleNode.get_edges
+    E.tgt_node = SimpleEdge.get_target
   }
 
   pub func count_edges<G, N, E>(graph: G) -> i32 where Graph<G, N, E> {

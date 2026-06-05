@@ -1307,7 +1307,12 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 	case LExprMethodCall:
 		d := e.Data.(*LMethodCallData)
 		g.emitValue(&d.Receiver)
-		g.writef(".%s", g.visName(d.Method, d.IsExported))
+		// Methods on type variables come from interface constraints — always exported in Go
+		isExported := d.IsExported
+		if d.Receiver.Type != nil && d.Receiver.Type.Kind == LTyTypeVar {
+			isExported = true
+		}
+		g.writef(".%s", g.visName(d.Method, isExported))
 		g.emitTypeArgs(d.TypeArgs)
 		g.writef("(")
 		for i, arg := range d.Args {
