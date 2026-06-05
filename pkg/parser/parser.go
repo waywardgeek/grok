@@ -599,6 +599,12 @@ func (p *Parser) parseInterface() (*ast.InterfaceDecl, error) {
 				return nil, err
 			}
 			iface.Fields = append(iface.Fields, *fd)
+		} else if p.peek().Kind == TDestructor {
+			db, err := p.parseDestructorBlock()
+			if err != nil {
+				return nil, err
+			}
+			iface.Destructors = append(iface.Destructors, *db)
 		} else {
 			return nil, &ParseError{
 				Message: fmt.Sprintf("unexpected %s in interface body", tokenNames[p.peek().Kind]),
@@ -644,6 +650,26 @@ func (p *Parser) parseInterfaceField() (*ast.InterfaceFieldDecl, error) {
 		Name:      fieldName.Text,
 		Type:      *te,
 		Span:      ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: te.Span.End},
+	}, nil
+}
+
+// parseDestructorBlock parses: destructor T { body }
+func (p *Parser) parseDestructorBlock() (*ast.DestructorBlock, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'destructor'
+
+	typeName, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	body, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+	return &ast.DestructorBlock{
+		TypeParam: typeName.Text,
+		Body:      *body,
+		Span:      ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: body.Span.End},
 	}, nil
 }
 

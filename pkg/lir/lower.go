@@ -205,6 +205,16 @@ func (l *Lowerer) registerTypes(block *ast.ForgeBlock) {
 		l.exported[iface.Name] = iface.IsPublic
 	}
 
+	// Pre-register impl block method names as exported.
+	// Impl-generated wrappers are always exported but are lowered after user code.
+	// User code (e.g. destructor bodies) may call these methods, so they need
+	// to be in the exported map before lowering begins.
+	for _, impl := range block.ImplBlocks {
+		for _, m := range impl.Mappings {
+			l.exported[m.MethodName] = true
+		}
+	}
+
 	for _, e := range block.Enums {
 		var variants []LVariant
 		for i, v := range e.Variants {

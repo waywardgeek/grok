@@ -623,9 +623,17 @@ forge AST {
     Implements: [string]
     Methods: [FuncDecl]
     Fields: [InterfaceFieldDecl]
+    Destructors: [DestructorBlock]
     Why: string
     Span: Span
     IsPublic: bool
+  }
+
+  struct DestructorBlock {
+    why: "Destructor code block in an interface, bound to a type parameter. Copied to concrete class destroy methods during desugaring."
+    TypeParam: string
+    Body: Block
+    Span: Span
   }
 
   // ---- Relations ----

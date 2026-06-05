@@ -25,6 +25,7 @@ type GoBackend struct {
 	// Visibility tracking (populated from declarations)
 	nameExported   map[string]bool // type/func/method name → is exported
 	suppressedTemps map[int]bool   // temps consumed by field-writeback patterns
+	needsIsNilHelper bool         // emit _isNil helper for generic nil checks
 }
 
 // scanFieldWritebacks pre-scans statements to find temps that will be consumed
@@ -138,6 +139,15 @@ func (g *GoBackend) emit(prog *LProgram) string {
 			}
 		}
 		out.WriteString(")\n\n")
+	}
+
+	// Emit _isNil helper for generic nil checks if needed
+	if g.needsIsNilHelper {
+		out.WriteString("func _isNil(v any) bool {\n")
+		out.WriteString("\tif v == nil { return true }\n")
+		out.WriteString("\trv := reflect.ValueOf(v)\n")
+		out.WriteString("\treturn rv.Kind() == reflect.Ptr && rv.IsNil()\n")
+		out.WriteString("}\n\n")
 	}
 
 	out.WriteString(body.String())
@@ -1343,8 +1353,8 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 	case LExprMethodCall:
 		d := e.Data.(*LMethodCallData)
 		g.emitValue(&d.Receiver)
-		// Methods on type variables come from interface constraints — always exported in Go
 		isExported := d.IsExported
+		// Methods on type variables come from interface constraints — always exported in Go
 		if d.Receiver.Type != nil && d.Receiver.Type.Kind == LTyTypeVar {
 			isExported = true
 		}
@@ -1461,21 +1471,36 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 
 	case LExprUnwrapOptional:
 		d := e.Data.(*LUnwrapOptionalData)
-		g.writef("*")
-		g.emitValue(&d.Value)
+		// For class handles, Optional(ClassHandle) is already *className in Go —
+		// unwrapping just passes through (no dereference needed).
+		// Also skip for TypeVar/Any since those may resolve to class handles.
+		skipDeref := false
+		if e.Type != nil {
+			switch e.Type.Kind {
+			case LTyClassHandle, LTyTypeVar, LTyAny:
+				skipDeref = true
+			case LTyOptional:
+				if e.Type.Elem != nil && e.Type.Elem.Kind == LTyClassHandle {
+					skipDeref = true
+				}
+			}
+		}
+		if skipDeref {
+			g.emitValue(&d.Value)
+		} else {
+			g.writef("*")
+			g.emitValue(&d.Value)
+		}
 
 	case LExprIsNull:
 		d := e.Data.(*LIsNullData)
-		// Type variables can't be compared to nil directly in Go generics;
-		// cast to any first
-		if d.Value.Type != nil && d.Value.Type.Kind == LTyTypeVar {
-			g.writef("any(")
-			g.emitValue(&d.Value)
-			g.writef(") == nil")
-		} else {
-			g.emitValue(&d.Value)
-			g.writef(" == nil")
-		}
+		// Use reflect-based _isNil for correct nil checking in all contexts,
+		// including Go generics where any(nil_pointer) != nil.
+		g.autoImport("reflect")
+		g.needsIsNilHelper = true
+		g.writef("_isNil(")
+		g.emitValue(&d.Value)
+		g.writef(")")
 
 	case LExprVariantConstruct:
 		d := e.Data.(*LVariantConstructData)
@@ -1592,10 +1617,11 @@ func (g *GoBackend) emitBuiltin(d *LBuiltinData) {
 		g.writef(")")
 	case "isnull":
 		if len(d.Args) > 0 {
-			// Use any() cast to handle type variables in Go generics
-			g.writef("any(")
+			g.autoImport("reflect")
+			g.needsIsNilHelper = true
+			g.writef("_isNil(")
 			g.emitValue(&d.Args[0])
-			g.writef(") == nil")
+			g.writef(")")
 		}
 	case "channel_receive":
 		if len(d.Args) > 0 {

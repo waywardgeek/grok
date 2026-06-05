@@ -204,7 +204,82 @@ func DesugarRelations(file *File) {
 	}
 }
 
-// rewriteFieldType replaces type parameter references in a field type with
+// DesugarDestructors generates destroy methods on classes involved in `owns` relations.
+// For each `owns` relation, copies the interface's destructor blocks to the concrete
+// classes as `destroy` methods. Must run after DesugarInterfaceFields and DesugarRelations.
+func DesugarDestructors(file *File) {
+	for bi := range file.Blocks {
+		block := &file.Blocks[bi]
+
+		// Build interface lookup
+		ifaceMap := make(map[string]*InterfaceDecl)
+		for ii := range block.Interfaces {
+			ifaceMap[block.Interfaces[ii].Name] = &block.Interfaces[ii]
+		}
+
+		// Build class lookup
+		classIdx := make(map[string]int)
+		for ci := range block.Classes {
+			classIdx[block.Classes[ci].Name] = ci
+		}
+
+		// Collect destructor bodies per class (multiple relations can append)
+		// className -> []Block
+		destructorBodies := make(map[string][]Block)
+
+		for _, rel := range block.Relations {
+			if rel.Kind != Owns {
+				continue
+			}
+			iface := ifaceMap[rel.Hint]
+			if iface == nil || len(iface.Destructors) == 0 {
+				continue
+			}
+			if len(iface.TypeParams) < 2 {
+				continue
+			}
+
+			// Map type params to concrete class names
+			typeParamToClass := make(map[string]string)
+			typeParamToClass[iface.TypeParams[0].Name] = rel.Parent.TypeName
+			typeParamToClass[iface.TypeParams[1].Name] = rel.Child.TypeName
+
+			for _, db := range iface.Destructors {
+				className, ok := typeParamToClass[db.TypeParam]
+				if !ok {
+					continue
+				}
+				if _, ok := classIdx[className]; !ok {
+					continue
+				}
+				destructorBodies[className] = append(destructorBodies[className], db.Body)
+			}
+		}
+
+		// Generate destroy methods
+		for className, bodies := range destructorBodies {
+			var allStmts []Stmt
+			for _, body := range bodies {
+				allStmts = append(allStmts, body.Stmts...)
+			}
+
+			destroyMethod := FuncDecl{
+				Name:         "destroy",
+				ReceiverType: "", // method on the class itself
+				IsPublic:     true,
+				Params: []Param{
+					{Name: "self", IsSelf: true, IsMut: true},
+				},
+				Body: &Block{Stmts: allStmts},
+			}
+
+			// Add as a method on the class
+			ci := classIdx[className]
+			block.Classes[ci].Methods = append(block.Classes[ci].Methods, destroyMethod)
+		}
+	}
+}
+
 // concrete class names from the relation.
 func rewriteFieldType(te TypeExpr, typeParams []TypeParam, rel RelationDecl) TypeExpr {
 	switch te.Kind {

@@ -208,14 +208,23 @@ type InterfaceFieldDecl struct {
 
 // InterfaceDecl is an interface declaration.
 type InterfaceDecl struct {
-	Name       string
-	IsPublic   bool // true if declared with `pub`
-	TypeParams []TypeParam
-	Implements []string // composed interfaces
-	Methods    []FuncDecl
-	Fields     []InterfaceFieldDecl // default fields: field T.name: Type
-	Why        string
-	Span       Span
+	Name        string
+	IsPublic    bool // true if declared with `pub`
+	TypeParams  []TypeParam
+	Implements  []string // composed interfaces
+	Methods     []FuncDecl
+	Fields      []InterfaceFieldDecl // default fields: field T.name: Type
+	Destructors []DestructorBlock    // destructor T { ... } blocks
+	Why         string
+	Span        Span
+}
+
+// DestructorBlock is a destructor code block in an interface, bound to a type parameter.
+// The body is copied to the end of the concrete class's destroy method during desugaring.
+type DestructorBlock struct {
+	TypeParam string // which type parameter this destructor applies to (e.g. "P" or "C")
+	Body      Block  // the code block to append to the concrete class's destroy method
+	Span      Span
 }
 
 // ImplMappingKind distinguishes the three forms of impl mappings.
