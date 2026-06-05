@@ -1,0 +1,534 @@
+// lir.grok — Low-level Intermediate Representation for the Grok compiler
+grok Lir {
+  why: "Intermediate representation between AST and backend code generators. All semantic complexity is resolved during the AST→LIR lowering pass, so each backend (Go, C, LLVM) is a simple syntax emitter under 1,500 lines. Key properties: structured control flow (not basic blocks), flat expressions (SSA-like temps, no nesting), fully monomorphized (no type variables), all sugar resolved."
+
+  doc "Architecture": """
+    Pipeline: Grok Source → Parser → AST → Checker → [Lowering] → LIR → Backend → {Go, C, LLVM IR}
+
+    The Lowerer converts a type-checked AST into an LProgram. It flattens all
+    nested expressions into SSA-like temporaries (%0, %1, ...), resolves enums
+    into tagged unions with integer tags, lowers try (?) into extract+check+early-return,
+    and converts method calls into function calls with explicit receivers.
+
+    While-loop conditions use CondBlock+CondVar to handle re-evaluation of complex
+    conditions without repeating the condition expression.
+  """
+
+  // Kind discriminators (Go int aliases)
+  type LTypeKind = int
+
+  type LValueKind = int
+
+  type LExprKind = int
+
+  type LStmtKind = int
+
+  type LBinOpKind = int
+
+  type LUnOpKind = int
+
+  type LSelectKind = int
+
+  // Constructor
+  func NewLowerer() -> Lowerer?
+
+  struct LType {
+    Kind: LTypeKind
+    Name: string
+    Elem: LType?
+    Key: LType?
+    Fields: [LField]
+    Params: [LType?]
+    Return: LType?
+    Variants: [LVariant]
+    Bits: int
+  }
+
+  struct LField {
+    Name: string
+    Type: LType?
+  }
+
+  struct LVariant {
+    Name: string
+    Tag: int
+    Fields: [LField]
+  }
+
+  struct LValue {
+    Kind: LValueKind
+    Name: string
+    TempID: int
+    IntVal: i64
+    UintVal: u64
+    FloatVal: f64
+    StrVal: string
+    BoolVal: bool
+    Type: LType?
+  }
+
+  struct LExpr {
+    Kind: LExprKind
+    Type: LType?
+    Data: any
+  }
+
+  struct LBinOpData {
+    Op: LBinOpKind
+    Left: LValue
+    Right: LValue
+  }
+
+  struct LUnOpData {
+    Op: LUnOpKind
+    Operand: LValue
+  }
+
+  struct LCastData {
+    Target: LType?
+    Operand: LValue
+  }
+
+  struct LStructFieldData {
+    Receiver: LValue
+    Field: string
+  }
+
+  struct LClassGetData {
+    Handle: LValue
+    Class: string
+    Field: string
+  }
+
+  struct LIndexGetData {
+    Collection: LValue
+    Index: LValue
+  }
+
+  struct LSliceData {
+    Collection: LValue
+    Low: LValue?
+    High: LValue?
+  }
+
+  struct LCallData {
+    Func: string
+    Args: [LValue]
+  }
+
+  struct LBuiltinData {
+    Name: string
+    Args: [LValue]
+  }
+
+  struct LStructLitData {
+    Fields: [LFieldInit]
+  }
+
+  struct LFieldInit {
+    Name: string
+    Value: LValue
+  }
+
+  struct LClassAllocData {
+    Class: string
+  }
+
+  struct LMakeChannelData {
+    ElemType: LType?
+    BufSize: LValue?
+  }
+
+  struct LWrapOptionalData {
+    Value: LValue
+  }
+
+  struct LUnwrapOptionalData {
+    Value: LValue
+  }
+
+  struct LIsNullData {
+    Value: LValue
+  }
+
+  struct LVariantConstructData {
+    Enum: string
+    Variant: string
+    Tag: int
+    Fields: [LValue]
+  }
+
+  struct LVariantTagData {
+    Value: LValue
+  }
+
+  struct LVariantDataData {
+    Value: LValue
+    Variant: string
+    Field: string
+  }
+
+  struct LExtractValueData {
+    Value: LValue
+  }
+
+  struct LExtractErrorData {
+    Value: LValue
+  }
+
+  struct LMakeResultData {
+    Value: LValue
+    Err: LValue
+  }
+
+  struct LEnvGetData {
+    Env: LValue
+    Field: string
+  }
+
+  struct LFuncRefData {
+    Name: string
+    Env: LValue?
+  }
+
+  struct LFormatPart {
+    IsLiteral: bool
+    Text: string
+    Value: LValue
+    Format: string
+  }
+
+  struct LFormatData {
+    Parts: [LFormatPart]
+  }
+
+  struct LStmt {
+    Kind: LStmtKind
+    Data: any
+  }
+
+  struct LTempDef {
+    ID: int
+    Expr: LExpr
+  }
+
+  struct LVarDecl {
+    Name: string
+    Type: LType?
+    Init: LValue?
+    Mutable: bool
+  }
+
+  struct LAssign {
+    Target: string
+    Value: LValue
+  }
+
+  struct LStructSet {
+    Receiver: LValue
+    Field: string
+    Value: LValue
+  }
+
+  struct LClassSet {
+    Handle: LValue
+    Class: string
+    Field: string
+    Value: LValue
+  }
+
+  struct LIndexSet {
+    Collection: LValue
+    Index: LValue
+    Value: LValue
+  }
+
+  struct LIf {
+    Cond: LValue
+    Then: [LStmt]
+    Else: [LStmt]
+  }
+
+  struct LWhile {
+    CondBlock: [LStmt]
+    CondVar: LValue
+    Body: [LStmt]
+  }
+
+  struct LFor {
+    Var: string
+    VarType: LType?
+    IndexVar: string
+    Collection: LValue
+    Body: [LStmt]
+  }
+
+  struct LSwitch {
+    Tag: LValue
+    Cases: [LSwitchCase]
+  }
+
+  struct LSwitchCase {
+    Tag: int
+    Binding: string
+    Body: [LStmt]
+  }
+
+  struct LReturn {
+    Values: [LValue]
+  }
+
+  struct LBlock {
+    Stmts: [LStmt]
+  }
+
+  struct LExprStmt {
+    TempID: int
+  }
+
+  struct LDefer {
+    Body: [LStmt]
+  }
+
+  struct LLock {
+    Mutex: LValue
+    Body: [LStmt]
+  }
+
+  struct LSpawn {
+    Body: [LStmt]
+    Captures: [string]
+  }
+
+  struct LSend {
+    Channel: LValue
+    Value: LValue
+  }
+
+  struct LSelect {
+    Cases: [LSelectCase]
+  }
+
+  struct LSelectCase {
+    Kind: LSelectKind
+    Channel: LValue
+    Value: LValue
+    Binding: string
+    Body: [LStmt]
+  }
+
+  struct LProgram {
+    Package: string
+    Imports: [LImport]
+    Structs: [LStructDecl]
+    Classes: [LClassDecl]
+    Enums: [LEnumDecl]
+    Functions: [LFuncDecl]
+    Globals: [LVarDecl]
+    TypeDefs: [LTypeDef]
+  }
+
+  struct LImport {
+    Alias: string
+    Path: string
+  }
+
+  struct LStructDecl {
+    Name: string
+    Fields: [LField]
+    IsExported: bool
+  }
+
+  struct LClassDecl {
+    Name: string
+    Fields: [LField]
+    GuardedBy: map[string]string
+    HasFinal: bool
+    IsExported: bool
+  }
+
+  struct LEnumDecl {
+    Name: string
+    Variants: [LVariant]
+    IsExported: bool
+  }
+
+  struct LFuncDecl {
+    Name: string
+    Params: [LParam]
+    ReturnType: LType?
+    Body: [LStmt]
+    IsExported: bool
+    Receiver: string
+  }
+
+  struct LParam {
+    Name: string
+    Type: LType?
+  }
+
+  struct LTypeDef {
+    Name: string
+    Type: LType?
+    IsExported: bool
+  }
+
+  struct Lowerer {
+  }
+
+  type LTypeKind = int
+
+  type LValueKind = int
+
+  type LExprKind = int
+
+  type LBinOpKind = int
+
+  type LUnOpKind = int
+
+  type LStmtKind = int
+
+  type LSelectKind = int
+
+  pub func NewLowerer() -> Lowerer?
+
+  source: ["lir.go", "lower.go"]
+}
+// --- index ---
+//
+// Auto-generated function/method index with signatures in Go syntax.
+// DO NOT EDIT below this line — regenerated by `grok update`.
+//
+// file: lir.go
+//
+// file: lower.go
+//
+// NewLowerer creates a new AST→LIR lowering pass.
+// func NewLowerer() *Lowerer    :40
+//
+// Lower converts an entire AST file to an LIR program.
+// func (l *Lowerer) Lower(file *ast.File) *LProgram    :51
+//
+// registerTypes populates variant/class lookup tables before lowering.
+// func (l *Lowerer) registerTypes(block *ast.GrokBlock)    :110
+//
+// func (l *Lowerer) lowerTypeExpr(te *ast.TypeExpr) *LType    :164
+//
+// func (l *Lowerer) lowerNamedType(nt *ast.NamedType) *LType    :217
+//
+// lowerCheckerType converts a checker.Type to an LType.
+// func (l *Lowerer) lowerCheckerType(ct *checker.Type) *LType    :265
+//
+// func lirIntType(bits int) *LType    :336
+//
+// func lirUintType(bits int) *LType    :350
+//
+// func (l *Lowerer) lowerStructDecl(s *ast.StructDecl) LStructDecl    :368
+//
+// func (l *Lowerer) lowerEnumDecl(e *ast.EnumDecl) LEnumDecl    :376
+//
+// func (l *Lowerer) lowerClassDecl(cls *ast.ClassDecl) LClassDecl    :381
+//
+// func (l *Lowerer) lowerFuncDecl(fn *ast.FuncDecl, receiver string) LFuncDecl    :397
+//
+// func (l *Lowerer) lowerBlock(block *ast.Block) []LStmt    :444
+//
+// func (l *Lowerer) emit(stmt LStmt)    :458
+//
+// func (l *Lowerer) lowerStmt(stmt *ast.Stmt)    :462
+//
+// func (l *Lowerer) lowerVarDeclStmt(stmt *ast.Stmt)    :504
+//
+// func (l *Lowerer) lowerAssignStmt(stmt *ast.Stmt)    :561
+//
+// func (l *Lowerer) lowerReturnStmt(stmt *ast.Stmt)    :617
+//
+// func (l *Lowerer) lowerExprStmt(stmt *ast.Stmt)    :634
+//
+// func (l *Lowerer) lowerIfStmt(stmt *ast.Stmt)    :643
+//
+// func (l *Lowerer) lowerElseIfs(elseIfs []ast.ElseIf, finalElse *ast.Block) []LStmt    :663
+//
+// func (l *Lowerer) lowerForStmt(stmt *ast.Stmt)    :683
+//
+// func (l *Lowerer) lowerWhileStmt(stmt *ast.Stmt)    :711
+//
+// func (l *Lowerer) lowerMatchStmt(stmt *ast.Stmt)    :729
+//
+// func (l *Lowerer) lowerMatchArm(arm *ast.MatchArm, matchVal LValue, enumName string) LSwitchCase    :765
+//
+// func (l *Lowerer) lowerMatchAsIfElse(ms *ast.MatchStmt, matchVal LValue)    :855
+//
+// func (l *Lowerer) findVariantTag(enumName, variantName string) int    :915
+//
+// func (l *Lowerer) lowerBlockStmt(stmt *ast.Stmt)    :926
+//
+// func (l *Lowerer) lowerSelectStmt(stmt *ast.Stmt)    :931
+//
+// func (l *Lowerer) lowerSelectCase(c *ast.SelectCase) LSelectCase    :941
+//
+// lowerExpr flattens an AST expression into a sequence of TempDefs and returns
+// func (l *Lowerer) lowerExpr(expr *ast.Expr) LValue    :981
+//
+// lowerExprInto is like lowerExpr but used in contexts where we need the
+// func (l *Lowerer) lowerExprInto(expr *ast.Expr) LValue    :1041
+//
+// emitTemp creates a new temporary and emits a TempDef statement.
+// func (l *Lowerer) emitTemp(expr LExpr) LValue    :1046
+//
+// exprType extracts the checker-annotated type from an AST expression.
+// func (l *Lowerer) exprType(expr *ast.Expr) *LType    :1054
+//
+// func (l *Lowerer) lowerIdent(expr *ast.Expr) LValue    :1065
+//
+// func (l *Lowerer) lowerIntLit(expr *ast.Expr) LValue    :1085
+//
+// func (l *Lowerer) lowerFloatLit(expr *ast.Expr) LValue    :1095
+//
+// func (l *Lowerer) lowerStringLit(expr *ast.Expr) LValue    :1105
+//
+// func (l *Lowerer) lowerBoolLit(expr *ast.Expr) LValue    :1110
+//
+// func (l *Lowerer) lowerBinary(expr *ast.Expr) LValue    :1115
+//
+// func mapBinaryOp(op ast.BinaryOp) LBinOpKind    :1138
+//
+// func (l *Lowerer) lowerUnary(expr *ast.Expr) LValue    :1180
+//
+// func (l *Lowerer) lowerCall(expr *ast.Expr) LValue    :1204
+//
+// func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue    :1277
+//
+// func (l *Lowerer) lowerBuiltinMethod(recv LValue, method string, args []LValue, resultType *LType) LValue    :1319
+//
+// func (l *Lowerer) lowerChannelMethod(recv LValue, method string, args []LValue, resultType *LType) LValue    :1338
+//
+// func (l *Lowerer) lowerFieldAccess(expr *ast.Expr) LValue    :1361
+//
+// func (l *Lowerer) lowerIndex(expr *ast.Expr) LValue    :1381
+//
+// func (l *Lowerer) lowerSliceExpr(expr *ast.Expr) LValue    :1393
+//
+// func (l *Lowerer) lowerListLit(expr *ast.Expr) LValue    :1414
+//
+// func (l *Lowerer) lowerMapLit(expr *ast.Expr) LValue    :1430
+//
+// func (l *Lowerer) lowerTupleLit(expr *ast.Expr) LValue    :1453
+//
+// func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue    :1468
+//
+// func (l *Lowerer) lowerStringInterp(expr *ast.Expr) LValue    :1488
+//
+// func (l *Lowerer) lowerCast(expr *ast.Expr) LValue    :1527
+//
+// func (l *Lowerer) lowerUnwrap(expr *ast.Expr) LValue    :1539
+//
+// func (l *Lowerer) lowerTry(expr *ast.Expr) LValue    :1551
+
+// --- dependencies ---
+//
+// Auto-generated internal package dependencies.
+// DO NOT EDIT below this line — regenerated by `grok update`.
+//
+// pkg/ast
+// pkg/checker
