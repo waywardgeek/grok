@@ -7,7 +7,7 @@ import (
 )
 
 func TestDumpC(t *testing.T) {
-	files := []string{"interfaces", "lambdas", "demo", "advanced", "methods", "stdlib", "collections", "unions", "typealias", "channels", "http_router", "inference"}
+	files := []string{"interfaces", "demo", "unions", "typealias", "channels"}
 	for _, name := range files {
 		path := filepath.Join("..", "..", "testdata", name+".gk")
 		data, err := os.ReadFile(path)

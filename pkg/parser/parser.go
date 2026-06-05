@@ -242,6 +242,15 @@ func (p *Parser) parseGrokItem(block *ast.GrokBlock) error {
 		}
 		ta.IsPublic = isPub
 		block.TypeAliases = append(block.TypeAliases, *ta)
+	case TImpl:
+		if isPub {
+			return &ParseError{Message: "pub cannot be applied to impl", Span: tok.Span}
+		}
+		impl, err := p.parseImpl()
+		if err != nil {
+			return err
+		}
+		block.ImplBlocks = append(block.ImplBlocks, *impl)
 	case TSource:
 		if isPub {
 			return &ParseError{Message: "pub cannot be applied to source", Span: tok.Span}
@@ -592,6 +601,175 @@ func (p *Parser) parseInterface() (*ast.InterfaceDecl, error) {
 	return iface, nil
 }
 
+// parseImpl parses: impl Interface<T1, T2, ...> [as label] { mappings }
+func (p *Parser) parseImpl() (*ast.ImplBlock, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'impl'
+
+	name, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	impl := &ast.ImplBlock{InterfaceName: name.Text}
+
+	// Type arguments: <ConcreteType1, ConcreteType2, ...>
+	if p.peek().Kind == TLt {
+		p.next() // consume '<'
+		for p.peek().Kind != TGt && p.peek().Kind != TEOF {
+			te, err := p.parseTypeExpr()
+			if err != nil {
+				return nil, err
+			}
+			impl.TypeArgs = append(impl.TypeArgs, *te)
+			if p.peek().Kind == TComma {
+				p.next()
+			}
+		}
+		if _, err := p.expect(TGt); err != nil {
+			return nil, err
+		}
+	}
+
+	// Optional: as label
+	if p.peek().Kind == TAs {
+		p.next()
+		label, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		impl.Label = label.Text
+	}
+
+	if _, err := p.expect(TLBrace); err != nil {
+		return nil, err
+	}
+	p.skipNewlines()
+
+	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
+		mapping, err := p.parseImplMapping()
+		if err != nil {
+			return nil, err
+		}
+		impl.Mappings = append(impl.Mappings, *mapping)
+		p.skipNewlines()
+	}
+
+	end, err := p.expect(TRBrace)
+	if err != nil {
+		return nil, err
+	}
+	impl.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End}
+	return impl, nil
+}
+
+// parseImplMapping parses one mapping inside an impl block.
+// Forms: T.method = Class.method | T.field <-> Class.field | T.method(params) -> RetType { body }
+func (p *Parser) parseImplMapping() (*ast.ImplMapping, error) {
+	start := p.peek().Span.Start
+
+	// Parse T.name
+	typeParam, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TDot); err != nil {
+		return nil, err
+	}
+	methodName, err := p.expect(TIdent)
+	if err != nil {
+		return nil, err
+	}
+
+	m := &ast.ImplMapping{
+		TypeParam:  typeParam.Text,
+		MethodName: methodName.Text,
+	}
+
+	switch p.peek().Kind {
+	case TAssign: // T.method = Class.method
+		p.next()
+		cls, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(TDot); err != nil {
+			return nil, err
+		}
+		member, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		m.Kind = ast.ImplAlias
+		m.TargetClass = cls.Text
+		m.TargetMember = member.Text
+
+	case TBiArrow: // T.field <-> Class.field
+		p.next()
+		cls, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(TDot); err != nil {
+			return nil, err
+		}
+		member, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		m.Kind = ast.ImplFieldBind
+		m.TargetClass = cls.Text
+		m.TargetMember = member.Text
+
+	case TLParen: // T.method(params) -> RetType { body } — inline implementation
+		// Reconstruct as a FuncDecl with ReceiverType
+		fn := &ast.FuncDecl{
+			ReceiverType: typeParam.Text,
+			Name:         methodName.Text,
+		}
+		// Parse params
+		p.next() // consume '('
+		for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
+			param, err := p.parseParam()
+			if err != nil {
+				return nil, err
+			}
+			fn.Params = append(fn.Params, *param)
+			if p.peek().Kind == TComma {
+				p.next()
+			}
+		}
+		if _, err := p.expect(TRParen); err != nil {
+			return nil, err
+		}
+		// Optional return type
+		if p.peek().Kind == TArrow {
+			p.next()
+			ret, err := p.parseTypeExpr()
+			if err != nil {
+				return nil, err
+			}
+			fn.ReturnType = ret
+		}
+		// Body
+		body, err := p.parseBlock()
+		if err != nil {
+			return nil, err
+		}
+		fn.Body = body
+		m.Kind = ast.ImplInline
+		m.InlineFunc = fn
+
+	default:
+		return nil, &ParseError{
+			Message: fmt.Sprintf("expected '=', '<->', or '(' in impl mapping, got %s", tokenNames[p.peek().Kind]),
+			Span:    p.peek().Span,
+		}
+	}
+
+	m.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End}
+	return m, nil
+}
+
 // parseClass parses: class Name[<TypeParams>](ctor_params) [implements I1, I2] { fields, methods }
 func (p *Parser) parseClass() (*ast.ClassDecl, error) {
 	start := p.peek().Span.Start
@@ -707,6 +885,17 @@ func (p *Parser) parseFunc() (*ast.FuncDecl, error) {
 		return nil, err
 	}
 	fn := &ast.FuncDecl{Name: name.Text}
+
+	// Check for T.method syntax (multi-class interface methods)
+	if p.peek().Kind == TDot {
+		p.next() // consume '.'
+		methodName, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		fn.ReceiverType = name.Text
+		fn.Name = methodName.Text
+	}
 
 	// Optional type parameters: func name<T, U: Constraint>(...)
 	if p.peek().Kind == TLt {

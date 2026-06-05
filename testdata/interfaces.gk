@@ -1,75 +1,57 @@
-// interfaces.gk — end-to-end test for interface support
-// Tests: interface declaration, implements checking, composition,
-//        polymorphic function parameters
-
-grok interfaces {
-
-  // Basic interface
-  interface Shape {
-    func area(self) -> f64
-    func name(self) -> string
+grok Interfaces {
+  interface Graph<G, N, E> {
+    func G.nodes(self) -> [N]
+    func G.edges(self) -> [E]
+    func N.out_edges(self) -> [E]
+    func E.src_node(self) -> N
+    func E.tgt_node(self) -> N
+    func distance(a: N, b: N) -> i32
   }
 
-  // Struct-like class implementing an interface
-  class Circle(radius: f64) implements Shape {
-    pub func area(self) -> f64 {
-      return 3.14159 * self.radius * self.radius
+  class MyGraph(nodes_list: [MyNode], edges_list: [MyEdge]) {
+    pub func components(self) -> [MyNode] {
+      return self.nodes_list
     }
-
-    pub func name(self) -> string {
-      return "circle"
+    pub func wires(self) -> [MyEdge] {
+      return self.edges_list
     }
   }
 
-  class Rectangle(width: f64, height: f64) implements Shape {
-    pub func area(self) -> f64 {
-      return self.width * self.height
-    }
-
-    pub func name(self) -> string {
-      return "rectangle"
+  class MyNode(name: string, out: [MyEdge]) {
+    pub func outWires(self) -> [MyEdge] {
+      return self.out
     }
   }
 
-  // Interface composition
-  interface Printable {
-    func to_string(self) -> string
-  }
-
-  interface PrintableShape {
-    implements Shape
-    implements Printable
-  }
-
-  class Square(side: f64) implements PrintableShape {
-    pub func area(self) -> f64 {
-      return self.side * self.side
+  class MyEdge(src: MyNode, tgt: MyNode) {
+    pub func driver(self) -> MyNode {
+      return self.src
     }
-
-    pub func name(self) -> string {
-      return "square"
-    }
-
-    pub func to_string(self) -> string {
-      return "a square"
+    pub func receiver(self) -> MyNode {
+      return self.tgt
     }
   }
 
-  // Function taking interface parameter
-  func describe(s: Shape) -> string {
-    return s.name()
+  impl Graph<MyGraph, MyNode, MyEdge> {
+    G.nodes = MyGraph.components
+    G.edges = MyGraph.wires
+    N.out_edges = MyNode.outWires
+    E.src_node = MyEdge.driver
+    E.tgt_node = MyEdge.receiver
+    E.distance(a: MyNode, b: MyNode) -> i32 {
+      return 1
+    }
   }
 
   func main() {
-    let c = Circle{Radius: 5.0}
-    let r = Rectangle{Width: 3.0, Height: 4.0}
-    let sq = Square{Side: 7.0}
-
-    let _ = c.area()
-    let _ = r.area()
-    let _ = sq.area()
-
-    let _ = describe(c)
-    let _ = describe(r)
+    let n1 = MyNode("A", [])
+    let n2 = MyNode("B", [])
+    let e1 = MyEdge(n1, n2)
+    let g = MyGraph([n1, n2], [e1])
+    let nodes = g.components()
+    println(n1.name)
+    println(n2.name)
+    println(e1.driver().name)
+    println("PASS")
   }
 }

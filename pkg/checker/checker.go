@@ -2312,7 +2312,19 @@ func (c *Checker) registerInterface(iface *ast.InterfaceDecl) {
 		Type:    &Type{Kind: TyInterface, Name: iface.Name},
 		Methods: make(map[string]*Type),
 	}
+
+	// Build set of valid type param names for multi-class interface validation
+	typeParamNames := make(map[string]bool)
+	for _, tp := range iface.TypeParams {
+		typeParamNames[tp.Name] = true
+	}
+
 	for _, m := range iface.Methods {
+		// Validate ReceiverType if present (multi-class interface method)
+		if m.ReceiverType != "" && !typeParamNames[m.ReceiverType] {
+			c.error(m.Span, "receiver type %s is not a type parameter of interface %s", m.ReceiverType, iface.Name)
+			continue
+		}
 		info.Methods[m.Name] = c.funcDeclToType(&m)
 	}
 	// Compose parent interfaces: copy their methods

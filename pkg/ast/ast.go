@@ -130,13 +130,14 @@ type Annotations struct {
 
 // FuncDecl is a function or method declaration.
 type FuncDecl struct {
-	Name       string
-	IsPublic   bool // true if declared with `pub`
-	TypeParams []TypeParam
-	Params     []Param
-	ReturnType *TypeExpr // nil for missing (error in .grok)
-	Where      []WhereClause
-	Annotations Annotations
+	Name         string
+	IsPublic     bool // true if declared with `pub`
+	ReceiverType string // non-empty for multi-class interface methods: func T.method(self)
+	TypeParams   []TypeParam
+	Params       []Param
+	ReturnType   *TypeExpr // nil for missing (error in .grok)
+	Where        []WhereClause
+	Annotations  Annotations
 	// Body is nil in .grok files, holds the function body in .gk files.
 	Body *Block
 	Span Span
@@ -201,6 +202,37 @@ type InterfaceDecl struct {
 	Methods    []FuncDecl
 	Why        string
 	Span       Span
+}
+
+// ImplMappingKind distinguishes the three forms of impl mappings.
+type ImplMappingKind int
+
+const (
+	ImplAlias     ImplMappingKind = iota // T.method = ConcreteClass.method
+	ImplFieldBind                        // T.field <-> ConcreteClass.field
+	ImplInline                           // T.method(self) -> RetType { body }
+)
+
+// ImplMapping is a single mapping inside an impl block.
+type ImplMapping struct {
+	TypeParam  string // "G", "N", "E" — the interface type param
+	MethodName string // the method name on the interface side
+	Kind       ImplMappingKind
+	// For Alias/FieldBind:
+	TargetClass  string // "CircuitGraph", "Component"
+	TargetMember string // "components", "outWires"
+	// For Inline:
+	InlineFunc *FuncDecl // full function declaration
+	Span       Span
+}
+
+// ImplBlock maps an interface to concrete types.
+type ImplBlock struct {
+	InterfaceName string     // "Graph", "DoublyLinked"
+	TypeArgs      []TypeExpr // concrete types: <CircuitGraph, Component, Wire>
+	Label         string     // optional: "as byEmail" for disambiguation
+	Mappings      []ImplMapping
+	Span          Span
 }
 
 // RelationKind distinguishes owns from refs.
@@ -269,6 +301,7 @@ type GrokBlock struct {
 	Classes     []ClassDecl
 	Functions   []FuncDecl
 	Relations   []RelationDecl
+	ImplBlocks  []ImplBlock
 	TypeAliases []TypeAliasDecl
 	Source      []string
 	Fake        string

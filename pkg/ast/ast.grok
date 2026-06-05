@@ -546,8 +546,9 @@ grok AST {
   }
 
   struct FuncDecl {
-    why: "Function or method declaration. TypeParams holds generic type parameters (<T: Constraint>). Body is nil for .grok files; holds *Block for .gk."
+    why: "Function or method declaration. TypeParams holds generic type parameters (<T: Constraint>). ReceiverType is set for multi-class interface methods (func T.method). Body is nil for .grok files; holds *Block for .gk."
     Name: string
+    ReceiverType: string
     TypeParams: [TypeParam]
     Params: [Param]
     ReturnType: TypeExpr?
@@ -662,6 +663,34 @@ grok AST {
     IsPublic: bool
   }
 
+  // ---- Impl Blocks (multi-class interface wiring) ----
+  enum ImplMappingKind {
+    why: "Distinguishes alias (=), field binding (<->), and inline implementation forms."
+    ImplAlias
+    ImplFieldBind
+    ImplInline
+  }
+
+  struct ImplMapping {
+    why: "A single mapping in an impl block: T.method = Class.method, T.field <-> Class.field, or inline body."
+    TypeParam: string
+    MethodName: string
+    Kind: ImplMappingKind
+    TargetClass: string
+    TargetMember: string
+    InlineFunc: FuncDecl?
+    Span: Span
+  }
+
+  struct ImplBlock {
+    why: "Maps a multi-class interface to concrete types: impl Graph<MyGraph, MyNode, MyEdge> { mappings }"
+    InterfaceName: string
+    TypeArgs: [TypeExpr]
+    Label: string
+    Mappings: [ImplMapping]
+    Span: Span
+  }
+
   // ---- Top-level ----
   struct GrokBlock {
     why: "Primary container for declarations. A single file can hold multiple blocks."
@@ -676,6 +705,7 @@ grok AST {
     Classes: [ClassDecl]
     Functions: [FuncDecl]
     Relations: [RelationDecl]
+    ImplBlocks: [ImplBlock]
     TypeAliases: [TypeAliasDecl]
     Source: [string]
     Fake: string

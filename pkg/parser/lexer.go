@@ -24,6 +24,8 @@ const (
 	TRelation
 	TImport
 	TImplements
+	TImpl
+	TAs
 	TType
 	TWhere
 	TOwns
@@ -74,6 +76,7 @@ const (
 	TDot       // .
 	TArrow     // ->
 	TFatArrow  // =>
+	TBiArrow   // <->
 	TPipe      // |
 	TQuestion  // ?
 	TLt        // <
@@ -135,6 +138,8 @@ var keywords = map[string]TokenKind{
 	"relation":   TRelation,
 	"import":     TImport,
 	"implements": TImplements,
+	"impl":       TImpl,
+	"as":         TAs,
 	"type":       TType,
 	"where":      TWhere,
 	"owns":       TOwns,
@@ -198,7 +203,7 @@ func (t Token) String() string {
 var tokenNames = map[TokenKind]string{
 	TGrok: "grok", TFunc: "func", TClass: "class", TStruct: "struct",
 	TEnum: "enum", TInterface: "interface", TRelation: "relation",
-	TImport: "import", TImplements: "implements", TWhere: "where",
+	TImport: "import", TImplements: "implements", TImpl: "impl", TAs: "as", TWhere: "where",
 	TOwns: "owns", TRefs: "refs", TMut: "mut", TSelf: "self",
 	TFrom: "from", TTrue: "true", TFalse: "false", TNil: "nil",
 	TLet: "let", TIf: "if", TElse: "else", TFor: "for", TIn: "in",
@@ -209,7 +214,7 @@ var tokenNames = map[TokenKind]string{
 	TStringLit: "string", TTripleStringLit: "triple_string", TFStringLit: "fstring",
 	TLParen: "(", TRParen: ")", TLBrace: "{", TRBrace: "}",
 	TLBracket: "[", TRBracket: "]", TComma: ",", TColon: ":",
-	TDot: ".", TArrow: "->", TFatArrow: "=>", TPipe: "|",
+	TDot: ".", TArrow: "->", TFatArrow: "=>", TBiArrow: "<->", TPipe: "|",
 	TQuestion: "?", TLt: "<", TGt: ">",
 	TAssign: "=", TPlus: "+", TMinus: "-", TStar: "*", TSlash: "/",
 	TPercent: "%", TEqEq: "==", TBangEq: "!=", TLtEq: "<=", TGtEq: ">=",
@@ -423,6 +428,11 @@ func (l *Lexer) scan() Token {
 		if l.peek() == '<' {
 			l.advance()
 			return Token{Kind: TShl, Text: "<<", Span: ast.Span{Start: start, End: l.currentPos()}}
+		}
+		if l.peek() == '-' && l.peekAt(1) == '>' {
+			l.advance()
+			l.advance()
+			return Token{Kind: TBiArrow, Text: "<->", Span: ast.Span{Start: start, End: l.currentPos()}}
 		}
 		return Token{Kind: TLt, Text: "<", Span: ast.Span{Start: start, End: l.currentPos()}}
 	case '>':

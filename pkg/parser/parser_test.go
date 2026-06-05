@@ -100,6 +100,118 @@ func TestParseInterface(t *testing.T) {
 	}
 }
 
+func TestParseMultiClassInterface(t *testing.T) {
+	input := `grok Test {
+  interface Graph<G, N, E> {
+    func G.nodes(self) -> [N]
+    func G.edges(self) -> [E]
+    func N.out_edges(self) -> [E]
+    func E.src_node(self) -> N
+    func E.tgt_node(self) -> N
+    func distance(a: N, b: N) -> i32
+  }
+}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	iface := file.Blocks[0].Interfaces[0]
+	if iface.Name != "Graph" {
+		t.Errorf("expected Graph, got %s", iface.Name)
+	}
+	if len(iface.TypeParams) != 3 {
+		t.Fatalf("expected 3 type params, got %d", len(iface.TypeParams))
+	}
+	if len(iface.Methods) != 6 {
+		t.Fatalf("expected 6 methods, got %d", len(iface.Methods))
+	}
+	// Typed methods
+	if iface.Methods[0].ReceiverType != "G" || iface.Methods[0].Name != "nodes" {
+		t.Errorf("method 0: expected G.nodes, got %s.%s", iface.Methods[0].ReceiverType, iface.Methods[0].Name)
+	}
+	if iface.Methods[3].ReceiverType != "E" || iface.Methods[3].Name != "src_node" {
+		t.Errorf("method 3: expected E.src_node, got %s.%s", iface.Methods[3].ReceiverType, iface.Methods[3].Name)
+	}
+	// Free function (no receiver)
+	if iface.Methods[5].ReceiverType != "" || iface.Methods[5].Name != "distance" {
+		t.Errorf("method 5: expected free function 'distance', got ReceiverType=%q Name=%q", iface.Methods[5].ReceiverType, iface.Methods[5].Name)
+	}
+}
+
+func TestParseImplBlock(t *testing.T) {
+	input := `grok Test {
+  impl Graph<MyGraph, MyNode, MyEdge> {
+    G.nodes = MyGraph.components
+    G.edges = MyGraph.wires
+    N.out_edges = MyNode.outWires
+    E.src_node = MyEdge.driver
+    E.tgt_node = MyEdge.receiver
+  }
+}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(file.Blocks[0].ImplBlocks) != 1 {
+		t.Fatalf("expected 1 impl block, got %d", len(file.Blocks[0].ImplBlocks))
+	}
+	impl := file.Blocks[0].ImplBlocks[0]
+	if impl.InterfaceName != "Graph" {
+		t.Errorf("expected Graph, got %s", impl.InterfaceName)
+	}
+	if len(impl.TypeArgs) != 3 {
+		t.Fatalf("expected 3 type args, got %d", len(impl.TypeArgs))
+	}
+	if len(impl.Mappings) != 5 {
+		t.Fatalf("expected 5 mappings, got %d", len(impl.Mappings))
+	}
+	m := impl.Mappings[0]
+	if m.TypeParam != "G" || m.MethodName != "nodes" || m.TargetClass != "MyGraph" || m.TargetMember != "components" {
+		t.Errorf("mapping 0: got %+v", m)
+	}
+}
+
+func TestParseImplBlockFieldBinding(t *testing.T) {
+	input := `grok Test {
+  impl DoublyLinked<Folder, File> {
+    P.first <-> Folder.firstFile
+    P.last <-> Folder.lastFile
+    C.parent <-> File.folder
+  }
+}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	impl := file.Blocks[0].ImplBlocks[0]
+	if len(impl.Mappings) != 3 {
+		t.Fatalf("expected 3 mappings, got %d", len(impl.Mappings))
+	}
+	m := impl.Mappings[0]
+	if m.Kind != ast.ImplFieldBind {
+		t.Errorf("expected ImplFieldBind, got %d", m.Kind)
+	}
+	if m.TargetClass != "Folder" || m.TargetMember != "firstFile" {
+		t.Errorf("field bind: got %s.%s", m.TargetClass, m.TargetMember)
+	}
+}
+
+func TestParseImplBlockNamedLabel(t *testing.T) {
+	input := `grok Test {
+  impl Hashed<UserStore, User, string> as byEmail {
+    P.lookup = UserStore.findByEmail
+  }
+}`
+	file, err := ParseString(input)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	impl := file.Blocks[0].ImplBlocks[0]
+	if impl.Label != "byEmail" {
+		t.Errorf("expected label 'byEmail', got %q", impl.Label)
+	}
+}
+
 func TestParseClass(t *testing.T) {
 	input := `grok Test {
   class HttpClient(base_url: string, timeout: u32) {
