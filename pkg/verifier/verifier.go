@@ -240,6 +240,9 @@ func verifyCompleteness(block forgeast.ForgeBlock, goInfo *goTypeInfo, forgePath
 		forgeNames[f.Name] = true
 		forgeNames[snakeToPascal(f.Name)] = true
 	}
+	for _, ta := range block.TypeAliases {
+		forgeNames[ta.Name] = true
+	}
 
 	// Check exported structs (which represent both structs and classes in .forge)
 	var missingTypes []string

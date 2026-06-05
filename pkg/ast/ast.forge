@@ -75,6 +75,18 @@ forge AST {
     FuncDecl.Body is *Block (nil for .forge, populated for .fg).
   """
 
+  doc "Desugaring Engine": """
+    desugar.go runs four ordered passes BEFORE the checker (order matters):
+    1. DesugarInterfaceFields: field T.name → getter/setter method signatures
+    2. DesugarRelations: relation decls → label-prefixed fields + impl blocks.
+       rewriteFieldType maps interface type params to concrete types.
+    3. DesugarDefaultImpls: methods with bodies in interfaces → top-level
+       generic functions with relational where clauses.
+    4. DesugarDestructors: for each owns relation, copies interface destructor
+       blocks to concrete class destroy methods. Multiple relations append.
+    Each pass generates AST consumed by later passes and the checker.
+  """
+
   doc "Technical Debt": """
     - No semantic validation: no checks for circular interface inheritance or
     duplicate fields at the AST level
@@ -685,10 +697,7 @@ forge AST {
   // ---- Impl Blocks (multi-class interface wiring) ----
   enum ImplMappingKind {
     why: "Distinguishes alias (=), field binding (<->), and inline implementation forms."
-    ImplAlias
-    ImplFieldBind
-    ImplInline
-  }
+ ImplAlias ImplFieldBind ImplInline }
 
   struct ImplMapping {
     why: "A single mapping in an impl block: T.method = Class.method, T.field <-> Class.field, or inline body."
@@ -755,7 +764,7 @@ forge AST {
 // file: ast.go
 //
 // DocComment returns the contiguous block of comments immediately preceding
-// func (f *File) DocComment(line int) []Comment    :288
+// func (f *File) DocComment(line int) []Comment    :350
 //
 // file: expr.go
 
