@@ -201,6 +201,11 @@ func cmdCompile(args []string) error {
 		files = append(files, parsedFile{file: file, input: input, output: out})
 	}
 
+	// Desugar default implementations before type checking
+	for _, pf := range files {
+		ast.DesugarDefaultImpls(pf.file)
+	}
+
 	ch := checker.New()
 	for _, pf := range files {
 		ch.CheckFile(pf.file)

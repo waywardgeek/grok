@@ -3,6 +3,19 @@ grok Interfaces {
     func G.nodes(self) -> [N]
     func N.out_edges(self) -> [E]
     func E.tgt_node(self) -> N
+
+    // Default implementation: count all edges in the graph
+    pub func count_edges(graph: G) -> i32 {
+      let mut total: i32 = 0
+      let nodes = graph.nodes()
+      let mut i: i32 = 0
+      while i < len(nodes) {
+        let edges = nodes[i].out_edges()
+        total = total + len(edges)
+        i = i + 1
+      }
+      return total
+    }
   }
 
   // DoublyLinked: parent has children, child has name
@@ -45,18 +58,6 @@ grok Interfaces {
   impl DoublyLinked<Folder, File> {
     P.children <-> Folder.items
     C.label <-> File.name
-  }
-
-  pub func count_edges<G, N, E>(graph: G) -> i32 where Graph<G, N, E> {
-    let mut total: i32 = 0
-    let nodes = graph.nodes()
-    let mut i: i32 = 0
-    while i < len(nodes) {
-      let edges = nodes[i].out_edges()
-      total = total + len(edges)
-      i = i + 1
-    }
-    return total
   }
 
   pub func count_children<P, C>(p: P) -> i32 where DoublyLinked<P, C> {

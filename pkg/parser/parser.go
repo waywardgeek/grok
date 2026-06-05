@@ -578,11 +578,20 @@ func (p *Parser) parseInterface() (*ast.InterfaceDecl, error) {
 				return nil, err
 			}
 			iface.Implements = append(iface.Implements, imp.Text)
-		} else if p.peek().Kind == TFunc {
+		} else if p.peek().Kind == TFunc || p.peek().Kind == TPub {
+			isPub := false
+			if p.peek().Kind == TPub {
+				isPub = true
+				p.next() // consume 'pub'
+				if p.peek().Kind != TFunc {
+					return nil, &ParseError{Message: "expected func after pub in interface body", Span: p.peek().Span}
+				}
+			}
 			fn, err := p.parseFunc()
 			if err != nil {
 				return nil, err
 			}
+			fn.IsPublic = isPub
 			iface.Methods = append(iface.Methods, *fn)
 		} else {
 			return nil, &ParseError{
