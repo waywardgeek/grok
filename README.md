@@ -56,7 +56,7 @@ If the code drifts:
 
 ```
 [ERROR] parser.grok ↔ parser.go: function ParseString: param count mismatch: .grok=2, Go=1
-[WARNING] parser.grok ↔ parser.go: exported type Config not documented in .grok
+[ERROR] parser.grok ↔ parser.go: exported type Config not documented in .grok
 ```
 
 ### Compile a `.gk` file
@@ -176,7 +176,7 @@ class Counter() {
 - **Cross-file concepts only** — data structures, APIs, interfaces. Not single-file implementation details.
 - **Adopt the implementation language's conventions** — PascalCase for Go, snake_case for Python
 - **AI writes, human reviews** — implement first, write `.grok` after, human validates architecture
-- **Completeness checking** — the verifier warns about exported Go symbols not documented in `.grok`
+- **Completeness checking** — the verifier reports errors for exported Go symbols not documented in `.grok`
 - **Self-referential** — every compiler package has its own `.grok` file, verified by the tool it contains
 
 ---
@@ -194,7 +194,7 @@ pkg/parser/            PEG parser for .grok and .gk files + parser.grok
 pkg/checker/           Type checker with inference + checker.grok
 pkg/transpiler/        Go code generator + transpiler.grok
 pkg/verifier/          Structural drift detector + verifier.grok
-testdata/              34 top-level .gk sample files (all compile; generated Go passes go test)
+testdata/              34 top-level .gk sample files (all produce Go output; generated Go passes go test)
 testdata/modules/      Module system test files
 ```
 
@@ -202,7 +202,7 @@ testdata/modules/      Module system test files
 
 ## Test Status
 
-234 tests across parser, checker, transpiler, and verifier. 34 top-level `.gk` sample files all compile, and the generated Go for those samples passes `go test`. The project/package `.grok` files currently verify with 0 errors and 3 warnings; informational findings report intentionally omitted internal methods.
+234 tests across parser, checker, transpiler, and verifier. 34 top-level `.gk` sample files produce Go output, and the generated Go for those samples passes `go test`. The project/package `.grok` files currently verify with 0 errors and 3 warnings; informational findings report intentionally omitted internal methods.
 
 ```bash
 $ go test ./...
