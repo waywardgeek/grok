@@ -42,11 +42,10 @@ type cGen struct {
 }
 
 type cLambda struct {
-	name       string
-	retType    string
-	params     string
-	body       []LStmt
-	returnType *LType
+	name    string
+	retType string
+	params  string
+	bodyStr string
 }
 
 // ---------------------------------------------------------------------------
@@ -133,10 +132,25 @@ func (g *cGen) generate() string {
 		g.line("")
 	}
 
-	// Emit function bodies
+	// Emit function bodies (lambdas are collected during this pass)
+	funcBuf := g.buf
+	g.buf = strings.Builder{}
 	for _, f := range g.prog.Functions {
 		g.emitFuncDecl(&f)
 	}
+	funcCode := g.buf.String()
+	g.buf = funcBuf
+
+	// Emit hoisted lambdas before function bodies
+	for _, lam := range g.lambdas {
+		g.linef("static %s %s(%s) {", lam.retType, lam.name, lam.params)
+		g.buf.WriteString(lam.bodyStr)
+		g.line("}")
+		g.line("")
+	}
+
+	// Now emit function bodies
+	g.buf.WriteString(funcCode)
 
 	return g.buf.String()
 }
@@ -302,7 +316,8 @@ func (g *cGen) emitStmt(s *LStmt) {
 		d := s.Data.(*LTempDef)
 		ty := g.inferExprType(&d.Expr)
 		g.tempTypes[d.ID] = ty
-		g.linef("%s _t%d = %s;", g.cType(ty), d.ID, g.emitExprStr(&d.Expr))
+		tempName := fmt.Sprintf("_t%d", d.ID)
+		g.linef("%s = %s;", g.cFieldDecl(ty, tempName), g.emitExprStr(&d.Expr))
 
 	case LStmtVarDecl:
 		d := s.Data.(*LVarDecl)
@@ -312,6 +327,7 @@ func (g *cGen) emitStmt(s *LStmt) {
 			}
 			return
 		}
+		name := cSafeName(d.Name)
 		varType := d.Type
 		// If type contains type vars (from generic code), try to use init value's resolved type
 		if d.Init != nil && g.containsTypeVar(varType) {
@@ -328,14 +344,14 @@ func (g *cGen) emitStmt(s *LStmt) {
 			g.varTypes[d.Name] = varType
 		}
 		if d.Init != nil {
-			g.linef("%s %s = %s;", g.cType(varType), d.Name, g.emitValue(d.Init))
+			g.linef("%s = %s;", g.cFieldDecl(varType, name), g.emitValue(d.Init))
 		} else {
-			g.linef("%s %s = %s;", g.cType(varType), d.Name, g.zeroValue(varType))
+			g.linef("%s = %s;", g.cFieldDecl(varType, name), g.zeroValue(varType))
 		}
 
 	case LStmtAssign:
 		d := s.Data.(*LAssign)
-		g.linef("%s = %s;", d.Target, g.emitValue(&d.Value))
+		g.linef("%s = %s;", cSafeName(d.Target), g.emitValue(&d.Value))
 
 	case LStmtStructSet:
 		d := s.Data.(*LStructSet)
@@ -623,6 +639,10 @@ func (g *cGen) emitMultiAssign(d *LMultiAssign) {
 		for _, fn := range g.prog.Functions {
 			if g.funcName(&fn) == cd.Func && fn.ReturnType != nil && fn.ReturnType.Kind == LTyErrorResult {
 				isErrorResult = true
+				// Also capture the element type from the function's return type
+				if fn.ReturnType.Elem != nil {
+					d.Expr.Type = fn.ReturnType
+				}
 				break
 			}
 		}
@@ -725,7 +745,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		name := g.structName(d.Class, false)
 		var fieldInits []string
 		for _, f := range d.Fields {
-			fieldInits = append(fieldInits, fmt.Sprintf(".%s = %s", f.Name, g.emitValue(&f.Value)))
+			fieldInits = append(fieldInits, fmt.Sprintf(".%s = %s", lcFirst(f.Name), g.emitValue(&f.Value)))
 		}
 		return fmt.Sprintf("({ %s* _p = malloc(sizeof(%s)); *_p = (%s){%s}; _p; })",
 			name, name, name, strings.Join(fieldInits, ", "))
@@ -746,8 +766,19 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 			return fmt.Sprintf("grok_slice_lit(%s, %s, %s)", sliceType, elemType, strings.Join(elems, ", "))
 		}
 		var fieldInits []string
+		isClass := e.Type != nil && e.Type.Kind == LTyClassHandle
 		for _, f := range d.Fields {
-			fieldInits = append(fieldInits, fmt.Sprintf(".%s = %s", f.Name, g.emitValue(&f.Value)))
+			fname := f.Name
+			if isClass {
+				fname = lcFirst(fname)
+			}
+			fieldInits = append(fieldInits, fmt.Sprintf(".%s = %s", fname, g.emitValue(&f.Value)))
+		}
+		// Class handles are heap-allocated — use malloc pattern
+		if isClass {
+			name := g.structName(e.Type.Name, false)
+			return fmt.Sprintf("({ %s* _p = malloc(sizeof(%s)); *_p = (%s){%s}; _p; })",
+				name, name, name, strings.Join(fieldInits, ", "))
 		}
 		typeName := "/* struct */"
 		if e.Type != nil {
@@ -766,6 +797,9 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 			}
 			if d.Op == LBinNe {
 				return fmt.Sprintf("(strcmp(%s, %s) != 0)", left, right)
+			}
+			if d.Op == LBinAdd {
+				return fmt.Sprintf("grok_sprintf(\"%%s%%s\", %s, %s)", left, right)
 			}
 		}
 		return fmt.Sprintf("(%s %s %s)", left, cBinOp(d.Op), right)
@@ -900,11 +934,8 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 }
 
 // emitFuncLit emits a function literal (lambda).
-// In C, we emit it as a local static function-like construct using GCC statement expressions.
+// Lambdas are hoisted to top-level static functions; this returns just the function name.
 func (g *cGen) emitFuncLit(d *LFuncLitData, typ *LType) string {
-	// For simple lambdas without captures, we can use GCC nested functions
-	// or a simpler approach: just inline the body if it's a single expression
-	// For now, emit as a GCC statement expression for the body
 	var params []string
 	for _, p := range d.Params {
 		params = append(params, g.cFieldDecl(p.Type, p.Name))
@@ -916,7 +947,6 @@ func (g *cGen) emitFuncLit(d *LFuncLitData, typ *LType) string {
 		retType = g.cType(d.ReturnType)
 	}
 
-	// Use GCC nested function extension
 	g.lambdaID++
 	lambdaName := fmt.Sprintf("_lambda_%d", g.lambdaID)
 	paramStr := strings.Join(params, ", ")
@@ -924,16 +954,25 @@ func (g *cGen) emitFuncLit(d *LFuncLitData, typ *LType) string {
 		paramStr = "void"
 	}
 
-	// Emit inline nested function using GCC extension
+	// Emit body into temporary buffer
 	var bodyBuf strings.Builder
 	oldBuf := g.buf
 	g.buf = bodyBuf
+	g.indent++
 	g.emitStmts(d.Body)
+	g.indent--
 	bodyStr := g.buf.String()
 	g.buf = oldBuf
 
-	return fmt.Sprintf("({ %s %s(%s) { %s } %s; })",
-		retType, lambdaName, paramStr, bodyStr, lambdaName)
+	// Store for hoisting
+	g.lambdas = append(g.lambdas, cLambda{
+		name:    lambdaName,
+		retType: retType,
+		params:  paramStr,
+		bodyStr: bodyStr,
+	})
+
+	return lambdaName
 }
 
 // ---------------------------------------------------------------------------
@@ -943,7 +982,7 @@ func (g *cGen) emitFuncLit(d *LFuncLitData, typ *LType) string {
 func (g *cGen) emitValue(v *LValue) string {
 	switch v.Kind {
 	case LValVar:
-		return v.Name
+		return cSafeName(v.Name)
 	case LValTemp:
 		return fmt.Sprintf("_t%d", v.TempID)
 	case LValGlobal:
@@ -1036,8 +1075,8 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 		}
 	case "join", "str_join", "slice_join":
 		if len(d.Args) >= 2 {
-			sep := g.emitValue(&d.Args[0])
-			slice := g.emitValue(&d.Args[1])
+			slice := g.emitValue(&d.Args[0])
+			sep := g.emitValue(&d.Args[1])
 			return fmt.Sprintf("grok_str_join(%s, %s.data, %s.len)", sep, slice, slice)
 		}
 	case "repeat", "str_repeat", "string_repeat":
@@ -1066,9 +1105,15 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 	case "contains_key":
 		return "false /* contains_key: maps not supported */"
 	case "keys", "map_keys":
-		return "({}) /* keys: maps not supported */"
+		if len(d.Args) > 0 && d.Args[0].Type != nil && d.Args[0].Type.Kind == LTyMap && d.Args[0].Type.Key != nil {
+			return fmt.Sprintf("grok_slice_empty(%s) /* keys: maps not supported */", g.sliceTypeName(d.Args[0].Type.Key))
+		}
+		return fmt.Sprintf("grok_slice_empty(%s) /* keys: maps not supported */", g.sliceTypeName(&LType{Kind: LTyString}))
 	case "values", "map_values":
-		return "({}) /* values: maps not supported */"
+		if len(d.Args) > 0 && d.Args[0].Type != nil && d.Args[0].Type.Kind == LTyMap && d.Args[0].Type.Elem != nil {
+			return fmt.Sprintf("grok_slice_empty(%s) /* values: maps not supported */", g.sliceTypeName(d.Args[0].Type.Elem))
+		}
+		return fmt.Sprintf("grok_slice_empty(%s) /* values: maps not supported */", g.sliceTypeName(&LType{Kind: LTyI32}))
 
 	case "println", "Println":
 		return g.emitPrintln(d.Args)
@@ -1760,6 +1805,17 @@ func cSafeName(name string) string {
 		return name + "_"
 	}
 	return name
+}
+
+// lcFirst lowercases the first character of a string (for C struct field names)
+func lcFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	if s[0] >= 'A' && s[0] <= 'Z' {
+		return string(s[0]+32) + s[1:]
+	}
+	return s
 }
 
 func escapeC(s string) string {	s = strings.ReplaceAll(s, "\\", "\\\\")
