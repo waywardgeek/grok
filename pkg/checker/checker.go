@@ -2424,6 +2424,7 @@ func (c *Checker) checkFuncBody(fn *ast.FuncDecl) {
 func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 	sl := expr.Data.(*ast.StructLitExpr)
 	info := c.registry.Lookup(sl.TypeName)
+	opaqueExternal := false
 	// If not found and contains a dot, try module-qualified lookup
 	if info == nil && strings.Contains(sl.TypeName, ".") {
 		parts := strings.SplitN(sl.TypeName, ".", 2)
@@ -2449,6 +2450,12 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 					}
 				}
 			}
+		} else if aliasType := c.scope.Lookup(modAlias); aliasType != nil && aliasType.Kind == TyUnknown && aliasType.Name != "" {
+			info = &TypeInfo{
+				Type:   &Type{Kind: TyStruct, Name: sl.TypeName},
+				Fields: make(map[string]*Type),
+			}
+			opaqueExternal = true
 		}
 	}
 	if info == nil {
@@ -2458,6 +2465,12 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 	if info.Type.Kind != TyStruct && info.Type.Kind != TyClass {
 		c.error(expr.Span, "%q is not a struct or class type", sl.TypeName)
 		return TypeError
+	}
+	if opaqueExternal {
+		for _, f := range sl.Fields {
+			c.checkExpr(&f.Value)
+		}
+		return info.Type
 	}
 	for _, f := range sl.Fields {
 		valType := c.checkExpr(&f.Value)
