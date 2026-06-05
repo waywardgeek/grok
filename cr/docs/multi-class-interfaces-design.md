@@ -437,6 +437,314 @@ is compatible. Don't write code that cares about the distinction.
 - C backend: vtable structs per interface, dispatch functions
 - LIR: interface dispatch lowering
 
+### Phase 7: Relations — Parsing & Field Injection
+- `relation` as first-class AST node
+- Parser: `relation Interface Parent[:label] (owns|refs) [Child[:label]]`
+- `field T.name: Type` declarations in interfaces
+- Desugar: relation → impl block, inject fields into concrete classes with label prefixing
+- Checker: validate relation types match interface type params
+
+### Phase 8: Relations — Default Methods & Destructors
+- Inject default methods (append, remove, iterate) with field name rewriting
+- Auto-generate destructor bodies: cascade destroy for `owns`, unlink for children
+- Append/prepend semantics for destructor code composition
+
+### Phase 9: Relations — Ref Counting (C Backend)
+- `_refcount` field on classes not owned by any relation
+- `ref(x)` / `unref(x)` explicit statements
+- Suppress auto ref/unref in default code blocks
+- `ref()`/`unref()` emission in C backend for insert/remove
+
+### Phase 10: Relations — Dead Field Elimination (LIR)
+- Collect all field reads across entire program
+- Prove back-pointers unused: single owner + destructor only from owner
+- Eliminate dead fields and all writes to them
+- Simplify destructors when back-pointer eliminated
+
+## Relations
+
+Relations are the high-level user-facing concept that connects multi-class
+interfaces to ownership, lifetime management, and automatic code generation.
+A relation declaration says: "these classes are connected via this data
+structure pattern, and this class owns that class."
+
+### Syntax
+
+```forge
+relation DoublyLinked Root owns [Func]
+relation DoublyLinked Root:out_edges owns [Edge:out]
+relation Hashed<string> Registry owns [Handler:by_name]
+```
+
+The general form:
+
+```
+relation Interface Parent[:label] (owns|refs) [Child[:label]]
+```
+
+- **Interface**: which multi-class interface provides the data structure
+  (DoublyLinked, Hashed, Tree, etc.)
+- **Parent/Child**: concrete classes bound to the interface's type params
+- **owns/refs**: ownership semantics (see Lifetime below)
+- **Labels**: optional, used to prefix auto-injected field names for
+  disambiguation
+
+### Default Fields
+
+Interfaces declare default fields using `field T.name: Type` syntax:
+
+```forge
+interface DoublyLinked<P, C> {
+    field P.first: C?
+    field P.last: C?
+    field C.prev: C?
+    field C.next: C?
+    field C.parent: P?    // back-pointer, always declared
+
+    // Default methods use these fields
+    func append(parent: mut P, child: mut C) { ... }
+    func remove(parent: mut P, child: mut C) { ... }
+    func children(parent: P) -> gen C { ... }
+}
+```
+
+When a relation is declared, the compiler:
+
+1. Generates an `impl` block mapping the interface to the concrete classes
+2. Injects fields into the concrete classes, prefixed by label if present
+3. Injects default methods (append, remove, iterate, destroy)
+
+Example — `relation DoublyLinked Node:out_edges owns [Edge:out]` generates:
+
+| Interface field | Injected as          |
+|----------------|----------------------|
+| `P.first`      | `Node.out_edges_first: Edge?` |
+| `P.last`       | `Node.out_edges_last: Edge?`  |
+| `C.prev`       | `Edge.out_prev: Edge?`        |
+| `C.next`       | `Edge.out_next: Edge?`        |
+| `C.parent`     | `Edge.out_parent: Node?`      |
+
+Label prefixing rule: `{label}_{field_name}`. Unlabeled relations use bare
+field names. The default method bodies are rewritten to use the prefixed names.
+
+### Lifetime & Ownership
+
+There are two ownership modes:
+
+**`owns`** — Parent owns child's lifetime. The child lives until its destructor
+is called. No reference counting on the child. The parent's auto-generated
+destructor cascades destruction to all owned children.
+
+**`refs`** — Parent references but does not own child. The child's lifetime is
+managed elsewhere (by another owner, or by reference counting if no owner
+exists).
+
+**Root rule**: A class not owned by any relation is **reference counted**.
+A class owned by at least one relation survives until its destructor is called
+(no ref counting overhead).
+
+A class can be owned by multiple relations. Example:
+
+```forge
+relation DoublyLinked Chip:pins owns [Pin:chip]
+relation DoublyLinked Net:connections owns [Pin:net]
+```
+
+Pin is owned by both Chip and Net. When either owner destroys a Pin, it must
+unlink from the other owner's list — this requires the back-pointer.
+
+### Auto-Generated Destructors
+
+Each `owns` relation appends cleanup code to the parent's destructor. The
+interface provides the cleanup implementation. For DoublyLinked:
+
+```
+// Auto-appended to ~Node():
+while !isnull(self.out_edges_first) {
+    destroy(self.out_edges_first!)   // cascades to Edge destructor
+}
+```
+
+The Edge destructor in turn has auto-appended code to unlink from its parent:
+
+```
+// Auto-appended to ~Edge():
+DoublyLinked_remove<Node, Edge, out>(self.out_parent, self)
+```
+
+Destructors are composed from all relations a class participates in. Each
+relation appends its own cleanup block. The interface's `destroy` default
+method provides the template; the label selects which fields to use.
+
+**Append/prepend semantics**: Interface default code blocks can specify whether
+they are appended or prepended to a function body. Destructor cleanup is always
+appended (user code in the destructor runs first, then auto-cleanup).
+
+### Back-Pointer Elimination
+
+Back-pointers (`C.parent: P?`) are always declared but may be eliminated as a
+dead-field optimization in LIR:
+
+1. Walk all LIR — collect reads of every injected field
+2. If `parent` is never read by user code, AND
+3. The child has exactly one owner, AND
+4. The child's destructor is only called from the owner's destructor (not
+   called directly or from another owner's destructor)
+5. → Eliminate the back-pointer field and all writes to it
+
+Multiple owners make back-pointers mandatory: when Net destroys a Pin, it must
+unlink from Chip's list, which requires `Pin.chip_parent`.
+
+### Reference Counting Rules
+
+In the C backend, reference counting follows DataDraw/Rune conventions:
+
+**Default code blocks suppress auto ref/unref.** Inside auto-generated method
+bodies (insert, remove, destroy), pointer assignments do NOT automatically
+increment or decrement reference counts. This prevents back-pointers from
+creating reference cycles.
+
+Explicit `ref(x)` and `unref(x)` statements are available for when the
+programmer (or the interface's default implementation) intentionally wants to
+adjust counts:
+
+```forge
+// Inside DoublyLinked.append default implementation:
+func append(parent: mut P, child: mut C) {
+    // ... link child into parent's list ...
+    child.set_parent(parent)   // no ref bump — auto-generated code
+    ref(child)                 // explicit: one ref for ownership
+}
+
+func remove(parent: mut P, child: mut C) {
+    // ... unlink child from parent's list ...
+    child.set_parent(null)     // no ref drop — auto-generated code
+    unref(child)               // explicit: drop the ownership ref
+}
+```
+
+This way, a child linked into a doubly-linked list has exactly one reference
+count bump (from the ownership claim), not three (parent pointer + prev + next
+would all bump if auto-counted).
+
+**User code follows normal rules.** Only default code blocks (generated from
+interface implementations) suppress auto ref/unref. Regular user code gets
+automatic reference counting as expected.
+
+## C Backend: Relations & Memory Management
+
+The C backend is where relations have the most impact. Go has garbage
+collection, so ownership and ref counting are irrelevant there — but the
+auto-generated insert/remove/destroy methods are still valuable.
+
+### Struct Layout
+
+Default fields are injected directly into C struct definitions:
+
+```c
+typedef struct Node Node;
+typedef struct Edge Edge;
+
+struct Node {
+    // User-declared fields
+    const char* name;
+    // Injected by relation DoublyLinked Node:out_edges owns [Edge:out]
+    Edge* out_edges_first;
+    Edge* out_edges_last;
+};
+
+struct Edge {
+    // User-declared fields
+    int32_t weight;
+    // Injected by relation
+    Edge* out_prev;
+    Edge* out_next;
+    Node* out_parent;   // back-pointer (may be eliminated)
+    // Reference counting (only if not owned, or owned by multiple)
+    uint32_t _refcount;
+};
+```
+
+### Reference Counting Implementation
+
+```c
+static inline void edge_ref(Edge* e) {
+    if (e) e->_refcount++;
+}
+
+static inline void edge_unref(Edge* e) {
+    if (e && --e->_refcount == 0) {
+        edge_destroy(e);  // calls destructor, then free
+    }
+}
+```
+
+Classes owned by exactly one relation have no `_refcount` field — their
+lifetime is entirely managed by the owner's destructor.
+
+### Destructor Composition
+
+```c
+void node_destroy(Node* self) {
+    // User destructor body (if any) runs first
+
+    // Auto-appended: cascade destroy owned out_edges
+    while (self->out_edges_first) {
+        edge_destroy(self->out_edges_first);
+    }
+
+    free(self);
+}
+
+void edge_destroy(Edge* self) {
+    // User destructor body (if any) runs first
+
+    // Auto-appended: unlink from owner's DoublyLinked list
+    // (uses out_parent back-pointer to find the parent)
+    if (self->out_parent) {
+        doublylinked_remove_out(self->out_parent, self);
+    }
+
+    free(self);
+}
+```
+
+### Insert/Remove (No Auto Ref/Unref)
+
+```c
+// Generated from DoublyLinked.append with label "out"
+void doublylinked_append_out(Node* parent, Edge* child) {
+    // All pointer writes — NO ref count changes (default code block)
+    child->out_parent = parent;
+    child->out_prev = parent->out_edges_last;
+    child->out_next = NULL;
+    if (parent->out_edges_last) {
+        parent->out_edges_last->out_next = child;
+    } else {
+        parent->out_edges_first = child;
+    }
+    parent->out_edges_last = child;
+    // Explicit ref: one count for ownership
+    edge_ref(child);
+}
+```
+
+### Dead Field Elimination
+
+After LIR lowering, a pass identifies back-pointer fields that are never read:
+
+1. Collect all field reads across the entire program
+2. For each `C.parent` injected by a relation:
+   - If never read in user code
+   - If child has single owner
+   - If child destructor only called from owner's destructor
+3. Remove the field from the struct, remove all writes to it
+4. Simplify the destructor (no need to unlink from parent — parent is the
+   only one who calls destroy, and it walks its own list)
+
+This optimization is critical for cache performance in hot inner loops where
+the back-pointer wastes a cache line slot.
+
 ## Design Decisions
 
 | Decision | Choice | Rationale |
@@ -447,4 +755,10 @@ is compatible. Don't write code that cares about the distinction.
 | Method alias | `=` operator | Simple, distinct from field binding |
 | Generators | `gen T` + `yield` | Lazy iteration, no allocation, natural for linked structures |
 | Free functions in interfaces | `func name(args)` (no type prefix) | For operations with no natural receiver |
+| Default fields | `field T.name: Type` in interfaces | Auto-injected into classes via relations; reduces boilerplate |
+| Label prefixing | `{label}_{field}` | Single label per relation, applied uniformly to all injected fields |
+| Back-pointers | Always declared, dead-code eliminated | Conservative: always correct, optimized away when provably unused |
+| Ref counting scope | Suppressed in default code blocks | Prevents cycles from back-pointers; explicit ref/unref for ownership |
+| Root class lifetime | Ref counted if unowned | Classes not owned by any relation need automatic lifetime management |
+| Destructor composition | Append cleanup per relation | Each relation appends its own unlink/cascade; user code runs first |
 | UFCS | Deferred | Design is compatible; don't write code that distinguishes |
