@@ -596,11 +596,7 @@ func grokNameToGo(name string) string {
 }
 
 // typesMatch compares a grok type string against a Go type string.
-// Returns true if they match or if the grok type is "?" (unknown/unconvertible).
 func typesMatch(grokStr, goStr string) bool {
-	if grokStr == "?" || grokStr == "" {
-		return true // can't compare, don't report false positive
-	}
 	if grokStr == goStr {
 		return true
 	}
@@ -619,6 +615,25 @@ func typesMatch(grokStr, goStr string) bool {
 		return true
 	}
 	return false
+}
+
+func typeComparisonUnavailable(grokStr string) bool {
+	return grokStr == "" || strings.Contains(grokStr, "?")
+}
+
+func verifyTypeMatch(context, grokStr, goStr, grokFile, goFile string, result *Result) bool {
+	if typeComparisonUnavailable(grokStr) {
+		result.add(Warning, grokFile, goFile, fmt.Sprintf("%s: type comparison skipped: .grok type cannot be represented for comparison (.grok=%s, Go=%s)", context, displayType(grokStr), goStr))
+		return true
+	}
+	return typesMatch(grokStr, goStr)
+}
+
+func displayType(s string) string {
+	if s == "" {
+		return "<empty>"
+	}
+	return s
 }
 
 // stripPackagePrefix removes Go package qualifiers from a type string.
@@ -688,7 +703,7 @@ func verifyStruct(s grokast.StructDecl, goInfo *goTypeInfo, grokFile, goFile str
 			continue
 		}
 		grokType := grokTypeToGoString(grokField.Type)
-		if !typesMatch(grokType, goType) {
+		if !verifyTypeMatch(fmt.Sprintf("struct %s field %s", s.Name, grokField.Name), grokType, goType, grokFile, goFile, result) {
 			result.add(Error, grokFile, goFile, fmt.Sprintf("struct %s: field %s type mismatch: .grok=%s, Go=%s", s.Name, grokField.Name, grokType, goType))
 		}
 	}
@@ -725,7 +740,7 @@ func verifyClass(c grokast.ClassDecl, goInfo *goTypeInfo, grokFile, goFile strin
 			continue
 		}
 		grokType := grokTypeToGoString(grokField.Type)
-		if !typesMatch(grokType, goType) {
+		if !verifyTypeMatch(fmt.Sprintf("class %s field %s", c.Name, grokField.Name), grokType, goType, grokFile, goFile, result) {
 			result.add(Error, grokFile, goFile, fmt.Sprintf("class %s: field %s type mismatch: .grok=%s, Go=%s", c.Name, grokField.Name, grokType, goType))
 		}
 	}
@@ -884,11 +899,11 @@ func verifyFuncSignature(context string, grokFunc grokast.FuncDecl, goFunc *goFu
 			if gi < len(goFunc.Params) {
 				grokType := grokTypeToGoString(grokParam.Type)
 				goType := goFunc.Params[gi].Type
-				if !typesMatch(grokType, goType) {
-					paramName := grokParam.Name
-					if paramName == "" {
-						paramName = fmt.Sprintf("#%d", gi+1)
-					}
+				paramName := grokParam.Name
+				if paramName == "" {
+					paramName = fmt.Sprintf("#%d", gi+1)
+				}
+				if !verifyTypeMatch(fmt.Sprintf("%s param %s", context, paramName), grokType, goType, grokFile, goFile, result) {
 					result.add(Error, grokFile, goFile, fmt.Sprintf("%s: param %s type mismatch: .grok=%s, Go=%s", context, paramName, grokType, goType))
 				}
 			}
@@ -917,7 +932,7 @@ func verifyFuncSignature(context string, grokFunc grokast.FuncDecl, goFunc *goFu
 	if grokReturnCount != goReturnCount {
 		result.add(Error, grokFile, goFile, fmt.Sprintf("%s: return count mismatch: .grok=%d, Go=%d", context, grokReturnCount, goReturnCount))
 	} else if grokReturnCount == 1 && goReturnCount == 1 {
-		if !typesMatch(grokReturnStr, goFunc.Returns[0]) {
+		if !verifyTypeMatch(fmt.Sprintf("%s return", context), grokReturnStr, goFunc.Returns[0], grokFile, goFile, result) {
 			result.add(Error, grokFile, goFile, fmt.Sprintf("%s: return type mismatch: .grok=%s, Go=%s", context, grokReturnStr, goFunc.Returns[0]))
 		}
 	} else if grokReturnCount > 1 && grokFunc.ReturnType != nil && grokFunc.ReturnType.Kind == grokast.TypeTuple {
@@ -926,7 +941,7 @@ func verifyFuncSignature(context string, grokFunc grokast.FuncDecl, goFunc *goFu
 		for i, field := range tt.Fields {
 			if i < len(goFunc.Returns) {
 				grokElemStr := grokTypeToGoString(field.Type)
-				if !typesMatch(grokElemStr, goFunc.Returns[i]) {
+				if !verifyTypeMatch(fmt.Sprintf("%s return #%d", context, i+1), grokElemStr, goFunc.Returns[i], grokFile, goFile, result) {
 					result.add(Error, grokFile, goFile, fmt.Sprintf("%s: return #%d type mismatch: .grok=%s, Go=%s", context, i+1, grokElemStr, goFunc.Returns[i]))
 				}
 			}

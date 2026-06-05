@@ -30,16 +30,17 @@ grok Verifier {
     T?          → *T            (optional = pointer)
     [T]         → []T           (sequence = slice)
     map[K]V     → map[K]V       (direct)
-    (T, U)      → (T, U)        (tuple = multi-return)
+    (T, U)      → ?             (single tuple values are not Go-comparable)
     any         ≡ interface{}    (Go 1.18+ equivalence)
 
     Package-prefix stripping is recursive: *ast.File → *File, []ast.Node → []Node,
     map[string]*ast.File → map[string]*File. This allows .grok files to use
     unqualified type names while Go source uses cross-package references.
 
-    typesMatch() is the final comparison gate. If either side contains "?" (an
-    unconvertible type), it returns true (graceful fallback — don't report false
-    positives for types the converter can't handle).
+    verifyTypeMatch() is the final comparison gate. If the converted Grok type is
+    empty or contains "?" (an unconvertible type), verification records a warning
+    and treats the comparison as skipped to avoid false positives for types the
+    converter can't handle. Tuple returns are still compared element-by-element.
   """
 
   doc "Name Mapping": """
@@ -176,43 +177,49 @@ grok Verifier {
 // func grokNameToGo(name string) string    :557
 //
 // typesMatch compares a grok type string against a Go type string.
-// func typesMatch(grokStr, goStr string) bool    :600
+// func typesMatch(grokStr, goStr string) bool    :599
+//
+// func typeComparisonUnavailable(grokStr string) bool    :620
+//
+// func verifyTypeMatch(context, grokStr, goStr, grokFile, goFile string, result *Result) bool    :624
+//
+// func displayType(s string) string    :632
 //
 // stripPackagePrefix removes Go package qualifiers from a type string.
-// func stripPackagePrefix(goType string) string    :626
+// func stripPackagePrefix(goType string) string    :641
 //
 // findGoName checks if a name exists in a map, trying both PascalCase and camelCase.
-// func findGoName(name string, names map[string]*goFuncInfo) (string, bool)    :661
+// func findGoName(name string, names map[string]*goFuncInfo) (string, bool)    :676
 //
-// func verifyStruct(s grokast.StructDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :677
+// func verifyStruct(s grokast.StructDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :692
 //
-// func verifyClass(c grokast.ClassDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :714
+// func verifyClass(c grokast.ClassDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :729
 //
-// func verifyEnum(e grokast.EnumDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :776
+// func verifyEnum(e grokast.EnumDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :791
 //
-// func verifyInterface(i grokast.InterfaceDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :796
+// func verifyInterface(i grokast.InterfaceDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :811
 //
-// func verifyFunction(f grokast.FuncDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :814
+// func verifyFunction(f grokast.FuncDecl, goInfo *goTypeInfo, grokFile, goFile string, result *Result)    :829
 //
 // toGoFieldName tries PascalCase first (exported), then the original name (unexported).
-// func toGoFieldName(name string) string    :838
+// func toGoFieldName(name string) string    :853
 //
 // findGoField checks if a field exists, trying PascalCase, camelCase, and exact match.
-// func findGoField(name string, fields map[string]string) bool    :843
+// func findGoField(name string, fields map[string]string) bool    :858
 //
 // findGoFieldType returns the Go type string for a field, trying PascalCase, camelCase, and exact match.
-// func findGoFieldType(name string, fields map[string]string) (string, bool)    :849
+// func findGoFieldType(name string, fields map[string]string) (string, bool)    :864
 //
 // verifyFuncSignature checks parameter count and return type of a grok function against Go.
-// func verifyFuncSignature(context string, grokFunc grokast.FuncDecl, goFunc *goFuncInfo, grokFile, goFile string, result *Result)    :865
+// func verifyFuncSignature(context string, grokFunc grokast.FuncDecl, goFunc *goFuncInfo, grokFile, goFile string, result *Result)    :880
 //
-// func toGoMethodName(name string) string    :937
+// func toGoMethodName(name string) string    :952
 //
 // snakeToPascal converts snake_case to PascalCase.
-// func snakeToPascal(s string) string    :942
+// func snakeToPascal(s string) string    :957
 //
 // snakeToCamel converts snake_case to camelCase.
-// func snakeToCamel(s string) string    :956
+// func snakeToCamel(s string) string    :971
 
 // --- dependencies ---
 //
