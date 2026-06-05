@@ -53,7 +53,10 @@ type Lowerer struct {
 	classTypeParams map[string][]LTypeParam // class name → type params
 
 	// Variable types for assignment coercion
-	varTypes map[string]*LType // variable name → declared type
+	varTypes map[string]*LType
+
+	// Type alias resolution (name → underlying LType)
+	typeAliasTypes map[string]*LType
 
 	// Interface declarations for impl block resolution
 	ifaceDecls map[string]*LInterfaceDecl // interface name → lowered decl
@@ -78,6 +81,7 @@ func NewLowerer() *Lowerer {
 		classTypeParams: make(map[string][]LTypeParam),
 		varTypes:        make(map[string]*LType),
 		ifaceDecls:      make(map[string]*LInterfaceDecl),
+		typeAliasTypes:  make(map[string]*LType),
 	}
 }
 
@@ -112,9 +116,11 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 
 		// Lower type aliases
 		for _, ta := range block.TypeAliases {
+			loweredType := l.lowerTypeExpr(&ta.Type)
+			l.typeAliasTypes[ta.Name] = loweredType
 			prog.TypeDefs = append(prog.TypeDefs, LTypeDef{
 				Name:       ta.Name,
-				Type:       l.lowerTypeExpr(&ta.Type),
+				Type:       loweredType,
 				IsExported: ta.IsPublic,
 			})
 		}
@@ -393,6 +399,14 @@ func (l *Lowerer) lowerNamedType(nt *ast.NamedType) *LType {
 	// Check if it's a type parameter in scope
 	if l.typeParamsInScope[nt.Name] {
 		return &LType{Kind: LTyTypeVar, Name: nt.Name}
+	}
+	// Check if it's a type alias — return underlying type with name preserved
+	if aliasType, ok := l.typeAliasTypes[nt.Name]; ok {
+		// Return a copy with the alias name set for typedef emission
+		copied := *aliasType
+		copied.Name = nt.Name
+		copied.IsExported = l.exported[nt.Name]
+		return &copied
 	}
 	// Default to struct
 	return &LType{Kind: LTyStruct, Name: nt.Name, IsExported: l.exported[nt.Name]}

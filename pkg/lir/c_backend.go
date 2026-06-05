@@ -353,8 +353,21 @@ func (g *cGen) emitStmt(s *LStmt) {
 		if d.Init != nil {
 			initStr := g.emitValue(d.Init)
 			// Wrap in union constructor if target is GrokUnion and source isn't
-			if varType != nil && varType.Kind == LTyUnion && d.Init.Type != nil && d.Init.Type.Kind != LTyUnion {
-				initStr = g.cWrapUnion(initStr, d.Init.Type)
+			srcType := d.Init.Type
+			if varType != nil && varType.Kind == LTyUnion {
+				if srcType == nil {
+					srcType = g.inferLValType(d.Init)
+				}
+				if srcType != nil && srcType.Kind != LTyUnion {
+					initStr = g.cWrapUnion(initStr, srcType)
+				}
+			}
+			// Wrap in optional if target is optional and source is a bare literal value
+			if varType != nil && varType.Kind == LTyOptional {
+				if d.Init.Kind == LValLitInt || d.Init.Kind == LValLitUint || d.Init.Kind == LValLitFloat ||
+					d.Init.Kind == LValLitString || d.Init.Kind == LValLitBool {
+					initStr = fmt.Sprintf("grok_some(%s, %s)", initStr, g.cType(varType))
+				}
 			}
 			g.linef("%s = %s;", g.cFieldDecl(varType, name), initStr)
 		} else {
@@ -672,6 +685,34 @@ func (g *cGen) cWrapUnion(expr string, srcType *LType) string {
 	default:
 		return fmt.Sprintf("grok_union_ptr((void*)(%s))", expr)
 	}
+}
+
+// inferLValType infers the type of an LValue from its literal kind when Type is nil.
+func (g *cGen) inferLValType(v *LValue) *LType {
+	if v.Type != nil {
+		return v.Type
+	}
+	switch v.Kind {
+	case LValLitInt:
+		return &LType{Kind: LTyI32, Bits: 32}
+	case LValLitUint:
+		return &LType{Kind: LTyU32, Bits: 32}
+	case LValLitFloat:
+		return &LType{Kind: LTyF64, Bits: 64}
+	case LValLitString:
+		return &LType{Kind: LTyString}
+	case LValLitBool:
+		return &LType{Kind: LTyBool}
+	case LValTemp:
+		if t, ok := g.tempTypes[v.TempID]; ok {
+			return t
+		}
+	case LValVar:
+		if t, ok := g.varTypes[v.Name]; ok {
+			return t
+		}
+	}
+	return nil
 }
 
 // emitSideEffect handles side-effect expressions (append, method calls, etc.)
