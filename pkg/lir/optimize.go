@@ -32,6 +32,14 @@ func optimizeFunc(fn *LFuncDecl) {
 	collectUsedVarNames(fn.Body, usedVars)
 
 	fn.Body = eliminateUnusedTempsRecursive(fn.Body, usedTemps, usedVars)
+
+	// Re-collect AFTER elimination — some VarDecls referencing MultiAssign names
+	// may have been eliminated, making those names now unused
+	usedVars2 := make(map[string]bool)
+	collectUsedVarNames(fn.Body, usedVars2)
+	usedTemps2 := make(map[int]bool)
+	collectUsedTemps(fn.Body, usedTemps2)
+	blankUnusedMultiAssignNames(fn.Body, usedTemps2, usedVars2)
 }
 
 func optimizeStmtsStructural(stmts []LStmt, returnType *LType) []LStmt {
@@ -258,20 +266,60 @@ func optimizeNestedStmtsStructural(s *LStmt, returnType *LType) {
 	}
 }
 
-// eliminateUnusedTempsRecursive removes unused temps from stmts and all nested blocks
-func eliminateUnusedTempsRecursive(stmts []LStmt, usedTemps map[int]bool, usedVars map[string]bool) []LStmt {
-	// Blank-out unused names in MultiAssign
+// blankUnusedMultiAssignNames blanks unused names in MultiAssign statements.
+// Must be called AFTER temp/var elimination so that eliminated VarDecls
+// don't falsely mark MultiAssign names as used.
+func blankUnusedMultiAssignNames(stmts []LStmt, usedTemps map[int]bool, usedVars map[string]bool) {
 	for i := range stmts {
 		if stmts[i].Kind == LStmtMultiAssign {
 			ma := stmts[i].Data.(*LMultiAssign)
 			for j, name := range ma.Names {
-				if !usedVars[name] && !usedTemps[parseTempID(name)] {
+				if name != "_" && !usedVars[name] && !usedTemps[parseTempID(name)] {
 					ma.Names[j] = "_"
 				}
 			}
 		}
+		// Recurse into nested blocks
+		switch stmts[i].Kind {
+		case LStmtIf:
+			d := stmts[i].Data.(*LIf)
+			blankUnusedMultiAssignNames(d.Then, usedTemps, usedVars)
+			blankUnusedMultiAssignNames(d.Else, usedTemps, usedVars)
+		case LStmtWhile:
+			d := stmts[i].Data.(*LWhile)
+			blankUnusedMultiAssignNames(d.CondBlock, usedTemps, usedVars)
+			blankUnusedMultiAssignNames(d.Body, usedTemps, usedVars)
+		case LStmtFor:
+			d := stmts[i].Data.(*LFor)
+			blankUnusedMultiAssignNames(d.Body, usedTemps, usedVars)
+		case LStmtSwitch:
+			d := stmts[i].Data.(*LSwitch)
+			for j := range d.Cases {
+				blankUnusedMultiAssignNames(d.Cases[j].Body, usedTemps, usedVars)
+			}
+		case LStmtBlock:
+			d := stmts[i].Data.(*LBlock)
+			blankUnusedMultiAssignNames(d.Stmts, usedTemps, usedVars)
+		case LStmtDefer:
+			d := stmts[i].Data.(*LDefer)
+			blankUnusedMultiAssignNames(d.Body, usedTemps, usedVars)
+		case LStmtSpawn:
+			d := stmts[i].Data.(*LSpawn)
+			blankUnusedMultiAssignNames(d.Body, usedTemps, usedVars)
+		case LStmtLock:
+			d := stmts[i].Data.(*LLock)
+			blankUnusedMultiAssignNames(d.Body, usedTemps, usedVars)
+		case LStmtSelect:
+			d := stmts[i].Data.(*LSelect)
+			for j := range d.Cases {
+				blankUnusedMultiAssignNames(d.Cases[j].Body, usedTemps, usedVars)
+			}
+		}
 	}
+}
 
+// eliminateUnusedTempsRecursive removes unused temps from stmts and all nested blocks
+func eliminateUnusedTempsRecursive(stmts []LStmt, usedTemps map[int]bool, usedVars map[string]bool) []LStmt {
 	stmts = eliminateUnusedTemps(stmts, usedTemps)
 	for i := range stmts {
 		switch stmts[i].Kind {

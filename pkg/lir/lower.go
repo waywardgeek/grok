@@ -1078,6 +1078,127 @@ func (l *Lowerer) lowerMatchAsIfElse(ms *ast.MatchStmt, matchVal LValue, result 
 			return
 		}
 
+		if arm.Pattern.Kind == ast.PatIdent {
+			// Binding pattern: x or x if guard
+			ip := dataAs[ast.IdentPattern](arm.Pattern.Data)
+			// Emit binding: let x = matchVal
+			l.emit(LStmt{Kind: LStmtVarDecl, Data: &LVarDecl{
+				Name: ip.Name,
+				Type: matchVal.Type,
+				Init: &matchVal,
+			}})
+
+			if arm.Guard != nil {
+				// Guarded binding: x if x < 0 => { ... }
+				guardVal := l.lowerExpr(arm.Guard)
+				body := l.lowerArmBody(&arm.Body, result)
+
+				var elseStmts []LStmt
+				if i < len(ms.Arms)-1 {
+					saved := l.stmts
+					l.stmts = nil
+					remaining := &ast.MatchStmt{Value: ms.Value, Arms: ms.Arms[i+1:]}
+					l.lowerMatchAsIfElse(remaining, matchVal, result)
+					elseStmts = l.stmts
+					l.stmts = saved
+				}
+
+				l.emit(LStmt{Kind: LStmtIf, Data: &LIf{
+					Cond: guardVal,
+					Then: body,
+					Else: elseStmts,
+				}})
+			} else {
+				// Unguarded binding: treat like wildcard with binding
+				body := l.lowerArmBody(&arm.Body, result)
+				for _, s := range body {
+					l.emit(s)
+				}
+			}
+			return
+		}
+
+		if arm.Pattern.Kind == ast.PatTuple {
+			tp := dataAs[ast.TuplePattern](arm.Pattern.Data)
+			// Build condition from tuple element comparisons
+			// For each non-wildcard element, compare against matchVal elements
+			// matchVal is the tuple value; we need to extract elements
+			var conds []LValue
+			var bindings []LStmt
+			for ei, elemPat := range tp.Elems {
+				// Extract the element from the tuple
+				// For now, assume matchVal was lowered from a tuple expression
+				// and the individual values are accessible via the tuple's components
+				// We need the original tuple expressions
+				_ = ei
+				switch elemPat.Kind {
+				case ast.PatWildcard:
+					// No condition needed
+				case ast.PatLiteral:
+					lp := dataAs[ast.LiteralPattern](elemPat.Data)
+					litVal := l.lowerExpr(&lp.Expr)
+					// Get the ei-th element of the tuple
+					elemVal := l.getTupleElement(ms, matchVal, ei)
+					cmpTemp := l.emitTemp(LExpr{
+						Kind: LExprBinOp,
+						Type: &LType{Kind: LTyBool},
+						Data: &LBinOpData{Op: LBinEq, Left: elemVal, Right: litVal},
+					})
+					conds = append(conds, cmpTemp)
+				case ast.PatIdent:
+					ip := dataAs[ast.IdentPattern](elemPat.Data)
+					elemVal := l.getTupleElement(ms, matchVal, ei)
+					bindings = append(bindings, LStmt{Kind: LStmtVarDecl, Data: &LVarDecl{
+						Name: ip.Name,
+						Type: elemVal.Type,
+						Init: &elemVal,
+					}})
+				}
+			}
+
+			// Combine conditions with &&
+			var condVal LValue
+			if len(conds) == 0 {
+				condVal = LValue{Kind: LValLitBool, BoolVal: true, Type: &LType{Kind: LTyBool}}
+			} else {
+				condVal = conds[0]
+				for _, c := range conds[1:] {
+					condVal = l.emitTemp(LExpr{
+						Kind: LExprBinOp,
+						Type: &LType{Kind: LTyBool},
+						Data: &LBinOpData{Op: LBinAnd, Left: condVal, Right: c},
+					})
+				}
+			}
+
+			// Emit bindings inside the then block
+			saved := l.stmts
+			l.stmts = nil
+			for _, b := range bindings {
+				l.emit(b)
+			}
+			armBody := l.lowerArmBody(&arm.Body, result)
+			thenBody := append(l.stmts, armBody...)
+			l.stmts = saved
+
+			var elseStmts []LStmt
+			if i < len(ms.Arms)-1 {
+				saved2 := l.stmts
+				l.stmts = nil
+				remaining := &ast.MatchStmt{Value: ms.Value, Arms: ms.Arms[i+1:]}
+				l.lowerMatchAsIfElse(remaining, matchVal, result)
+				elseStmts = l.stmts
+				l.stmts = saved2
+			}
+
+			l.emit(LStmt{Kind: LStmtIf, Data: &LIf{
+				Cond: condVal,
+				Then: thenBody,
+				Else: elseStmts,
+			}})
+			return
+		}
+
 		if arm.Pattern.Kind == ast.PatLiteral {
 			lp := dataAs[ast.LiteralPattern](arm.Pattern.Data)
 			litVal := l.lowerExpr(&lp.Expr)
@@ -1107,23 +1228,20 @@ func (l *Lowerer) lowerMatchAsIfElse(ms *ast.MatchStmt, matchVal LValue, result 
 			return
 		}
 
-		// Ident pattern as catch-all
-		if arm.Pattern.Kind == ast.PatIdent {
-			ip := dataAs[ast.IdentPattern](arm.Pattern.Data)
-			body := l.lowerArmBody(&arm.Body, result)
-			// Bind the match value to the name, then execute body
-			allStmts := []LStmt{{Kind: LStmtVarDecl, Data: &LVarDecl{
-				Name: ip.Name,
-				Type: matchVal.Type,
-				Init: &matchVal,
-			}}}
-			allStmts = append(allStmts, body...)
-			for _, s := range allStmts {
-				l.emit(s)
-			}
-			return
+	}
+}
+
+// getTupleElement extracts the i-th element from a tuple match expression.
+// Since tuple literals lower each element independently, we re-lower from the AST.
+func (l *Lowerer) getTupleElement(ms *ast.MatchStmt, matchVal LValue, idx int) LValue {
+	if ms.Value.Kind == ast.ExprTupleLit {
+		tl := dataAs[ast.TupleLitExpr](ms.Value.Data)
+		if idx < len(tl.Elems) {
+			return l.lowerExpr(&tl.Elems[idx])
 		}
 	}
+	// Fallback: return matchVal (shouldn't happen for valid tuple patterns)
+	return matchVal
 }
 
 func (l *Lowerer) findVariantTag(enumName, variantName string) int {
@@ -1794,6 +1912,17 @@ func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue {
 			typeName = alias
 		}
 		resultType = &LType{Kind: LTyStruct, Name: typeName, IsExported: l.exported[sl.TypeName]}
+	}
+
+	// Fix qualified struct literals whose type wasn't resolved by the checker
+	// (e.g., sync.Mutex{} resolves to error type because checker doesn't know external structs)
+	if strings.Contains(sl.TypeName, ".") && resultType.Kind != LTyStruct && resultType.Kind != LTyClassHandle && resultType.Kind != LTyMutex {
+		// Special case: sync.Mutex
+		if sl.TypeName == "sync.Mutex" {
+			resultType = &LType{Kind: LTyMutex}
+		} else {
+			resultType = &LType{Kind: LTyStruct, Name: sl.TypeName, IsExported: true}
+		}
 	}
 
 	return l.emitTemp(LExpr{
