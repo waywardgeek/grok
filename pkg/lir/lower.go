@@ -657,7 +657,51 @@ func (l *Lowerer) lowerImplBlock(impl *ast.ImplBlock) []LFuncDecl {
 				IsExported: true,
 			})
 		}
-		// TODO: ImplFieldBind (<->), ImplInline ({body})
+		if mapping.Kind == ast.ImplFieldBind {
+			// Field binding: P.children <-> Folder.items
+			// Generates a getter: func (self *Folder) Children() []*File { return self.Items }
+			var ifaceMethod *LInterfaceMethod
+			for i := range iface.Methods {
+				if iface.Methods[i].ReceiverType == mapping.TypeParam && iface.Methods[i].Name == mapping.MethodName {
+					ifaceMethod = &iface.Methods[i]
+					break
+				}
+			}
+			if ifaceMethod == nil {
+				continue
+			}
+
+			className := typeArgMap[mapping.TypeParam]
+			if className == "" {
+				continue
+			}
+
+			retType := l.substImplType(ifaceMethod.ReturnType, typeArgMap)
+
+			// Getter body: return self.field
+			var body []LStmt
+			fieldAccess := LExpr{
+				Kind: LExprClassGet,
+				Data: &LClassGetData{
+					Handle: LValue{Kind: LValVar, Name: "self", Type: &LType{Kind: LTyClassHandle, Name: className}},
+					Class:  className,
+					Field:  mapping.TargetMember,
+				},
+				Type: retType,
+			}
+			body = append(body, LStmt{Kind: LStmtTempDef, Data: &LTempDef{ID: 0, Expr: fieldAccess}})
+			body = append(body, LStmt{Kind: LStmtReturn, Data: &LReturn{Values: []LValue{{Kind: LValTemp, TempID: 0, Type: retType}}}})
+
+			wrappers = append(wrappers, LFuncDecl{
+				Name:       ifaceMethod.Name,
+				Receiver:   className,
+				Params:     nil, // getter has no params
+				ReturnType: retType,
+				Body:       body,
+				IsExported: true,
+			})
+		}
+		// TODO: ImplInline ({body})
 	}
 
 	return wrappers
@@ -689,7 +733,12 @@ func (l *Lowerer) substImplType(t *LType, typeArgMap map[string]string) *LType {
 	case LTySlice:
 		return &LType{Kind: LTySlice, Elem: l.substImplType(t.Elem, typeArgMap)}
 	case LTyOptional:
-		return &LType{Kind: LTyOptional, Elem: l.substImplType(t.Elem, typeArgMap)}
+		inner := l.substImplType(t.Elem, typeArgMap)
+		// Classes are already pointers — optional class = class handle (no double pointer)
+		if inner.Kind == LTyClassHandle {
+			return inner
+		}
+		return &LType{Kind: LTyOptional, Elem: inner}
 	case LTyMap:
 		cp := *t
 		cp.Key = l.substImplType(t.Key, typeArgMap)

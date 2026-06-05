@@ -5,6 +5,12 @@ grok Interfaces {
     func E.tgt_node(self) -> N
   }
 
+  // DoublyLinked: parent has children, child has name
+  interface DoublyLinked<P, C> {
+    func P.children(self) -> [C]
+    func C.label(self) -> string
+  }
+
   // Classes use DIFFERENT method names than the interface
   class SimpleGraph(node_list: [SimpleNode]) {
     pub func get_nodes(self) -> [SimpleNode] {
@@ -31,6 +37,16 @@ grok Interfaces {
     E.tgt_node = SimpleEdge.get_target
   }
 
+  // Field binding test: Folder contains Files
+  class Folder(name: string, items: [File]) {}
+
+  class File(name: string) {}
+
+  impl DoublyLinked<Folder, File> {
+    P.children <-> Folder.items
+    C.label <-> File.name
+  }
+
   pub func count_edges<G, N, E>(graph: G) -> i32 where Graph<G, N, E> {
     let mut total: i32 = 0
     let nodes = graph.nodes()
@@ -43,6 +59,11 @@ grok Interfaces {
     return total
   }
 
+  pub func count_children<P, C>(p: P) -> i32 where DoublyLinked<P, C> {
+    let kids = p.children()
+    return len(kids)
+  }
+
   func main() {
     let n2 = SimpleNode("B", [])
     let e1 = SimpleEdge(n2)
@@ -50,5 +71,11 @@ grok Interfaces {
     let g = SimpleGraph([n1, n2])
     let count = count_edges<SimpleGraph, SimpleNode, SimpleEdge>(g)
     println(count)
+
+    let f1 = File("readme.txt")
+    let f2 = File("data.csv")
+    let dir = Folder("docs", [f1, f2])
+    let num = count_children<Folder, File>(dir)
+    println(num)
   }
 }
