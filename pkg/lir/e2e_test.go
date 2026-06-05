@@ -175,7 +175,8 @@ func pipelineFromSource(t *testing.T, source, pkgName string) string {
 		prog.Package = pkgName
 	}
 
-	// Emit Go
+	// Optimize and emit Go
+	Optimize(prog)
 	result := EmitGo(prog)
 	return result
 }

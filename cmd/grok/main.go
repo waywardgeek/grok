@@ -211,6 +211,7 @@ func cmdCompile(args []string) error {
 			lowerer := lir.NewLowerer()
 			prog := lowerer.Lower(pf.file)
 			prog.Package = pkg
+			lir.Optimize(prog)
 			goSrc = lir.EmitGo(prog)
 		} else {
 			tr := transpiler.New(pkg)

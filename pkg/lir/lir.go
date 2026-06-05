@@ -134,6 +134,7 @@ const (
 
 	// Calls
 	LExprCall
+	LExprMethodCall
 	LExprBuiltin
 
 	// Construction
@@ -242,6 +243,13 @@ type LCallData struct {
 	IsExported bool
 }
 
+type LMethodCallData struct {
+	Receiver   LValue
+	Method     string
+	Args       []LValue
+	IsExported bool
+}
+
 type LBuiltinData struct {
 	Name string // "len", "append", "println", "print", "printf"
 	Args []LValue
@@ -257,7 +265,8 @@ type LFieldInit struct {
 }
 
 type LClassAllocData struct {
-	Class string
+	Class  string
+	Fields []LFieldInit // constructor field initializations
 }
 
 type LMakeChannelData struct {
@@ -375,6 +384,10 @@ const (
 	LStmtLock   // lock(mutex) { body }
 	LStmtSend   // channel <- value
 	LStmtSelect // select { case... }
+
+	// Optimization-introduced statement kinds
+	LStmtSideEffect  // bare expression statement (no assignment)
+	LStmtMultiAssign  // a, b := expr (multi-return destructuring)
 )
 
 // --- Statement data types ---
@@ -520,26 +533,54 @@ type LSelectCase struct {
 	Body    []LStmt
 }
 
+// LSideEffect: a bare expression statement (introduced by optimizer).
+type LSideEffect struct {
+	Expr LExpr
+}
+
+// LMultiAssign: a, b := expr — multi-return destructuring (introduced by optimizer).
+type LMultiAssign struct {
+	Names []string
+	Types []*LType
+	Expr  LExpr
+}
+
 // ---------------------------------------------------------------------------
 // Top-Level Declarations
 // ---------------------------------------------------------------------------
 
 // LProgram is the root of a lowered program.
 type LProgram struct {
-	Package   string
-	Imports   []LImport
-	Structs   []LStructDecl
-	Classes   []LClassDecl
-	Enums     []LEnumDecl
-	Functions []LFuncDecl
-	Globals   []LVarDecl
-	TypeDefs  []LTypeDef // type aliases
+	Package    string
+	Imports    []LImport
+	Structs    []LStructDecl
+	Classes    []LClassDecl
+	Enums      []LEnumDecl
+	Interfaces []LInterfaceDecl
+	Functions  []LFuncDecl
+	Globals    []LVarDecl
+	TypeDefs   []LTypeDef // type aliases
 }
 
 // LImport is a single import declaration.
 type LImport struct {
 	Alias string
 	Path  string
+}
+
+// LInterfaceDecl: a Go-style interface.
+type LInterfaceDecl struct {
+	Name       string
+	Methods    []LInterfaceMethod
+	Embeds     []string // names of embedded interfaces
+	IsExported bool
+}
+
+// LInterfaceMethod: a method signature in an interface.
+type LInterfaceMethod struct {
+	Name       string
+	Params     []LParam // excludes self
+	ReturnType *LType
 }
 
 // LStructDecl: a value-type struct.

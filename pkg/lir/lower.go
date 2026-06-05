@@ -42,6 +42,9 @@ type Lowerer struct {
 
 	// Visibility tracking
 	exported map[string]bool // name → is exported (pub) — types, functions, methods
+
+	// Import tracking — alias → path (e.g. "fmt" → "fmt", "errors" → "errors")
+	importAliases map[string]string
 }
 
 type variantCtorInfo struct {
@@ -58,6 +61,7 @@ func NewLowerer() *Lowerer {
 		enumVariants:    make(map[string][]LVariant),
 		classCtorFields: make(map[string][]string),
 		classFields:     make(map[string][]LField),
+		importAliases:   make(map[string]string),
 		exported:   make(map[string]bool),
 	}
 }
@@ -81,6 +85,14 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 				Alias: imp.Alias,
 				Path:  imp.Path,
 			})
+			// Track import alias → path for package-qualified call detection
+			alias := imp.Alias
+			if alias == "" {
+				// Use last segment of path as alias
+				parts := strings.Split(imp.Path, "/")
+				alias = parts[len(parts)-1]
+			}
+			l.importAliases[alias] = imp.Path
 		}
 
 		// Lower type aliases
@@ -105,6 +117,11 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 		// Lower classes
 		for _, cls := range block.Classes {
 			prog.Classes = append(prog.Classes, l.lowerClassDecl(&cls))
+		}
+
+		// Lower interfaces
+		for _, iface := range block.Interfaces {
+			prog.Interfaces = append(prog.Interfaces, l.lowerInterfaceDecl(&iface))
 		}
 
 		// Lower functions (including class methods)
@@ -197,7 +214,7 @@ func (l *Lowerer) registerTypes(block *ast.GrokBlock) {
 	}
 	for _, cls := range block.Classes {
 		for _, m := range cls.Methods {
-			l.exported[cls.Name+"_"+m.Name] = m.IsPublic
+			l.exported[m.Name] = m.IsPublic
 		}
 	}
 }
@@ -421,6 +438,35 @@ func (l *Lowerer) lowerStructDecl(s *ast.StructDecl) LStructDecl {
 func (l *Lowerer) lowerEnumDecl(e *ast.EnumDecl) LEnumDecl {
 	variants := l.enumVariants[e.Name]
 	return LEnumDecl{Name: e.Name, Variants: variants, IsExported: e.IsPublic}
+}
+
+func (l *Lowerer) lowerInterfaceDecl(iface *ast.InterfaceDecl) LInterfaceDecl {
+	var methods []LInterfaceMethod
+	for _, m := range iface.Methods {
+		var params []LParam
+		// Skip self param (first param)
+		for i, p := range m.Params {
+			if i == 0 && p.Name == "self" {
+				continue
+			}
+			params = append(params, LParam{Name: p.Name, Type: l.lowerTypeExpr(&p.Type)})
+		}
+		var retType *LType
+		if m.ReturnType != nil {
+			retType = l.lowerTypeExpr(m.ReturnType)
+		}
+		methods = append(methods, LInterfaceMethod{
+			Name:       m.Name,
+			Params:     params,
+			ReturnType: retType,
+		})
+	}
+	return LInterfaceDecl{
+		Name:       iface.Name,
+		Methods:    methods,
+		Embeds:     iface.Implements,
+		IsExported: iface.IsPublic,
+	}
 }
 
 func (l *Lowerer) lowerClassDecl(cls *ast.ClassDecl) LClassDecl {
@@ -670,7 +716,20 @@ func (l *Lowerer) lowerReturnStmt(stmt *ast.Stmt) {
 				values = append(values, l.lowerExpr(&elem))
 			}
 		} else {
-			values = append(values, l.lowerExpr(rs.Value))
+			val := l.lowerExpr(rs.Value)
+			// Auto-wrap non-optional value when function returns optional
+			if l.currentReturnType != nil && l.currentReturnType.Kind == LTyOptional {
+				if val.Type == nil || val.Type.Kind != LTyOptional {
+					if val.Kind != LValLitNull {
+						val = l.emitTemp(LExpr{
+							Kind: LExprWrapOptional,
+							Type: l.currentReturnType,
+							Data: &LWrapOptionalData{Value: val},
+						})
+					}
+				}
+			}
+			values = append(values, val)
 		}
 	}
 	l.emit(LStmt{Kind: LStmtReturn, Data: &LReturn{Values: values}})
@@ -1281,11 +1340,53 @@ func (l *Lowerer) lowerBinary(expr *ast.Expr) LValue {
 		}
 	}
 
+	// Insert numeric casts when operand types mismatch
+	left, right = l.coerceNumericBinary(left, right, resultType)
+
 	return l.emitTemp(LExpr{
 		Kind: LExprBinOp,
 		Type: resultType,
 		Data: &LBinOpData{Op: op, Left: left, Right: right},
 	})
+}
+
+// coerceNumericBinary inserts LExprCast when binary operands have different numeric types.
+func (l *Lowerer) coerceNumericBinary(left, right LValue, resultType *LType) (LValue, LValue) {
+	if left.Type == nil || right.Type == nil || resultType == nil {
+		return left, right
+	}
+	if !isNumericKind(left.Type.Kind) || !isNumericKind(right.Type.Kind) {
+		return left, right
+	}
+	if left.Type.Kind == right.Type.Kind {
+		return left, right
+	}
+	// Cast the operand that doesn't match the result type
+	target := resultType
+	if left.Type.Kind != target.Kind {
+		left = l.emitTemp(LExpr{
+			Kind: LExprCast,
+			Type: target,
+			Data: &LCastData{Operand: left, Target: target},
+		})
+	}
+	if right.Type.Kind != target.Kind {
+		right = l.emitTemp(LExpr{
+			Kind: LExprCast,
+			Type: target,
+			Data: &LCastData{Operand: right, Target: target},
+		})
+	}
+	return left, right
+}
+
+func isNumericKind(k LTypeKind) bool {
+	switch k {
+	case LTyI8, LTyI16, LTyI32, LTyI64, LTyU8, LTyU16, LTyU32, LTyU64,
+		LTyF32, LTyF64, LTyPlatformInt, LTyPlatformUint:
+		return true
+	}
+	return false
 }
 
 func mapBinaryOp(op ast.BinaryOp) LBinOpKind {
@@ -1382,6 +1483,36 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 			Type: l.exprType(expr),
 			Data: &LBuiltinData{Name: funcName, Args: args},
 		})
+	case "make_channel":
+		// make_channel<T>() or make_channel<T>(bufSize)
+		resultType := l.exprType(expr)
+		var elemType *LType
+		if resultType != nil && resultType.Kind == LTyChannel {
+			elemType = resultType.Elem
+		} else {
+			elemType = &LType{Kind: LTyAny}
+		}
+		var bufSize *LValue
+		if len(args) > 0 {
+			bufSize = &args[0]
+		}
+		return l.emitTemp(LExpr{
+			Kind: LExprMakeChannel,
+			Type: resultType,
+			Data: &LMakeChannelData{ElemType: elemType, BufSize: bufSize},
+		})
+	}
+
+	// Check for package-qualified calls (e.g., fmt.Println, errors.New)
+	if strings.Contains(funcName, ".") {
+		parts := strings.SplitN(funcName, ".", 2)
+		if _, isImport := l.importAliases[parts[0]]; isImport {
+			return l.emitTemp(LExpr{
+				Kind: LExprCall,
+				Type: l.exprType(expr),
+				Data: &LCallData{Func: funcName, Args: args, IsExported: true},
+			})
+		}
 	}
 
 	// Check if it's a variant constructor
@@ -1405,17 +1536,31 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 		// Build struct literal from args using ctor field names
 		var fieldInits []LFieldInit
 		ctorFields := l.classCtorFields[funcName]
+		allFields := l.classFields[funcName]
 		for i, arg := range args {
 			name := ""
 			if i < len(ctorFields) {
 				name = ctorFields[i]
 			}
-			fieldInits = append(fieldInits, LFieldInit{Name: name, Value: arg})
+			// Auto-wrap non-optional arg when field is optional
+			val := arg
+			if i < len(allFields) && allFields[i].Type != nil && allFields[i].Type.Kind == LTyOptional {
+				if val.Type == nil || val.Type.Kind != LTyOptional {
+					if val.Kind != LValLitNull {
+						val = l.emitTemp(LExpr{
+							Kind: LExprWrapOptional,
+							Type: allFields[i].Type,
+							Data: &LWrapOptionalData{Value: val},
+						})
+					}
+				}
+			}
+			fieldInits = append(fieldInits, LFieldInit{Name: name, Value: val})
 		}
 		return l.emitTemp(LExpr{
 			Kind: LExprClassAlloc,
 			Type: &LType{Kind: LTyClassHandle, Name: funcName, IsExported: l.exported[funcName]},
-			Data: &LClassAllocData{Class: funcName},
+			Data: &LClassAllocData{Class: funcName, Fields: fieldInits},
 		})
 	}
 
@@ -1429,6 +1574,25 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 
 func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 	mc := dataAs[ast.MethodCallExpr](expr.Data)
+
+	// Check if receiver is an import package (e.g., fmt.Println, errors.New)
+	if mc.Receiver.Kind == ast.ExprIdent {
+		identName := dataAs[ast.IdentExpr](mc.Receiver.Data).Name
+		if _, isImport := l.importAliases[identName]; isImport {
+			// Package-qualified call — lower args and emit as LExprCall
+			var args []LValue
+			for _, arg := range mc.Args {
+				args = append(args, l.lowerExpr(&arg))
+			}
+			funcName := identName + "." + mc.Method
+			return l.emitTemp(LExpr{
+				Kind: LExprCall,
+				Type: l.exprType(expr),
+				Data: &LCallData{Func: funcName, Args: args, IsExported: true},
+			})
+		}
+	}
+
 	recv := l.lowerExpr(&mc.Receiver)
 
 	var args []LValue
@@ -1452,20 +1616,16 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 		}
 	}
 
-	// Regular method call: emit as function call with receiver as first arg
-	allArgs := append([]LValue{recv}, args...)
-	// Method name: ReceiverType_method or just method
-	var funcName string
-	if recv.Type != nil && recv.Type.Name != "" {
-		funcName = recv.Type.Name + "_" + mc.Method
-	} else {
-		funcName = mc.Method
-	}
-
+	// Regular method call: emit as method call on receiver
 	return l.emitTemp(LExpr{
-		Kind: LExprCall,
+		Kind: LExprMethodCall,
 		Type: resultType,
-		Data: &LCallData{Func: funcName, Args: allArgs, IsExported: l.exported[funcName]},
+		Data: &LMethodCallData{
+			Receiver:   recv,
+			Method:     mc.Method,
+			Args:       args,
+			IsExported: l.exported[mc.Method],
+		},
 	})
 }
 
@@ -1628,7 +1788,12 @@ func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue {
 
 	resultType := l.exprType(expr)
 	if resultType.Kind == LTyAny {
-		resultType = &LType{Kind: LTyStruct, Name: sl.TypeName, IsExported: l.exported[sl.TypeName]}
+		typeName := sl.TypeName
+		// Check if it's a qualified import (e.g., sync.Mutex)
+		if alias, ok := l.importAliases[typeName]; ok {
+			typeName = alias
+		}
+		resultType = &LType{Kind: LTyStruct, Name: typeName, IsExported: l.exported[sl.TypeName]}
 	}
 
 	return l.emitTemp(LExpr{

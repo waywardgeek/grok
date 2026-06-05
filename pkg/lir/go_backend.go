@@ -16,21 +16,22 @@ type GoBackend struct {
 	// For method receivers
 	currentReceiver string
 
-	// Enum type switch support: maps tag temp IDs to their VariantTag data,
-	// and stores enum variant info for tag→variant-name resolution.
-	tempDefs      map[int]*LTempDef  // temp ID → definition (for detecting variant tag temps)
-	enumVariants  map[string][]LVariant // enum name → variants
-	enumExported  map[string]bool       // enum name → is exported
-	typeSwitchVar string             // within a type switch case, the bound variable name
+	// Enum type switch support
+	tempDefs      map[int]*LTempDef
+	enumVariants  map[string][]LVariant
+	typeSwitchVar string
+
+	// Visibility tracking (populated from declarations)
+	nameExported map[string]bool // type/func/method name → is exported
 }
 
 // EmitGo converts an LIR program to Go source code.
 func EmitGo(prog *LProgram) string {
 	g := &GoBackend{
-		imports:       make(map[string]string),
-		tempDefs:      make(map[int]*LTempDef),
-		enumVariants:  make(map[string][]LVariant),
-		enumExported:  make(map[string]bool),
+		imports:      make(map[string]string),
+		tempDefs:     make(map[int]*LTempDef),
+		enumVariants: make(map[string][]LVariant),
+		nameExported: make(map[string]bool),
 	}
 	return g.emit(prog)
 }
@@ -40,6 +41,9 @@ func (g *GoBackend) emit(prog *LProgram) string {
 	for _, imp := range prog.Imports {
 		g.imports[imp.Path] = imp.Alias
 	}
+
+	// Build visibility map from all declarations
+	g.buildVisibilityMap(prog)
 
 	// First pass: emit everything to a buffer to discover auto-imports
 	var body strings.Builder
@@ -62,6 +66,13 @@ func (g *GoBackend) emit(prog *LProgram) string {
 	for _, e := range prog.Enums {
 		g.buf.Reset()
 		g.emitEnumDecl(&e)
+		body.WriteString(g.buf.String())
+	}
+
+	// Interfaces
+	for _, iface := range prog.Interfaces {
+		g.buf.Reset()
+		g.emitInterfaceDecl(&iface)
 		body.WriteString(g.buf.String())
 	}
 
@@ -97,6 +108,35 @@ func (g *GoBackend) emit(prog *LProgram) string {
 
 	out.WriteString(body.String())
 	return out.String()
+}
+
+// buildVisibilityMap populates nameExported from all declarations in the program.
+func (g *GoBackend) buildVisibilityMap(prog *LProgram) {
+	for _, s := range prog.Structs {
+		g.nameExported[s.Name] = s.IsExported
+	}
+	for _, c := range prog.Classes {
+		g.nameExported[c.Name] = c.IsExported
+	}
+	for _, e := range prog.Enums {
+		g.nameExported[e.Name] = e.IsExported
+		for _, v := range e.Variants {
+			g.nameExported[v.Name] = e.IsExported
+		}
+	}
+	for _, td := range prog.TypeDefs {
+		g.nameExported[td.Name] = td.IsExported
+	}
+	for _, iface := range prog.Interfaces {
+		g.nameExported[iface.Name] = iface.IsExported
+	}
+	for _, f := range prog.Functions {
+		g.nameExported[f.Name] = f.IsExported
+		if f.Receiver != "" {
+			// Register method name visibility
+			g.nameExported[f.Name] = f.IsExported
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +249,6 @@ func (g *GoBackend) emitStructDecl(s *LStructDecl) {
 func (g *GoBackend) emitEnumDecl(e *LEnumDecl) {
 	name := g.visName(e.Name, e.IsExported)
 	g.enumVariants[e.Name] = e.Variants
-	g.enumExported[e.Name] = e.IsExported
 
 	// Interface type
 	g.writef("type %s interface {\n", name)
@@ -226,6 +265,36 @@ func (g *GoBackend) emitEnumDecl(e *LEnumDecl) {
 		g.writef("}\n\n")
 		g.writef("func (%s) is%s() {}\n\n", vName, name)
 	}
+}
+
+func (g *GoBackend) emitInterfaceDecl(iface *LInterfaceDecl) {
+	name := g.visName(iface.Name, iface.IsExported)
+	g.writef("type %s interface {\n", name)
+	for _, embed := range iface.Embeds {
+		g.writef("\t%s\n", g.visName(embed, g.nameExported[embed]))
+	}
+	for _, m := range iface.Methods {
+		// Method visibility: use the visibility map (methods may be pub on implementing classes)
+		methodExported := g.nameExported[m.Name]
+		if !methodExported {
+			// If not found in map, fall back to interface export status
+			methodExported = iface.IsExported
+		}
+		methodName := g.visName(m.Name, methodExported)
+		g.writef("\t%s(", methodName)
+		for i, p := range m.Params {
+			if i > 0 {
+				g.writef(", ")
+			}
+			g.writef("%s %s", p.Name, g.goType(p.Type))
+		}
+		g.writef(")")
+		if m.ReturnType != nil && m.ReturnType.Kind != LTyUnit {
+			g.writef(" %s", g.goType(m.ReturnType))
+		}
+		g.writef("\n")
+	}
+	g.writef("}\n\n")
 }
 
 func (g *GoBackend) emitClassDecl(c *LClassDecl) {
@@ -246,7 +315,7 @@ func (g *GoBackend) emitFuncDecl(f *LFuncDecl) {
 	if f.Receiver != "" {
 		// Method — emit as (self *ReceiverType)
 		startIdx = 1 // skip self param
-		receiverType := g.visName(f.Receiver, true) // methods are always on exported types for now
+		receiverType := g.visName(f.Receiver, g.nameExported[f.Receiver])
 		g.writef("func (self *%s) %s(", receiverType, name)
 	} else {
 		g.writef("func %s(", name)
@@ -295,7 +364,12 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 			break
 		}
 		g.writeIndent()
-		g.writef("%s := ", g.tempName(td.ID))
+		// Use typed declaration for temps with specific numeric types
+		if td.Expr.Type != nil && g.needsTypedDecl(td.Expr.Type) && isSimpleExpr(&td.Expr) {
+			g.writef("var %s %s = ", g.tempName(td.ID), g.goType(td.Expr.Type))
+		} else {
+			g.writef("%s := ", g.tempName(td.ID))
+		}
 		g.emitExpr(&td.Expr)
 		g.writef("\n")
 
@@ -305,10 +379,15 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 		if vd.Init != nil {
 			if vd.Name == "_" {
 				g.writef("_ = ")
+				g.emitValue(vd.Init)
+			} else if vd.Type != nil && (vd.Init.Kind == LValLitInt || vd.Init.Kind == LValLitUint || vd.Init.Kind == LValLitFloat) && g.needsTypedDecl(vd.Type) {
+				// Use typed declaration for literals when the Go type differs from inference
+				g.writef("var %s %s = ", vd.Name, g.goType(vd.Type))
+				g.emitValue(vd.Init)
 			} else {
 				g.writef("%s := ", vd.Name)
+				g.emitValue(vd.Init)
 			}
-			g.emitValue(vd.Init)
 		} else {
 			g.writef("var %s %s", vd.Name, g.goType(vd.Type))
 		}
@@ -427,13 +506,18 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 		f := s.Data.(*LFor)
 		g.writeIndent()
 		if f.IndexVar != "" {
-			g.writef("for %s, %s := range ", f.IndexVar, f.Var)
+			g.writef("for _idx_%s, %s := range ", f.IndexVar, f.Var)
 		} else {
 			g.writef("for _, %s := range ", f.Var)
 		}
 		g.emitValue(&f.Collection)
 		g.writef(" {\n")
 		g.indent++
+		if f.IndexVar != "" {
+			// Cast index to int32 (Grok's default integer type)
+			g.writeIndent()
+			g.writef("%s := int32(_idx_%s)\n", f.IndexVar, f.IndexVar)
+		}
 		g.emitStmts(f.Body)
 		g.indent--
 		g.writeIndent()
@@ -576,6 +660,36 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 		}
 		g.writeIndent()
 		g.writef("}\n")
+
+	case LStmtSideEffect:
+		se := s.Data.(*LSideEffect)
+		// Special case: append/push must reassign to the slice variable
+		if se.Expr.Kind == LExprBuiltin {
+			d := se.Expr.Data.(*LBuiltinData)
+			if (d.Name == "append" || d.Name == "slice_push") && len(d.Args) > 0 && d.Args[0].Kind == LValVar {
+				g.writeIndent()
+				g.writef("%s = ", d.Args[0].Name)
+				g.emitExpr(&se.Expr)
+				g.writef("\n")
+				break
+			}
+		}
+		g.writeIndent()
+		g.emitExpr(&se.Expr)
+		g.writef("\n")
+
+	case LStmtMultiAssign:
+		ma := s.Data.(*LMultiAssign)
+		g.writeIndent()
+		for i, name := range ma.Names {
+			if i > 0 {
+				g.writef(", ")
+			}
+			g.writef("%s", name)
+		}
+		g.writef(" := ")
+		g.emitExpr(&ma.Expr)
+		g.writef("\n")
 	}
 }
 
@@ -588,12 +702,21 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 // Output: switch _v := matchVal.(type) { case VariantName: ... }
 func (g *GoBackend) emitEnumTypeSwitch(sw *LSwitch, matchVal *LValue) {
 	variants, _ := g.enumVariants[sw.EnumName]
-	exported := g.enumExported[sw.EnumName]
+	exported := g.nameExported[sw.EnumName]
+
+	// Check if any case body uses variant data (needs _v binding)
+	needsBinding := g.switchUsesVariantData(sw)
 
 	g.writeIndent()
-	g.writef("switch _v := ")
-	g.emitValue(matchVal)
-	g.writef(".(type) {\n")
+	if needsBinding {
+		g.writef("switch _v := ")
+		g.emitValue(matchVal)
+		g.writef(".(type) {\n")
+	} else {
+		g.writef("switch ")
+		g.emitValue(matchVal)
+		g.writef(".(type) {\n")
+	}
 
 	for _, c := range sw.Cases {
 		g.writeIndent()
@@ -640,6 +763,63 @@ func (g *GoBackend) emitStmtsRewritingVariantData(stmts []LStmt, enumName string
 	g.typeSwitchVar = "_v"
 	g.emitStmts(stmts)
 	g.typeSwitchVar = saved
+}
+
+// switchUsesVariantData checks if any case body in the switch uses LExprVariantData.
+func (g *GoBackend) switchUsesVariantData(sw *LSwitch) bool {
+	for _, c := range sw.Cases {
+		if g.stmtsUseVariantData(c.Body) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *GoBackend) stmtsUseVariantData(stmts []LStmt) bool {
+	for _, s := range stmts {
+		if g.stmtUsesVariantData(&s) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *GoBackend) stmtUsesVariantData(s *LStmt) bool {
+	switch s.Kind {
+	case LStmtTempDef:
+		td := s.Data.(*LTempDef)
+		return g.exprUsesVariantData(&td.Expr)
+	case LStmtVarDecl:
+		vd := s.Data.(*LVarDecl)
+		if vd.Init != nil {
+			return g.valueUsesVariantData(vd.Init)
+		}
+	case LStmtAssign:
+		a := s.Data.(*LAssign)
+		return g.valueUsesVariantData(&a.Value)
+	case LStmtIf:
+		d := s.Data.(*LIf)
+		return g.stmtsUseVariantData(d.Then) || g.stmtsUseVariantData(d.Else)
+	case LStmtReturn:
+		r := s.Data.(*LReturn)
+		for _, v := range r.Values {
+			if g.valueUsesVariantData(&v) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (g *GoBackend) exprUsesVariantData(e *LExpr) bool {
+	if e.Kind == LExprVariantData {
+		return true
+	}
+	return false
+}
+
+func (g *GoBackend) valueUsesVariantData(v *LValue) bool {
+	return false // values are vars/temps/literals — variant data only appears in exprs via temps
 }
 
 // ---------------------------------------------------------------------------
@@ -697,7 +877,26 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 
 	case LExprCall:
 		d := e.Data.(*LCallData)
-		g.writef("%s(", g.visName(d.Func, d.IsExported))
+		// Package-qualified calls (e.g. fmt.Println) — capitalize function part only
+		if idx := strings.IndexByte(d.Func, '.'); idx >= 0 {
+			pkg := d.Func[:idx]
+			fn := d.Func[idx+1:]
+			g.writef("%s.%s(", pkg, g.visName(fn, true))
+		} else {
+			g.writef("%s(", g.visName(d.Func, d.IsExported))
+		}
+		for i, arg := range d.Args {
+			if i > 0 {
+				g.writef(", ")
+			}
+			g.emitValue(&arg)
+		}
+		g.writef(")")
+
+	case LExprMethodCall:
+		d := e.Data.(*LMethodCallData)
+		g.emitValue(&d.Receiver)
+		g.writef(".%s(", g.visName(d.Method, d.IsExported))
 		for i, arg := range d.Args {
 			if i > 0 {
 				g.writef(", ")
@@ -723,6 +922,18 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 				g.emitValue(&f.Value)
 			}
 			g.writef("}")
+		} else if e.Type != nil && e.Type.Kind == LTyClassHandle {
+			// Class struct literal — emit with & (pointer)
+			name := g.visName(e.Type.Name, e.Type.IsExported)
+			g.writef("&%s{", name)
+			for i, f := range d.Fields {
+				if i > 0 {
+					g.writef(", ")
+				}
+				g.writef("%s: ", exportedFieldName(f.Name))
+				g.emitValue(&f.Value)
+			}
+			g.writef("}")
 		} else {
 			g.writef("%s{", typeName)
 			for i, f := range d.Fields {
@@ -737,7 +948,25 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 
 	case LExprClassAlloc:
 		d := e.Data.(*LClassAllocData)
-		g.writef("&%s{}", d.Class)
+		className := d.Class
+		if e.Type != nil {
+			className = g.visName(d.Class, e.Type.IsExported)
+		}
+		if len(d.Fields) == 0 {
+			g.writef("&%s{}", className)
+		} else {
+			g.writef("&%s{", className)
+			for i, f := range d.Fields {
+				if i > 0 {
+					g.writef(", ")
+				}
+				if f.Name != "" {
+					g.writef("%s: ", exportedFieldName(f.Name))
+				}
+				g.emitValue(&f.Value)
+			}
+			g.writef("}")
+		}
 
 	case LExprMakeSlice:
 		elemType := g.goType(e.Type.Elem)
@@ -800,7 +1029,7 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 			// Inside a type switch — _v is already the concrete variant type
 			g.writef("%s.%s", g.typeSwitchVar, exportedFieldName(d.Field))
 		} else {
-			exported := g.enumExported[d.Enum]
+			exported := g.nameExported[d.Enum]
 			g.emitValue(&d.Value)
 			g.writef(".(%s).%s", g.visName(d.Variant, exported), exportedFieldName(d.Field))
 		}
@@ -879,9 +1108,9 @@ func (g *GoBackend) emitBuiltin(d *LBuiltinData) {
 		g.emitArgs(d.Args)
 		g.writef(")")
 	case "len":
-		g.writef("len(")
+		g.writef("int32(len(")
 		g.emitArgs(d.Args)
-		g.writef(")")
+		g.writef("))")
 	case "append":
 		g.writef("append(")
 		g.emitArgs(d.Args)
@@ -920,18 +1149,29 @@ func (g *GoBackend) emitBuiltinMethod(d *LBuiltinData) {
 		g.writef("/* unknown builtin %s */", d.Name)
 		return
 	}
+	prefix := parts[0]
 	method := parts[1]
 	recv := d.Args[0]
 	args := d.Args[1:]
 
 	switch method {
 	case "contains":
-		g.autoImport("strings")
-		g.writef("strings.Contains(")
-		g.emitValue(&recv)
-		g.writef(", ")
-		g.emitArgs(args)
-		g.writef(")")
+		if prefix == "string" {
+			g.autoImport("strings")
+			g.writef("strings.Contains(")
+			g.emitValue(&recv)
+			g.writef(", ")
+			g.emitArgs(args)
+			g.writef(")")
+		} else {
+			// slice.contains — linear search
+			g.autoImport("slices")
+			g.writef("slices.Contains(")
+			g.emitValue(&recv)
+			g.writef(", ")
+			g.emitArgs(args)
+			g.writef(")")
+		}
 	case "split":
 		g.autoImport("strings")
 		g.writef("strings.Split(")
@@ -975,6 +1215,91 @@ func (g *GoBackend) emitBuiltinMethod(d *LBuiltinData) {
 			g.emitValue(&args[0])
 			g.writef("]; return ok }()")
 		}
+	case "len":
+		g.writef("len(")
+		g.emitValue(&recv)
+		g.writef(")")
+	case "has_prefix":
+		g.autoImport("strings")
+		g.writef("strings.HasPrefix(")
+		g.emitValue(&recv)
+		g.writef(", ")
+		g.emitArgs(args)
+		g.writef(")")
+	case "has_suffix":
+		g.autoImport("strings")
+		g.writef("strings.HasSuffix(")
+		g.emitValue(&recv)
+		g.writef(", ")
+		g.emitArgs(args)
+		g.writef(")")
+	case "index_of":
+		g.autoImport("strings")
+		g.writef("strings.Index(")
+		g.emitValue(&recv)
+		g.writef(", ")
+		g.emitArgs(args)
+		g.writef(")")
+	case "join":
+		g.autoImport("strings")
+		g.writef("strings.Join(")
+		g.emitValue(&recv)
+		g.writef(", ")
+		g.emitArgs(args)
+		g.writef(")")
+	case "replace":
+		g.autoImport("strings")
+		g.writef("strings.ReplaceAll(")
+		g.emitValue(&recv)
+		g.writef(", ")
+		g.emitArgs(args)
+		g.writef(")")
+	case "repeat":
+		g.autoImport("strings")
+		g.writef("strings.Repeat(")
+		g.emitValue(&recv)
+		g.writef(", ")
+		if len(args) > 0 {
+			g.writef("int(")
+			g.emitValue(&args[0])
+			g.writef(")")
+		}
+		g.writef(")")
+	case "pop":
+		// slice.pop() → func() T { last := s[len(s)-1]; s = s[:len(s)-1]; return last }()
+		// Emitted as a compound expression
+		g.writef("func() any { _s := ")
+		g.emitValue(&recv)
+		g.writef("; _last := _s[len(_s)-1]; return _last }()")
+	case "contains_key":
+		if len(args) > 0 {
+			g.writef("func() bool { _, ok := ")
+			g.emitValue(&recv)
+			g.writef("[")
+			g.emitValue(&args[0])
+			g.writef("]; return ok }()")
+		}
+	case "keys":
+		// Derive key type from receiver map type
+		keyType := "any"
+		if recv.Type != nil && recv.Type.Key != nil {
+			keyType = g.goType(recv.Type.Key)
+		}
+		g.writef("func() []%s { _ks := make([]%s, 0, len(", keyType, keyType)
+		g.emitValue(&recv)
+		g.writef(")); for k := range ")
+		g.emitValue(&recv)
+		g.writef(" { _ks = append(_ks, k) }; return _ks }()")
+	case "values":
+		valType := "any"
+		if recv.Type != nil && recv.Type.Elem != nil {
+			valType = g.goType(recv.Type.Elem)
+		}
+		g.writef("func() []%s { _vs := make([]%s, 0, len(", valType, valType)
+		g.emitValue(&recv)
+		g.writef(")); for _, v := range ")
+		g.emitValue(&recv)
+		g.writef(" { _vs = append(_vs, v) }; return _vs }()")
 	default:
 		g.emitValue(&recv)
 		g.writef(".%s(", method)
@@ -1043,6 +1368,35 @@ func exportedFieldName(name string) string {
 		return name
 	}
 	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// needsTypedDecl returns true when a literal-initialized variable declaration
+// should use `var x Type = val` instead of `x := val` to avoid Go type inference
+// defaulting to a different type (e.g. int literal → int instead of int32).
+func (g *GoBackend) needsTypedDecl(t *LType) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case LTyI8, LTyI16, LTyI32, LTyI64, LTyU8, LTyU16, LTyU32, LTyU64:
+		return true // Go would infer int/uint
+	case LTyF32:
+		return true // Go would infer float64
+	}
+	return false
+}
+
+// isSimpleExpr returns true for expressions where Go would infer a numeric type
+// that might differ from the declared type (unary ops on literals, plain values).
+func isSimpleExpr(e *LExpr) bool {
+	switch e.Kind {
+	case LExprUnOp:
+		return true
+	case LExprBinOp:
+		// Binary ops between literals/values
+		return true
+	}
+	return false
 }
 
 func goBinOp(op LBinOpKind) string {
