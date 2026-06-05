@@ -349,15 +349,17 @@ type ModuleExports struct {
 
 // Checker performs type checking on a Grok AST.
 type Checker struct {
-	registry      *Registry
-	errors        []error
-	scope         *Scope
-	currentReturn *Type // expected return type of current function (nil = void/unit)
-	loopDepth     int   // tracks nesting depth inside loops (for break/continue validation)
-	modules       map[string]*ModuleExports // file path → exports (cache)
-	checking      map[string]bool           // files currently being checked (cycle detection)
-	currentFile   string                    // file path of the file being checked
-	heldLocks     map[string]bool           // lock names currently held (for guarded_by enforcement)
+	registry       *Registry
+	errors         []error
+	scope          *Scope
+	currentReturn  *Type // expected return type of current function (nil = void/unit)
+	loopDepth      int   // tracks nesting depth inside loops (for break/continue validation)
+	modules        map[string]*ModuleExports // file path → exports (cache)
+	checking       map[string]bool           // files currently being checked (cycle detection)
+	currentFile    string                    // file path of the file being checked
+	heldLocks      map[string]bool           // lock names currently held (for guarded_by enforcement)
+	typeVarMethods map[string]map[string]*Type // type var name → method name → method type (from relational constraints)
+	ifaceDecls     map[string]*ast.InterfaceDecl // interface name → AST declaration (for relational constraint resolution)
 }
 
 // New creates a new type checker.
@@ -1196,6 +1198,21 @@ func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 	// Built-in methods on primitive types
 	if ret := c.checkBuiltinMethod(recvType, mc.Method, mc.Args, expr); ret != nil {
 		return ret
+	}
+	// Type variable methods from relational constraints (where Graph<G, N, E>)
+	if recvType.Kind == TyVar && c.typeVarMethods != nil {
+		if methods, ok := c.typeVarMethods[recvType.Name]; ok {
+			if methType, ok := methods[mc.Method]; ok && methType.Kind == TyFunc {
+				// Check argument count
+				if methType.Params != nil && len(mc.Args) != len(methType.Params) {
+					c.error(expr.Span, "%s.%s expects %d arguments, got %d", recvType.Name, mc.Method, len(methType.Params), len(mc.Args))
+				}
+				for i := range mc.Args {
+					c.checkExpr(&mc.Args[i])
+				}
+				return methType.Return
+			}
+		}
 	}
 	// Check args but return unknown
 	for i := range mc.Args {
@@ -2308,6 +2325,12 @@ func (c *Checker) registerEnum(e *ast.EnumDecl) {
 }
 
 func (c *Checker) registerInterface(iface *ast.InterfaceDecl) {
+	// Store the AST declaration for relational constraint resolution
+	if c.ifaceDecls == nil {
+		c.ifaceDecls = make(map[string]*ast.InterfaceDecl)
+	}
+	c.ifaceDecls[iface.Name] = iface
+
 	info := &TypeInfo{
 		Type:    &Type{Kind: TyInterface, Name: iface.Name},
 		Methods: make(map[string]*Type),
@@ -2390,6 +2413,95 @@ func (c *Checker) registerFunc(fn *ast.FuncDecl) {
 	c.scope.Define(fn.Name, fnType)
 }
 
+// grantRelationalMethods populates typeVarMethods from a relational constraint.
+// Given `where Graph<G, N, E>`, looks up the Graph interface and maps
+// typed methods (func G.nodes, func N.out_edges, etc.) to the actual type var names.
+func (c *Checker) grantRelationalMethods(ifaceName string, typeArgs []ast.TypeExpr) {
+	iface := c.ifaceDecls[ifaceName]
+	if iface == nil {
+		return
+	}
+
+	// Build interface type param name → where clause type arg name mapping
+	// e.g. for Graph<G,N,E> and where Graph<MyG, MyN, MyE>:
+	//   iface param "G" → typeArg "MyG", etc.
+	paramMap := make(map[string]string) // interface param name → function type var name
+	for i, tp := range iface.TypeParams {
+		if i < len(typeArgs) {
+			if typeArgs[i].Kind == ast.TypeNamed {
+				nt := typeArgs[i].Data.(ast.NamedType)
+				paramMap[tp.Name] = nt.Name
+			}
+		}
+	}
+
+	if c.typeVarMethods == nil {
+		c.typeVarMethods = make(map[string]map[string]*Type)
+	}
+
+	for _, m := range iface.Methods {
+		if m.ReceiverType == "" {
+			continue // free function, not a typed method
+		}
+		// Map interface type param to function type var
+		typeVarName, ok := paramMap[m.ReceiverType]
+		if !ok {
+			continue
+		}
+		if c.typeVarMethods[typeVarName] == nil {
+			c.typeVarMethods[typeVarName] = make(map[string]*Type)
+		}
+		// Build method type, substituting interface type params with function type vars
+		methType := c.funcDeclToTypeWithSubst(&m, paramMap)
+		c.typeVarMethods[typeVarName][m.Name] = methType
+	}
+}
+
+// funcDeclToTypeWithSubst is like funcDeclToType but substitutes type param names.
+func (c *Checker) funcDeclToTypeWithSubst(fn *ast.FuncDecl, subst map[string]string) *Type {
+	var params []*Type
+	for _, p := range fn.Params {
+		if p.IsSelf {
+			continue
+		}
+		t := c.resolveTypeExpr(&p.Type)
+		t = c.substTypeVarNames(t, subst)
+		params = append(params, t)
+	}
+	ret := TypeUnit
+	if fn.ReturnType != nil {
+		ret = c.resolveTypeExpr(fn.ReturnType)
+		ret = c.substTypeVarNames(ret, subst)
+	}
+	return &Type{Kind: TyFunc, Params: params, Return: ret}
+}
+
+// substTypeVarNames replaces type variable names according to the substitution map.
+func (c *Checker) substTypeVarNames(t *Type, subst map[string]string) *Type {
+	if t == nil {
+		return t
+	}
+	if t.Kind == TyVar {
+		if newName, ok := subst[t.Name]; ok {
+			return &Type{Kind: TyVar, Name: newName}
+		}
+	}
+	// Recurse into compound types
+	if t.Kind == TyList && t.Elem != nil {
+		newElem := c.substTypeVarNames(t.Elem, subst)
+		if newElem != t.Elem {
+			return &Type{Kind: TyList, Elem: newElem}
+		}
+	}
+	if t.Kind == TyOptional && t.Elem != nil {
+		newElem := c.substTypeVarNames(t.Elem, subst)
+		if newElem != t.Elem {
+			return &Type{Kind: TyOptional, Elem: newElem}
+		}
+	}
+	return t
+}
+
 func (c *Checker) funcDeclToType(fn *ast.FuncDecl) *Type {
 	var params []*Type
 	for _, p := range fn.Params {
@@ -2430,6 +2542,24 @@ func (c *Checker) checkFuncBody(fn *ast.FuncDecl) {
 	for _, tp := range fn.TypeParams {
 		c.scope.Define(tp.Name, &Type{Kind: TyVar, Name: tp.Name})
 	}
+
+	// Populate typeVarMethods from relational where clauses
+	prevTypeVarMethods := c.typeVarMethods
+	c.typeVarMethods = nil
+	for _, wc := range fn.Where {
+		if wc.Variable == "" && len(wc.TypeArgs) > 0 {
+			// Bare relational constraint: where Graph<G, N, E>
+			ifaceInfo := c.registry.Lookup(wc.Constraint)
+			if ifaceInfo == nil || ifaceInfo.Type.Kind != TyInterface {
+				continue
+			}
+			// Look up the interface declaration to find typed methods
+			// Build a type param name → concrete type arg mapping
+			// For now, we just need to know which methods go to which type vars
+			c.grantRelationalMethods(wc.Constraint, wc.TypeArgs)
+		}
+	}
+	defer func() { c.typeVarMethods = prevTypeVarMethods }()
 
 	// Set expected return type
 	prevReturn := c.currentReturn

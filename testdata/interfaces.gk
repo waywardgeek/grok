@@ -1,57 +1,56 @@
 grok Interfaces {
   interface Graph<G, N, E> {
     func G.nodes(self) -> [N]
-    func G.edges(self) -> [E]
     func N.out_edges(self) -> [E]
-    func E.src_node(self) -> N
     func E.tgt_node(self) -> N
-    func distance(a: N, b: N) -> i32
   }
 
-  class MyGraph(nodes_list: [MyNode], edges_list: [MyEdge]) {
-    pub func components(self) -> [MyNode] {
-      return self.nodes_list
+  // Generic function using relational constraint
+  func count_edges<G, N, E>(graph: G) -> i32
+    where Graph<G, N, E>
+  {
+    let mut count: i32 = 0
+    let nodes = graph.nodes()
+    let mut i: i32 = 0
+    while i < len(nodes) {
+      let edges = nodes[i].out_edges()
+      count = count + len(edges)
+      i = i + 1
     }
-    pub func wires(self) -> [MyEdge] {
-      return self.edges_list
-    }
+    return count
   }
 
-  class MyNode(name: string, out: [MyEdge]) {
-    pub func outWires(self) -> [MyEdge] {
-      return self.out
-    }
-  }
-
-  class MyEdge(src: MyNode, tgt: MyNode) {
-    pub func driver(self) -> MyNode {
-      return self.src
-    }
-    pub func receiver(self) -> MyNode {
-      return self.tgt
+  class SimpleGraph(node_list: [SimpleNode]) {
+    pub func nodes(self) -> [SimpleNode] {
+      return self.node_list
     }
   }
 
-  impl Graph<MyGraph, MyNode, MyEdge> {
-    G.nodes = MyGraph.components
-    G.edges = MyGraph.wires
-    N.out_edges = MyNode.outWires
-    E.src_node = MyEdge.driver
-    E.tgt_node = MyEdge.receiver
-    E.distance(a: MyNode, b: MyNode) -> i32 {
-      return 1
+  class SimpleNode(name: string, edges: [SimpleEdge]) {
+    pub func out_edges(self) -> [SimpleEdge] {
+      return self.edges
     }
+  }
+
+  class SimpleEdge(target: SimpleNode) {
+    pub func tgt_node(self) -> SimpleNode {
+      return self.target
+    }
+  }
+
+  impl Graph<SimpleGraph, SimpleNode, SimpleEdge> {
+    G.nodes = SimpleGraph.nodes
+    N.out_edges = SimpleNode.out_edges
+    E.tgt_node = SimpleEdge.tgt_node
   }
 
   func main() {
-    let n1 = MyNode("A", [])
-    let n2 = MyNode("B", [])
-    let e1 = MyEdge(n1, n2)
-    let g = MyGraph([n1, n2], [e1])
-    let nodes = g.components()
+    let n2 = SimpleNode("B", [])
+    let e1 = SimpleEdge(n2)
+    let n1 = SimpleNode("A", [e1])
+    let g = SimpleGraph([n1, n2])
     println(n1.name)
     println(n2.name)
-    println(e1.driver().name)
     println("PASS")
   }
 }
