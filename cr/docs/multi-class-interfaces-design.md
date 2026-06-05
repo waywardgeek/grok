@@ -729,6 +729,79 @@ void doublylinked_append_out(Node* parent, Edge* child) {
 }
 ```
 
+### Interface Dispatch via Vtables
+
+The C backend implements interfaces using function pointer tables (vtables).
+Each interface gets one vtable struct type. Each impl block generates one
+static vtable instance populated with auto-generated getters/setters. Default
+methods are compiled **once** against the vtable — no per-relationship code
+duplication.
+
+```c
+// One vtable struct per interface
+typedef struct DoublyLinked_vtable {
+    void* (*P_first)(void* self);
+    void* (*P_last)(void* self);
+    void* (*C_parent)(void* self);
+    void* (*C_next)(void* self);
+    void* (*C_prev)(void* self);
+    void (*P_set_first)(void* self, void* child);
+    void (*P_set_last)(void* self, void* child);
+    void (*C_set_parent)(void* self, void* parent);
+    void (*C_set_next)(void* self, void* next);
+    void (*C_set_prev)(void* self, void* prev);
+} DoublyLinked_vtable;
+
+// Default methods compiled ONCE — vtable provides the indirection
+void dll_append(DoublyLinked_vtable* vt, void* parent, void* child) {
+    void* old_last = vt->P_last(parent);
+    if (old_last == NULL) {
+        vt->P_set_first(parent, child);
+    } else {
+        vt->C_set_next(old_last, child);
+    }
+    vt->C_set_prev(child, old_last);
+    vt->C_set_next(child, NULL);
+    vt->P_set_last(parent, child);
+    vt->C_set_parent(child, parent);
+}
+
+// Auto-generated getters/setters per impl — one cast + field access
+static void* folder_get_files_first(void* self) {
+    return ((Folder*)self)->files_first;
+}
+static void folder_set_files_first(void* self, void* child) {
+    ((Folder*)self)->files_first = (File*)child;
+}
+
+// One static vtable instance per impl
+static DoublyLinked_vtable dll_folder_files = {
+    .P_first     = folder_get_files_first,
+    .P_set_first = folder_set_files_first,
+    // ...
+};
+```
+
+**SoA variant**: getters/setters index into arrays instead of casting pointers.
+Same vtable shape, different getter bodies:
+
+```c
+static void* node_soa_get_first(void* self_idx) {
+    uint32_t idx = (uint32_t)(uintptr_t)self_idx;
+    return (void*)(uintptr_t)node_out_edges_first[idx];
+}
+```
+
+**Inlining**: Since vtable instances are static constants, the compiler can
+devirtualize and inline speed-critical paths. For hot inner loops, profile-
+guided optimization or `__attribute__((always_inline))` on getters can
+eliminate the indirect call overhead entirely.
+
+**Binary size**: One copy of each default method per interface (not per
+relation). The per-impl cost is only the tiny getters/setters and the vtable
+struct. Duplicate function removal (linker ICF or a post-process pass) can
+further deduplicate identical getter bodies across impls with the same layout.
+
 ### Dead Field Elimination
 
 After LIR lowering, a pass identifies back-pointer fields that are never read:
