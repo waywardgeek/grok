@@ -1,0 +1,623 @@
+// lexer.fg — Lexer for the Forge bootstrap compiler
+// Ported from pkg/parser/lexer.go
+//
+// Design:
+//   - TokenKind enum (simple variants, no associated data)
+//   - Token as class (heap-allocated, passed by reference)
+//   - HashedList for keyword → TokenKind lookup (Sym keys, O(1) lookup)
+//   - u8 character operations (ASCII only for bootstrap)
+//   - ArrayList relation for collected comments
+
+forge lexer {
+
+  // ---- Token kinds ----
+
+  enum TokenKind {
+    // Keywords
+    KForge KFunc KClass KStruct KEnum KInterface KRelation KField
+    KDestructor KEmbed KImport KImplements KImpl KAs KType KWhere
+    KOwns KRefs KMut KSelf KFrom KTrue KFalse KNil KPub
+    // Statement keywords
+    KLet KIf KElse KFor KIn KWhile KMatch KReturn KBreak KContinue
+    KCascade KSpawn KSelect KCase KLock KYield
+    // Literals
+    LIdent LIntLit LFloatLit LStringLit LTripleString LFString LCharLit
+    // Punctuation
+    PLParen PRParen PLBrace PRBrace PLBracket PRBracket
+    PComma PColon PDot PArrow PFatArrow PBiArrow PPipe PQuestion PLt PGt
+    // Operators
+    OAssign OPlus OMinus OStar OSlash OPercent
+    OEqEq OBangEq OLtEq OGtEq OAmpAmp OPipePipe
+    OBang OAmp OCaret OShl OShr
+    OPlusEq OMinusEq OStarEq OSlashEq
+    // Annotations
+    AWhy ADoc AInvariant ARequires AEnsures ARaises
+    AConcurrent ARequiresLock AExcludesLock AGuardedBy
+    ASpawns APure ASource AFake AVerifiedAt
+    // Special
+    SNewline SEOF
+  }
+
+  // ---- Token ----
+
+  class Token {
+    kind: TokenKind
+    text: string
+    span: Span
+  }
+
+  // ---- Keyword tables (Dict<TokenKind>) ----
+
+  func init_keywords() -> Dict<TokenKind> {
+    let t = dict_new<TokenKind>()
+    dict_set<TokenKind>(t, "forge", KForge)
+    dict_set<TokenKind>(t, "func", KFunc)
+    dict_set<TokenKind>(t, "fn", KFunc)
+    dict_set<TokenKind>(t, "class", KClass)
+    dict_set<TokenKind>(t, "struct", KStruct)
+    dict_set<TokenKind>(t, "enum", KEnum)
+    dict_set<TokenKind>(t, "interface", KInterface)
+    dict_set<TokenKind>(t, "relation", KRelation)
+    dict_set<TokenKind>(t, "field", KField)
+    dict_set<TokenKind>(t, "destructor", KDestructor)
+    dict_set<TokenKind>(t, "embed", KEmbed)
+    dict_set<TokenKind>(t, "import", KImport)
+    dict_set<TokenKind>(t, "implements", KImplements)
+    dict_set<TokenKind>(t, "impl", KImpl)
+    dict_set<TokenKind>(t, "as", KAs)
+    dict_set<TokenKind>(t, "type", KType)
+    dict_set<TokenKind>(t, "where", KWhere)
+    dict_set<TokenKind>(t, "owns", KOwns)
+    dict_set<TokenKind>(t, "refs", KRefs)
+    dict_set<TokenKind>(t, "mut", KMut)
+    dict_set<TokenKind>(t, "self", KSelf)
+    dict_set<TokenKind>(t, "from", KFrom)
+    dict_set<TokenKind>(t, "true", KTrue)
+    dict_set<TokenKind>(t, "false", KFalse)
+    dict_set<TokenKind>(t, "nil", KNil)
+    dict_set<TokenKind>(t, "null", KNil)
+    dict_set<TokenKind>(t, "let", KLet)
+    dict_set<TokenKind>(t, "if", KIf)
+    dict_set<TokenKind>(t, "else", KElse)
+    dict_set<TokenKind>(t, "for", KFor)
+    dict_set<TokenKind>(t, "in", KIn)
+    dict_set<TokenKind>(t, "while", KWhile)
+    dict_set<TokenKind>(t, "match", KMatch)
+    dict_set<TokenKind>(t, "return", KReturn)
+    dict_set<TokenKind>(t, "break", KBreak)
+    dict_set<TokenKind>(t, "continue", KContinue)
+    dict_set<TokenKind>(t, "cascade", KCascade)
+    dict_set<TokenKind>(t, "spawn", KSpawn)
+    dict_set<TokenKind>(t, "select", KSelect)
+    dict_set<TokenKind>(t, "case", KCase)
+    dict_set<TokenKind>(t, "lock", KLock)
+    dict_set<TokenKind>(t, "yield", KYield)
+    dict_set<TokenKind>(t, "pub", KPub)
+    return t
+  }
+
+  func init_annot_keywords() -> Dict<TokenKind> {
+    let t = dict_new<TokenKind>()
+    dict_set<TokenKind>(t, "why", AWhy)
+    dict_set<TokenKind>(t, "doc", ADoc)
+    dict_set<TokenKind>(t, "invariant", AInvariant)
+    dict_set<TokenKind>(t, "requires", ARequires)
+    dict_set<TokenKind>(t, "ensures", AEnsures)
+    dict_set<TokenKind>(t, "raises", ARaises)
+    dict_set<TokenKind>(t, "concurrent", AConcurrent)
+    dict_set<TokenKind>(t, "requires_lock", ARequiresLock)
+    dict_set<TokenKind>(t, "excludes_lock", AExcludesLock)
+    dict_set<TokenKind>(t, "guarded_by", AGuardedBy)
+    dict_set<TokenKind>(t, "spawns", ASpawns)
+    dict_set<TokenKind>(t, "pure", APure)
+    dict_set<TokenKind>(t, "source", ASource)
+    dict_set<TokenKind>(t, "fake", AFake)
+    dict_set<TokenKind>(t, "verified_at", AVerifiedAt)
+    return t
+  }
+
+  // ---- Lexer ----
+
+  class Lexer {
+    src: string
+    filename: Sym?
+    pos: i32
+    line: i32 = 1
+    column: i32 = 1
+    peeked_token: Token?
+    keywords: Dict<TokenKind>?
+    annot_keywords: Dict<TokenKind>?
+  }
+  relation ArrayList Lexer:lc owns [Comment:lc]
+
+  func new_lexer(src_text: string, filename: Sym) -> Lexer {
+    let lex = Lexer {
+      src: src_text,
+      filename: filename,
+      keywords: init_keywords(),
+      annot_keywords: init_annot_keywords()
+    }
+    return lex
+  }
+
+  // ---- Character helpers ----
+
+  func is_letter(ch: u8) -> bool {
+    return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+  }
+
+  func is_digit(ch: u8) -> bool {
+    return ch >= '0' && ch <= '9'
+  }
+
+  func is_ident_char(ch: u8) -> bool {
+    return ch == '_' || is_letter(ch) || is_digit(ch)
+  }
+
+  func hex_val(ch: u8) -> u8 {
+    if ch >= '0' && ch <= '9' {
+      return ch - '0'
+    }
+    if ch >= 'a' && ch <= 'f' {
+      return ch - 'a' + <u8>(10)
+    }
+    if ch >= 'A' && ch <= 'F' {
+      return ch - 'A' + <u8>(10)
+    }
+    return <u8>(0)
+  }
+
+  // ---- Token construction helpers ----
+
+  func make_token(kind: TokenKind, text: string, start: Pos, end: Pos) -> Token {
+    return Token { kind: kind, text: text, span: Span { start: start, end: end } }
+  }
+
+  // ---- Lexer methods ----
+
+  func Lexer.current_pos(self) -> Pos {
+    return Pos { file: self.filename, line: self.line, column: self.column }
+  }
+
+  func Lexer.advance(self) -> u8 {
+    if self.pos >= len(self.src) {
+      return <u8>(0)
+    }
+    let ch = self.src[self.pos]
+    self.pos = self.pos + 1
+    if ch == '\n' {
+      self.line = self.line + 1
+      self.column = 1
+    } else {
+      self.column = self.column + 1
+    }
+    return ch
+  }
+
+  func Lexer.peek_char(self) -> u8 {
+    if self.pos >= len(self.src) {
+      return <u8>(0)
+    }
+    return self.src[self.pos]
+  }
+
+  func Lexer.peek_at(self, offset: i32) -> u8 {
+    let p = self.pos + offset
+    if p >= len(self.src) {
+      return <u8>(0)
+    }
+    return self.src[p]
+  }
+
+  // Peek returns the next token without consuming it.
+  func Lexer.peek(self) -> Token {
+    if !isnull(self.peeked_token) {
+      return self.peeked_token!
+    }
+    let tok = self.scan()
+    self.peeked_token = tok
+    return tok
+  }
+
+  // Next returns the next token, consuming it.
+  func Lexer.next(self) -> Token {
+    let p = self.peeked_token
+    if !isnull(p) {
+      self.peeked_token = null
+      return p!
+    }
+    return self.scan()
+  }
+
+  // ---- Escape sequences ----
+
+  // Handles a backslash escape. Backslash already consumed.
+  func Lexer.scan_escape(self, buf: StringBuilder) -> bool {
+    let ch = self.advance()
+    if ch == 'n' {
+      buf.write_byte('\n')
+    } else if ch == 'r' {
+      buf.write_byte('\r')
+    } else if ch == 't' {
+      buf.write_byte('\t')
+    } else if ch == '\\' {
+      buf.write_byte('\\')
+    } else if ch == '\'' {
+      buf.write_byte('\'')
+    } else if ch == '"' {
+      buf.write_byte('"')
+    } else if ch == '0' {
+      buf.write_byte(<u8>(0))
+    } else if ch == 'x' {
+      let hi = self.advance()
+      let lo = self.advance()
+      let val = hex_val(hi) * <u8>(16) + hex_val(lo)
+      buf.write_byte(val)
+    } else {
+      buf.write_byte('\\')
+      buf.write_byte(ch)
+      return false
+    }
+    return true
+  }
+
+  // ---- Literal scanners ----
+
+  func Lexer.scan_char_lit(self, start: Pos) -> Token {
+    self.advance()  // opening '
+    let buf = new_string_builder()
+    let ch = self.peek_char()
+    if ch == '\\' {
+      self.advance()
+      self.scan_escape(buf)
+    } else {
+      buf.write_byte(self.advance())
+    }
+    if self.peek_char() == '\'' {
+      self.advance()  // closing '
+    }
+    return make_token(LCharLit, buf.to_string(), start, self.current_pos())
+  }
+
+  func Lexer.scan_string(self, start: Pos) -> Token {
+    self.advance()  // opening "
+
+    // Check for triple-quoted string
+    if self.peek_char() == '"' && self.peek_at(1) == '"' {
+      self.advance()  // second "
+      self.advance()  // third "
+      return self.scan_triple_string(start)
+    }
+
+    let buf = new_string_builder()
+    while self.pos < len(self.src) {
+      let ch = self.advance()
+      if ch == '"' {
+        return make_token(LStringLit, buf.to_string(), start, self.current_pos())
+      }
+      if ch == '\\' {
+        self.scan_escape(buf)
+      } else {
+        buf.write_byte(ch)
+      }
+    }
+    // Unterminated string
+    return make_token(LStringLit, buf.to_string(), start, self.current_pos())
+  }
+
+  func Lexer.scan_triple_string(self, start: Pos) -> Token {
+    let buf = new_string_builder()
+    while self.pos < len(self.src) {
+      let ch = self.advance()
+      if ch == '"' && self.peek_char() == '"' && self.peek_at(1) == '"' {
+        self.advance()
+        self.advance()
+        // TODO: trim leading/trailing whitespace lines
+        return make_token(LTripleString, buf.to_string(), start, self.current_pos())
+      }
+      buf.write_byte(ch)
+    }
+    return make_token(LTripleString, buf.to_string(), start, self.current_pos())
+  }
+
+  // Scan f"..." — stores raw content between quotes.
+  // The parser splits on {expr} boundaries for interpolation.
+  func Lexer.scan_fstring(self, start: Pos) -> Token {
+    self.advance()  // opening "
+    let buf = new_string_builder()
+    let mut depth: i32 = 0
+    while self.pos < len(self.src) {
+      let ch = self.advance()
+      if ch == '{' {
+        depth = depth + 1
+        buf.write_byte(ch)
+      } else if ch == '}' {
+        depth = depth - 1
+        buf.write_byte(ch)
+      } else if ch == '"' && depth == 0 {
+        return make_token(LFString, buf.to_string(), start, self.current_pos())
+      } else if ch == '\\' && depth == 0 {
+        // Escaped braces
+        if self.peek_char() == '{' {
+          buf.write_byte('{')
+          self.advance()
+        } else if self.peek_char() == '}' {
+          buf.write_byte('}')
+          self.advance()
+        } else {
+          self.scan_escape(buf)
+        }
+      } else {
+        buf.write_byte(ch)
+      }
+    }
+    return make_token(LFString, buf.to_string(), start, self.current_pos())
+  }
+
+  func Lexer.scan_number(self, start: Pos) -> Token {
+    let buf = new_string_builder()
+    let mut is_float = false
+    while self.pos < len(self.src) {
+      let ch = self.peek_char()
+      if is_digit(ch) {
+        buf.write_byte(ch)
+        self.advance()
+      } else if ch == '.' && !is_float {
+        // Check it's not a method call
+        if is_digit(self.peek_at(1)) {
+          is_float = true
+          buf.write_byte(ch)
+          self.advance()
+        } else {
+          break
+        }
+      } else if ch == '_' {
+        self.advance()  // skip underscores in number literals
+      } else {
+        break
+      }
+    }
+    let mut kind = LIntLit
+    if is_float {
+      kind = LFloatLit
+    }
+    return make_token(kind, buf.to_string(), start, self.current_pos())
+  }
+
+  func Lexer.scan_ident(self, start: Pos) -> Token {
+    let buf = new_string_builder()
+    while self.pos < len(self.src) {
+      let ch = self.peek_char()
+      if is_ident_char(ch) {
+        buf.write_byte(ch)
+        self.advance()
+      } else {
+        break
+      }
+    }
+    let text = buf.to_string()
+
+    // f-string: f"..." triggers interpolated string scanning
+    if text == "f" && self.pos < len(self.src) && self.peek_char() == '"' {
+      return self.scan_fstring(start)
+    }
+
+    // Check keywords
+    let kw = dict_get<TokenKind>(self.keywords!, text)
+    if !isnull(kw) {
+      return make_token(kw!.value, text, start, self.current_pos())
+    }
+
+    // Check annotation keywords
+    let akw = dict_get<TokenKind>(self.annot_keywords!, text)
+    if !isnull(akw) {
+      return make_token(akw!.value, text, start, self.current_pos())
+    }
+
+    return make_token(LIdent, text, start, self.current_pos())
+  }
+
+  // ---- Main scan ----
+
+  func Lexer.scan(self) -> Token {
+    // Skip whitespace (not newlines) and line comments
+    while self.pos < len(self.src) {
+      let ch = self.peek_char()
+      if ch == ' ' || ch == '\t' || ch == '\r' {
+        self.advance()
+      } else if ch == '/' && self.peek_at(1) == '/' {
+        // Line comment — collect and skip to end of line
+        let comment_pos = self.current_pos()
+        let cbuf = new_string_builder()
+        while self.pos < len(self.src) && self.peek_char() != '\n' {
+          cbuf.write_byte(self.advance())
+        }
+        let comment = Comment { text: cbuf.to_string(), pos: comment_pos }
+        array_append<Lexer, Comment>(self, comment)
+      } else {
+        break
+      }
+    }
+
+    // EOF
+    if self.pos >= len(self.src) {
+      let p = self.current_pos()
+      return make_token(SEOF, "", p, p)
+    }
+
+    let start = self.current_pos()
+    let ch = self.peek_char()
+
+    // Newline — collapse multiple
+    if ch == '\n' {
+      self.advance()
+      while self.pos < len(self.src) {
+        let c = self.peek_char()
+        if c == '\n' {
+          self.advance()
+        } else if c == ' ' || c == '\t' || c == '\r' {
+          // Only skip whitespace if followed by another newline
+          let saved = self.pos
+          while self.pos < len(self.src) {
+            let w = self.peek_char()
+            if w == ' ' || w == '\t' || w == '\r' {
+              self.advance()
+            } else {
+              break
+            }
+          }
+          if self.pos < len(self.src) && self.peek_char() == '\n' {
+            self.advance()
+          } else {
+            self.pos = saved
+            break
+          }
+        } else {
+          break
+        }
+      }
+      return make_token(SNewline, "\n", start, self.current_pos())
+    }
+
+    // String literal
+    if ch == '"' {
+      return self.scan_string(start)
+    }
+
+    // Character literal
+    if ch == '\'' {
+      return self.scan_char_lit(start)
+    }
+
+    // Number
+    if is_digit(ch) {
+      return self.scan_number(start)
+    }
+
+    // Identifier or keyword
+    if ch == '_' || is_letter(ch) {
+      return self.scan_ident(start)
+    }
+
+    // Punctuation and operators
+    self.advance()
+
+    if ch == '(' { return make_token(PLParen, "(", start, self.current_pos()) }
+    if ch == ')' { return make_token(PRParen, ")", start, self.current_pos()) }
+    if ch == '{' { return make_token(PLBrace, "{", start, self.current_pos()) }
+    if ch == '}' { return make_token(PRBrace, "}", start, self.current_pos()) }
+    if ch == '[' { return make_token(PLBracket, "[", start, self.current_pos()) }
+    if ch == ']' { return make_token(PRBracket, "]", start, self.current_pos()) }
+    if ch == ',' { return make_token(PComma, ",", start, self.current_pos()) }
+    if ch == ':' { return make_token(PColon, ":", start, self.current_pos()) }
+    if ch == '.' { return make_token(PDot, ".", start, self.current_pos()) }
+    if ch == '?' { return make_token(PQuestion, "?", start, self.current_pos()) }
+    if ch == '^' { return make_token(OCaret, "^", start, self.current_pos()) }
+    if ch == '%' { return make_token(OPercent, "%", start, self.current_pos()) }
+
+    if ch == '!' {
+      if self.peek_char() == '=' {
+        self.advance()
+        return make_token(OBangEq, "!=", start, self.current_pos())
+      }
+      return make_token(OBang, "!", start, self.current_pos())
+    }
+
+    if ch == '|' {
+      if self.peek_char() == '|' {
+        self.advance()
+        return make_token(OPipePipe, "||", start, self.current_pos())
+      }
+      return make_token(PPipe, "|", start, self.current_pos())
+    }
+
+    if ch == '&' {
+      if self.peek_char() == '&' {
+        self.advance()
+        return make_token(OAmpAmp, "&&", start, self.current_pos())
+      }
+      return make_token(OAmp, "&", start, self.current_pos())
+    }
+
+    if ch == '<' {
+      if self.peek_char() == '=' {
+        self.advance()
+        return make_token(OLtEq, "<=", start, self.current_pos())
+      }
+      if self.peek_char() == '<' {
+        self.advance()
+        return make_token(OShl, "<<", start, self.current_pos())
+      }
+      if self.peek_char() == '-' && self.peek_at(1) == '>' {
+        self.advance()
+        self.advance()
+        return make_token(PBiArrow, "<->", start, self.current_pos())
+      }
+      return make_token(PLt, "<", start, self.current_pos())
+    }
+
+    if ch == '>' {
+      if self.peek_char() == '=' {
+        self.advance()
+        return make_token(OGtEq, ">=", start, self.current_pos())
+      }
+      if self.peek_char() == '>' {
+        self.advance()
+        return make_token(OShr, ">>", start, self.current_pos())
+      }
+      return make_token(PGt, ">", start, self.current_pos())
+    }
+
+    if ch == '-' {
+      if self.peek_char() == '>' {
+        self.advance()
+        return make_token(PArrow, "->", start, self.current_pos())
+      }
+      if self.peek_char() == '=' {
+        self.advance()
+        return make_token(OMinusEq, "-=", start, self.current_pos())
+      }
+      return make_token(OMinus, "-", start, self.current_pos())
+    }
+
+    if ch == '+' {
+      if self.peek_char() == '=' {
+        self.advance()
+        return make_token(OPlusEq, "+=", start, self.current_pos())
+      }
+      return make_token(OPlus, "+", start, self.current_pos())
+    }
+
+    if ch == '*' {
+      if self.peek_char() == '=' {
+        self.advance()
+        return make_token(OStarEq, "*=", start, self.current_pos())
+      }
+      return make_token(OStar, "*", start, self.current_pos())
+    }
+
+    if ch == '/' {
+      if self.peek_char() == '=' {
+        self.advance()
+        return make_token(OSlashEq, "/=", start, self.current_pos())
+      }
+      return make_token(OSlash, "/", start, self.current_pos())
+    }
+
+    if ch == '=' {
+      if self.peek_char() == '=' {
+        self.advance()
+        return make_token(OEqEq, "==", start, self.current_pos())
+      }
+      if self.peek_char() == '>' {
+        self.advance()
+        return make_token(PFatArrow, "=>", start, self.current_pos())
+      }
+      return make_token(OAssign, "=", start, self.current_pos())
+    }
+
+    // Unknown character — return as ident
+    return make_token(LIdent, char_to_string(ch), start, self.current_pos())
+  }
+
+}
