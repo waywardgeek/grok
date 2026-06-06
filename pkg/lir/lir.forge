@@ -95,8 +95,12 @@ forge Lir {
       state struct + _init()/_next() functions, yield points via switch/goto
     - Channels: FORGE_CHAN_DEF/IMPL macros per element type, pthreads-based
       blocking send/recv/close via mutex + condition variables
-    - Spawn: body hoisted to static function with auto-captured variables
-      in a heap-allocated context struct, pthread_create + detach
+    - Spawn: body hoisted to static function with Go-style capture-by-reference.
+      Context struct stores POINTERS to original variables (not copies).
+      All goroutines sharing a captured variable see the same memory.
+      emitValue and LStmtAssign redirect captured vars to (*_ctx->name).
+    - Lock: pthread_mutex_lock/unlock. Mutex type → pthread_mutex_t,
+      Mutex{} → PTHREAD_MUTEX_INITIALIZER.
     - Interface dispatch: vtable struct + boxed interface struct (void* data +
       vtable pointer), static vtable instances per (class, interface) pair
     - Forward decl ordering: struct typedefs → composite macros → enums →
@@ -105,14 +109,15 @@ forge Lir {
 
     inferExprType() resolves concrete C types through temp→var→unwrap chains.
     tempTypes/varTypes maps on cGen for cross-reference resolution.
+    spawnCaptures map on cGen redirects variable access in spawn bodies.
 
-    Status: 35/36 .fg files compile. Only lock.fg remaining (variable scoping
-    in lock bodies). All other features working: vtables, channels, spawn,
-    generators, generics (via monomorphization).
+    Status: 36/36 .fg files compile, 6/6 run tests pass. All features working:
+    vtables, channels, spawn with capture-by-reference, generators, generics
+    (via monomorphization), mutex/lock.
   """
 
   doc "Technical Debt": """
-    - C backend: no maps, no GC, lock body variable scoping
+    - C backend: no maps, no GC
     - Advanced optimizations: constant folding, dead code elimination, inlining
     - Source maps for debugging generated code
   """
