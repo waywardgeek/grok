@@ -474,9 +474,9 @@ func substituteTypeParamsInTypeExpr(te *TypeExpr, typeMap map[string]string) {
 	}
 }
 
-// DesugarDestructors generates destroy methods on classes involved in `owns` relations.
-// For each `owns` relation, copies the interface's destructor blocks to the concrete
-// classes as `destroy` methods. Must run after DesugarInterfaceFields and DesugarRelations.
+// DesugarDestructors generates destroy methods on classes involved in relations.
+// For each relation with destructors, copies the interface's destructor blocks to the
+// concrete classes as `destroy` methods. Must run after DesugarInterfaceFields and DesugarRelations.
 func DesugarDestructors(file *File) {
 	for bi := range file.Blocks {
 		block := &file.Blocks[bi]
@@ -498,9 +498,6 @@ func DesugarDestructors(file *File) {
 		destructorBodies := make(map[string][]Block)
 
 		for _, rel := range block.Relations {
-			if rel.Kind != Owns {
-				continue
-			}
 			iface := ifaceMap[rel.Hint]
 			if iface == nil || len(iface.Destructors) == 0 {
 				continue
