@@ -588,6 +588,13 @@ type LProgram struct {
 	// (e.g., "Stack" → "Stack_i32"). Populated by Monomorphize().
 	// Used by C backend to resolve unmangled type references.
 	ClassRenames map[string]string
+
+	// ImplMethodRenames maps (className, genericMethodName) to the concrete
+	// label-prefixed method name for a specific interface instantiation.
+	// Key: "InterfaceName\x00TypeArg0\x00TypeArg1\x00...\x00TypeParam\x00MethodName"
+	// Value: concrete method name (e.g., "fp_parent" or "set_fp_parent")
+	// Used by the monomorphizer to rewrite method calls in default interface methods.
+	ImplMethodRenames map[string]string
 }
 
 // LImport is a single import declaration.

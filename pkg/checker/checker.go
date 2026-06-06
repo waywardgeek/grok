@@ -2220,6 +2220,12 @@ func (c *Checker) checkForgeBlock(block *ast.ForgeBlock) {
 		c.checkImplements(&block.Classes[i])
 	}
 
+	// Register impl block methods on concrete classes so destructor bodies
+	// can resolve method calls like self.children() on concrete types.
+	for _, impl := range block.ImplBlocks {
+		c.registerImplMethods(&impl)
+	}
+
 	// Register import aliases in scope (packages are opaque types)
 	for _, imp := range block.Imports {
 		if strings.HasSuffix(imp.Path, ".fg") {
@@ -2405,6 +2411,94 @@ func (c *Checker) registerEnum(e *ast.EnumDecl) {
 		}
 	}
 	c.registry.Register(e.Name, info)
+}
+
+// registerImplMethods processes an impl block and registers the interface's methods
+// on the concrete classes. This enables the checker to resolve method calls like
+// self.children() in desugared destructor bodies.
+func (c *Checker) registerImplMethods(impl *ast.ImplBlock) {
+	ifaceInfo := c.registry.Lookup(impl.InterfaceName)
+	if ifaceInfo == nil {
+		return
+	}
+	ifaceDecl := c.ifaceDecls[impl.InterfaceName]
+	if ifaceDecl == nil {
+		return
+	}
+
+	// Build type param → concrete type substitution map
+	subst := make(map[string]*Type)
+	for i, tp := range ifaceDecl.TypeParams {
+		if i < len(impl.TypeArgs) {
+			subst[tp.Name] = c.resolveTypeExpr(&impl.TypeArgs[i])
+		}
+	}
+
+	// For each mapping, resolve which concrete class gets the method,
+	// substitute type params in the method signature, and register it.
+	for _, m := range impl.Mappings {
+		// Find the interface method type
+		methType, ok := ifaceInfo.Methods[m.MethodName]
+		if !ok {
+			continue
+		}
+
+		// Determine which concrete class this method belongs to
+		className := m.TargetClass
+		if className == "" {
+			// For inline impls, resolve from type param
+			if ct, ok := subst[m.TypeParam]; ok {
+				className = ct.Name
+			}
+		}
+		if className == "" {
+			continue
+		}
+
+		classInfo := c.registry.Lookup(className)
+		if classInfo == nil || classInfo.Methods == nil {
+			continue
+		}
+
+		// Only add if not already defined (don't override explicit methods)
+		if _, exists := classInfo.Methods[m.MethodName]; !exists {
+			classInfo.Methods[m.MethodName] = c.substituteMethodType(methType, subst)
+		}
+	}
+}
+
+// substituteMethodType replaces type variables in a function type with concrete types.
+func (c *Checker) substituteMethodType(t *Type, subst map[string]*Type) *Type {
+	if t == nil {
+		return nil
+	}
+	if t.Kind == TyVar {
+		if ct, ok := subst[t.Name]; ok {
+			return ct
+		}
+		return t
+	}
+	if t.Kind == TyFunc {
+		result := &Type{
+			Kind:   TyFunc,
+			Name:   t.Name,
+			Return: c.substituteMethodType(t.Return, subst),
+		}
+		if t.Params != nil {
+			result.Params = make([]*Type, len(t.Params))
+			for i, p := range t.Params {
+				result.Params[i] = c.substituteMethodType(p, subst)
+			}
+		}
+		return result
+	}
+	if t.Kind == TyList {
+		return &Type{Kind: TyList, Elem: c.substituteMethodType(t.Elem, subst)}
+	}
+	if t.Kind == TyOptional {
+		return &Type{Kind: TyOptional, Elem: c.substituteMethodType(t.Elem, subst)}
+	}
+	return t
 }
 
 func (c *Checker) registerInterface(iface *ast.InterfaceDecl) {

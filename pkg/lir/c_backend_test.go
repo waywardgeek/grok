@@ -253,6 +253,7 @@ func cPipeline(t *testing.T, source, pkgName string) string {
 
 	Optimize(prog)
 	Monomorphize(prog)
+	RewriteImplRenames(prog)
 	return EmitC(prog)
 }
 

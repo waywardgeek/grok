@@ -24,6 +24,7 @@ func dataAs[T any](data any) *T {
 type Lowerer struct {
 	nextTemp int
 	stmts    []LStmt // current statement accumulator
+	prog     *LProgram // current program being built
 
 	// Checker state for type resolution
 	registry *checker.Registry
@@ -87,7 +88,10 @@ func NewLowerer() *Lowerer {
 
 // Lower converts an entire AST file to an LIR program.
 func (l *Lowerer) Lower(file *ast.File) *LProgram {
-	prog := &LProgram{}
+	prog := &LProgram{
+		ImplMethodRenames: map[string]string{},
+	}
+	l.prog = prog
 
 	for _, block := range file.Blocks {
 		// First pass: register types
@@ -704,8 +708,8 @@ func (l *Lowerer) lowerImplBlock(impl *ast.ImplBlock) []LFuncDecl {
 		}
 		if mapping.Kind == ast.ImplFieldBind {
 			// Field binding: P.children <-> Folder.items
-			// For getters: func (self *Folder) Children() []*File { return self.Items }
-			// For setters: func (self *Folder) Set_children(val []*File) { self.Items = val }
+			// Uses label-prefixed target member name to avoid C name collisions when
+			// a class participates in multiple relations with different parent types.
 			var ifaceMethod *LInterfaceMethod
 			for i := range iface.Methods {
 				if iface.Methods[i].ReceiverType == mapping.TypeParam && iface.Methods[i].Name == mapping.MethodName {
@@ -722,9 +726,28 @@ func (l *Lowerer) lowerImplBlock(impl *ast.ImplBlock) []LFuncDecl {
 				continue
 			}
 
+			// Concrete method name from target member (label-prefixed).
+			// "parent" → "fp_parent"; "set_parent" → "set_fp_parent"
+			concreteName := mapping.TargetMember
 			isSetter := len(ifaceMethod.Params) > 0
 			if isSetter {
-				// Setter body: self.field = val
+				concreteName = "set_" + mapping.TargetMember
+			}
+
+			// Record the rename so the monomorphizer can rewrite method calls
+			// in default interface methods.
+			var typeArgNames []string
+			for _, tp := range iface.TypeParams {
+				typeArgNames = append(typeArgNames, typeArgMap[tp.Name])
+			}
+			renameKey := impl.InterfaceName
+			for _, ta := range typeArgNames {
+				renameKey += "\x00" + ta
+			}
+			renameKey += "\x00" + className + "\x00" + ifaceMethod.Name
+			l.prog.ImplMethodRenames[renameKey] = concreteName
+
+			if isSetter {
 				valType := l.substImplType(ifaceMethod.Params[0].Type, typeArgMap)
 				var body []LStmt
 				body = append(body, LStmt{Kind: LStmtClassSet, Data: &LClassSet{
@@ -735,7 +758,7 @@ func (l *Lowerer) lowerImplBlock(impl *ast.ImplBlock) []LFuncDecl {
 				}})
 
 				wrappers = append(wrappers, LFuncDecl{
-					Name:       ifaceMethod.Name,
+					Name:       concreteName,
 					Receiver:   className,
 					Params:     []LParam{{Name: "val", Type: valType}},
 					ReturnType: nil,
@@ -743,7 +766,6 @@ func (l *Lowerer) lowerImplBlock(impl *ast.ImplBlock) []LFuncDecl {
 					IsExported: true,
 				})
 			} else {
-				// Getter body: return self.field
 				retType := l.substImplType(ifaceMethod.ReturnType, typeArgMap)
 				var body []LStmt
 				fieldAccess := LExpr{
@@ -759,9 +781,9 @@ func (l *Lowerer) lowerImplBlock(impl *ast.ImplBlock) []LFuncDecl {
 				body = append(body, LStmt{Kind: LStmtReturn, Data: &LReturn{Values: []LValue{{Kind: LValTemp, TempID: 0, Type: retType}}}})
 
 				wrappers = append(wrappers, LFuncDecl{
-					Name:       ifaceMethod.Name,
+					Name:       concreteName,
 					Receiver:   className,
-					Params:     nil, // getter has no params
+					Params:     nil,
 					ReturnType: retType,
 					Body:       body,
 					IsExported: true,

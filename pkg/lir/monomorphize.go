@@ -333,7 +333,196 @@ func (m *monoPass) specializeFunc(orig *LFuncDecl, subst map[string]*LType, newN
 			Type: substType(p.Type, subst),
 		}
 	}
+
+	// Rewrite method calls based on ImplMethodRenames.
+	// When a default interface method like array_append<P, C> is specialized,
+	// calls like child.set_parent(val) must resolve to the label-prefixed
+	// accessor (e.g., set_fp_parent) for the specific relation instantiation.
+	if len(orig.RelationalConstraints) > 0 && m.prog.ImplMethodRenames != nil {
+		m.rewriteImplMethodCalls(&spec, orig.RelationalConstraints, subst)
+	}
+
 	return spec
+}
+
+// implRenameEntry maps a (className, oldMethod) to a new method name
+// for impl block method rewriting during monomorphization.
+type implRenameEntry struct {
+	className  string
+	oldMethod  string
+	newMethod  string
+}
+
+// rewriteImplMethodCalls walks a specialized function body and rewrites method
+// calls that match ImplMethodRenames entries for the given interface instantiation.
+func (m *monoPass) rewriteImplMethodCalls(fn *LFuncDecl, constraints []LRelationalConstraint, subst map[string]*LType) {
+	var renames []implRenameEntry
+
+	for _, rc := range constraints {
+		// Build the key prefix: "InterfaceName\x00ConcreteArg0\x00ConcreteArg1\x00..."
+		prefix := rc.InterfaceName
+		for _, ta := range rc.TypeArgs {
+			if ct, ok := subst[ta]; ok && ct.Kind == LTyClassHandle {
+				prefix += "\x00" + ct.Name
+			} else if ct != nil {
+				prefix += "\x00" + ta // fallback
+			}
+		}
+		// Check all rename entries matching this prefix
+		for key, newName := range m.prog.ImplMethodRenames {
+			if !strings.HasPrefix(key, prefix+"\x00") {
+				continue
+			}
+			// Parse className and methodName from key suffix
+			suffix := key[len(prefix)+1:]
+			parts := strings.SplitN(suffix, "\x00", 2)
+			if len(parts) == 2 {
+				renames = append(renames, implRenameEntry{
+					className: parts[0],
+					oldMethod: parts[1],
+					newMethod: newName,
+				})
+			}
+		}
+	}
+
+	if len(renames) == 0 {
+		return
+	}
+
+	// Walk the function body and rewrite matching method calls
+	rewriteMethodCallsInStmts(fn.Body, renames)
+}
+
+func rewriteMethodCallsInStmts(stmts []LStmt, renames []implRenameEntry) {
+	for i := range stmts {
+		rewriteMethodCallsInStmt(&stmts[i], renames)
+	}
+}
+
+func rewriteMethodCallsInStmt(stmt *LStmt, renames []implRenameEntry) {
+	switch stmt.Kind {
+	case LStmtTempDef:
+		d := stmt.Data.(*LTempDef)
+		rewriteMethodCallsInExpr(&d.Expr, renames)
+	case LStmtVarDecl:
+		// LVarDecl has Init (LValue), no nested expr to rewrite
+		_ = stmt.Data.(*LVarDecl)
+	case LStmtIf:
+		d := stmt.Data.(*LIf)
+		rewriteMethodCallsInStmts(d.Then, renames)
+		rewriteMethodCallsInStmts(d.Else, renames)
+	case LStmtWhile:
+		d := stmt.Data.(*LWhile)
+		rewriteMethodCallsInStmts(d.CondBlock, renames)
+		rewriteMethodCallsInStmts(d.Body, renames)
+	case LStmtBlock:
+		d := stmt.Data.(*LBlock)
+		rewriteMethodCallsInStmts(d.Stmts, renames)
+	case LStmtSideEffect:
+		d := stmt.Data.(*LSideEffect)
+		rewriteMethodCallsInExpr(&d.Expr, renames)
+	case LStmtReturn:
+		// Return values may contain method calls in sub-expressions
+	case LStmtFor:
+		d := stmt.Data.(*LFor)
+		rewriteMethodCallsInStmts(d.Body, renames)
+	}
+}
+
+func rewriteMethodCallsInExpr(e *LExpr, renames []implRenameEntry) {
+	if e == nil {
+		return
+	}
+	if e.Kind == LExprMethodCall {
+		d := e.Data.(*LMethodCallData)
+		if d.Receiver.Type != nil && d.Receiver.Type.Kind == LTyClassHandle {
+			receiverClass := d.Receiver.Type.Name
+			for _, r := range renames {
+				if r.className == receiverClass && r.oldMethod == d.Method {
+					d.Method = r.newMethod
+					break
+				}
+			}
+		}
+	}
+}
+// classMethodKey is a (className, methodName) pair for impl rename lookup.
+type classMethodKey struct{ class, method string }
+
+// RewriteImplRenames walks ALL functions in the program and rewrites method calls
+// that match ImplMethodRenames entries. This handles destructor bodies and any other
+// non-generic code that calls renamed accessor methods directly on concrete classes.
+func RewriteImplRenames(prog *LProgram) {
+	if len(prog.ImplMethodRenames) == 0 {
+		return
+	}
+
+	// Build flat (className, methodName) → concreteName lookup
+	renames := make(map[classMethodKey]string)
+	for key, newName := range prog.ImplMethodRenames {
+		// Key: "Interface\x00TypeArg0\x00...\x00ClassName\x00MethodName"
+		parts := strings.Split(key, "\x00")
+		if len(parts) >= 3 {
+			className := parts[len(parts)-2]
+			methodName := parts[len(parts)-1]
+			renames[classMethodKey{className, methodName}] = newName
+		}
+	}
+
+	if len(renames) == 0 {
+		return
+	}
+
+	// Walk all function bodies
+	for i := range prog.Functions {
+		rewriteImplRenamesInStmts(prog.Functions[i].Body, renames)
+	}
+}
+
+func rewriteImplRenamesInStmts(stmts []LStmt, renames map[classMethodKey]string) {
+	for i := range stmts {
+		rewriteImplRenamesInStmt(&stmts[i], renames)
+	}
+}
+
+func rewriteImplRenamesInStmt(stmt *LStmt, renames map[classMethodKey]string) {
+	switch stmt.Kind {
+	case LStmtTempDef:
+		d := stmt.Data.(*LTempDef)
+		rewriteImplRenamesInExpr(&d.Expr, renames)
+	case LStmtSideEffect:
+		d := stmt.Data.(*LSideEffect)
+		rewriteImplRenamesInExpr(&d.Expr, renames)
+	case LStmtIf:
+		d := stmt.Data.(*LIf)
+		rewriteImplRenamesInStmts(d.Then, renames)
+		rewriteImplRenamesInStmts(d.Else, renames)
+	case LStmtWhile:
+		d := stmt.Data.(*LWhile)
+		rewriteImplRenamesInStmts(d.CondBlock, renames)
+		rewriteImplRenamesInStmts(d.Body, renames)
+	case LStmtBlock:
+		d := stmt.Data.(*LBlock)
+		rewriteImplRenamesInStmts(d.Stmts, renames)
+	case LStmtFor:
+		d := stmt.Data.(*LFor)
+		rewriteImplRenamesInStmts(d.Body, renames)
+	}
+}
+
+func rewriteImplRenamesInExpr(e *LExpr, renames map[classMethodKey]string) {
+	if e == nil {
+		return
+	}
+	if e.Kind == LExprMethodCall {
+		d := e.Data.(*LMethodCallData)
+		if d.Receiver.Type != nil && d.Receiver.Type.Kind == LTyClassHandle {
+			if newName, ok := renames[classMethodKey{d.Receiver.Type.Name, d.Method}]; ok {
+				d.Method = newName
+			}
+		}
+	}
 }
 
 func (m *monoPass) specializeClass(orig *LClassDecl, subst map[string]*LType, newName string) LClassDecl {

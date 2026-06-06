@@ -243,6 +243,7 @@ func cmdCompile(args []string) error {
 		if useMono {
 			lir.Monomorphize(prog)
 		}
+		lir.RewriteImplRenames(prog)
 		var src string
 		if useC {
 			src = lir.EmitC(prog)

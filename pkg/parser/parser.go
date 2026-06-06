@@ -9,12 +9,20 @@ import (
 
 // ParseError is a syntax error with source position.
 type ParseError struct {
-	Message string
-	Span    ast.Span
+	Message    string
+	Span       ast.Span
+	SourceLine string // the source line where the error occurred
 }
 
 func (e *ParseError) Error() string {
-	return fmt.Sprintf("%s:%d:%d: %s", e.Span.Start.File, e.Span.Start.Line, e.Span.Start.Column, e.Message)
+	msg := fmt.Sprintf("%s:%d:%d: %s", e.Span.Start.File, e.Span.Start.Line, e.Span.Start.Column, e.Message)
+	if e.SourceLine != "" {
+		msg += "\n  " + e.SourceLine
+		if e.Span.Start.Column > 0 {
+			msg += "\n  " + strings.Repeat(" ", e.Span.Start.Column-1) + "^"
+		}
+	}
+	return msg
 }
 
 // Parser is a PEG parser for .forge files.
@@ -56,13 +64,37 @@ func (p *Parser) isWhyAnnotation() bool {
 	return tok.Kind == TStringLit || tok.Kind == TTripleStringLit
 }
 
+// newError creates a ParseError with the source line from the lexer.
+func (p *Parser) newError(span ast.Span, format string, args ...any) *ParseError {
+	return &ParseError{
+		Message:    fmt.Sprintf(format, args...),
+		Span:       span,
+		SourceLine: p.getSourceLine(span.Start.Line),
+	}
+}
+
+// getSourceLine extracts the source line at the given 1-based line number.
+func (p *Parser) getSourceLine(line int) string {
+	src := p.lex.source
+	for i, cur := 0, 1; i < len(src); i++ {
+		if cur == line {
+			end := strings.Index(src[i:], "\n")
+			if end < 0 {
+				return src[i:]
+			}
+			return src[i : i+end]
+		}
+		if src[i] == '\n' {
+			cur++
+		}
+	}
+	return ""
+}
+
 func (p *Parser) expect(kind TokenKind) (Token, error) {
 	tok := p.next()
 	if tok.Kind != kind {
-		return tok, &ParseError{
-			Message: fmt.Sprintf("expected %s, got %s (%q)", tokenNames[kind], tokenNames[tok.Kind], tok.Text),
-			Span:    tok.Span,
-		}
+		return tok, p.newError(tok.Span, "expected %s, got %s (%q)", tokenNames[kind], tokenNames[tok.Kind], tok.Text)
 	}
 	return tok, nil
 }
@@ -82,10 +114,7 @@ func (p *Parser) expectIdentLike() (Token, error) {
 		tok.Kind = TIdent
 		return tok, nil
 	}
-	return tok, &ParseError{
-		Message: fmt.Sprintf("expected identifier, got %s (%q)", tokenNames[tok.Kind], tok.Text),
-		Span:    tok.Span,
-	}
+	return tok, p.newError(tok.Span, "expected identifier, got %s (%q)", tokenNames[tok.Kind], tok.Text)
 }
 
 func (p *Parser) parseFile() (*ast.File, error) {
@@ -567,7 +596,7 @@ func (p *Parser) parseInterface() (*ast.InterfaceDecl, error) {
 	p.skipNewlines()
 
 	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
-		if p.peek().Kind == TWhy {
+		if p.peek().Kind == TWhy && p.isWhyAnnotation() {
 			why, err := p.parseWhy()
 			if err != nil {
 				return nil, err
@@ -932,7 +961,7 @@ func (p *Parser) parseClass() (*ast.ClassDecl, error) {
 	p.skipNewlines()
 
 	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
-		if p.peek().Kind == TWhy {
+		if p.peek().Kind == TWhy && p.isWhyAnnotation() {
 			why, err := p.parseWhy()
 			if err != nil {
 				return nil, err
