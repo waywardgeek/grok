@@ -405,4 +405,36 @@ forge std {
     return Sym(name, hash_string(name))
   }
 
+  // Error: concrete error type for (T, error) returns and ? operator.
+  pub class Error(msg: string) {
+    pub func message(self) -> string { return self.msg }
+  }
+
+  // StringBuilder: efficient string building via repeated append.
+  // Uses string concatenation internally until string=[u8] is implemented.
+  pub class StringBuilder(buf: string) {
+    pub func write(self, s: string) {
+      self.buf = self.buf + s
+    }
+
+    pub func write_byte(self, b: u8) {
+      // Convert byte to single-char string and append
+      let s = char_to_string(b)
+      self.buf = self.buf + s
+    }
+
+    pub func to_string(self) -> string {
+      return self.buf
+    }
+
+    pub func len(self) -> i32 {
+      return len(self.buf)
+    }
+  }
+
+  // new_string_builder: create an empty StringBuilder
+  pub func new_string_builder() -> StringBuilder {
+    return StringBuilder("")
+  }
+
 }

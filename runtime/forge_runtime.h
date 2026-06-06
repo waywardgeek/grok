@@ -418,5 +418,28 @@ static inline const char* forge_path_ext(const char* path) {
     return dot ? dot : "";
 }
 
+// --- String conversion ---
+
+static inline const char* forge_itoa(int64_t n) {
+    static char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)n);
+    return strdup(buf);
+}
+
+typedef struct { int64_t val; bool ok; } forge_atoi_result;
+
+static inline forge_atoi_result forge_atoi(const char* s) {
+    char* end;
+    long long v = strtoll(s, &end, 10);
+    return (forge_atoi_result){ .val = (int64_t)v, .ok = (*end == '\0' && end != s) };
+}
+
+static inline const char* forge_char_to_string(uint8_t c) {
+    char* s = malloc(2);
+    s[0] = (char)c;
+    s[1] = '\0';
+    return s;
+}
+
 #endif /* FORGE_RUNTIME_H */
 

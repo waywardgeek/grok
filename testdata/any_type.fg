@@ -1,0 +1,17 @@
+forge any_type {
+    func store(x: any) -> any {
+        return x
+    }
+
+    func main() {
+        let a: any = 42
+        let b: any = "hello"
+        let c: any = true
+        println(a)
+        println(b)
+        println(c)
+
+        let d = store(99)
+        println(d)
+    }
+}

@@ -338,6 +338,10 @@ func (g *cGen) cTupleType(t *LType) string {
 			t.Fields[1].Type != nil && t.Fields[1].Type.Kind == LTyBool {
 			return "forge_str_bool_t"
 		}
+		if t.Fields[0].Type != nil && t.Fields[0].Type.Kind == LTyI64 &&
+			t.Fields[1].Type != nil && t.Fields[1].Type.Kind == LTyBool {
+			return "forge_atoi_result"
+		}
 	}
 	return g.cType(t)
 }
@@ -2095,6 +2099,18 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 	case "path_ext":
 		if len(d.Args) > 0 {
 			return fmt.Sprintf("forge_path_ext(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "itoa":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_itoa(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "atoi":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_atoi(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "char_to_string":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_char_to_string(%s)", g.emitValue(&d.Args[0]))
 		}
 
 	case "println", "Println":

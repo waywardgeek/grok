@@ -35,6 +35,7 @@ const (
 	TyVar                     // type variable (for generics)
 	TyUnion                   // union type (T | U)
 	TyModule                  // imported Forge module (qualified access to exports)
+	TyAny                     // any (empty interface)
 	TyUnknown                 // not yet resolved
 	TyError                   // error sentinel
 )
@@ -128,6 +129,8 @@ func (t *Type) String() string {
 		return s
 	case TyModule:
 		return "<module " + t.Name + ">"
+	case TyAny:
+		return "any"
 	case TyUnknown:
 		return "?"
 	case TyError:
@@ -142,6 +145,7 @@ var (
 	TypeBool    = &Type{Kind: TyBool}
 	TypeString  = &Type{Kind: TyString}
 	TypeUnit    = &Type{Kind: TyUnit}
+	TypeAny     = &Type{Kind: TyAny}
 	TypeUnknown = &Type{Kind: TyUnknown}
 	TypeError   = &Type{Kind: TyError}
 	TypeI32     = &Type{Kind: TyInt, Bits: 32}
@@ -431,6 +435,14 @@ func (c *Checker) registerBuiltins() {
 		Return: TypeString, Name: "path_base"})
 	c.scope.Define("path_ext", &Type{Kind: TyFunc, Params: []*Type{TypeString},
 		Return: TypeString, Name: "path_ext"})
+
+	// String conversion
+	c.scope.Define("itoa", &Type{Kind: TyFunc, Params: []*Type{&Type{Kind: TyInt, Bits: -1}},
+		Return: TypeString, Name: "itoa"})
+	c.scope.Define("atoi", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: &Type{Kind: TyTuple, Fields: []TypeField{{Type: &Type{Kind: TyInt, Bits: 64}}, {Type: TypeBool}}}, Name: "atoi"})
+	c.scope.Define("char_to_string", &Type{Kind: TyFunc, Params: []*Type{TypeU8},
+		Return: TypeString, Name: "char_to_string"})
 }
 
 // CheckModuleFile parses, checks, and caches a .fg module file.
@@ -654,6 +666,8 @@ func (c *Checker) resolveNamedType(name string, args []ast.TypeExpr) *Type {
 		return UintType(-1) // Go platform-sized uint (for stdlib interop casts)
 	case "float":
 		return FloatType(64)
+	case "any":
+		return TypeAny
 	default:
 		// Check registry for user-defined types
 		if info := c.registry.Lookup(name); info != nil {
@@ -677,6 +691,10 @@ func (c *Checker) assignableTo(from, to *Type) bool {
 	}
 	// Type variables are compatible with anything (constraints checked by Go)
 	if from.Kind == TyVar || to.Kind == TyVar {
+		return true
+	}
+	// any accepts any type; any is assignable to any
+	if from.Kind == TyAny || to.Kind == TyAny {
 		return true
 	}
 	// nil (TyUnknown) is assignable to optional and interface types

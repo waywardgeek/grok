@@ -1823,6 +1823,26 @@ func (g *GoBackend) emitBuiltin(d *LBuiltinData) {
 			g.emitValue(&d.Args[0])
 			g.writef(")")
 		}
+	case "itoa":
+		g.autoImport("strconv")
+		if len(d.Args) > 0 {
+			g.writef("strconv.FormatInt(int64(")
+			g.emitValue(&d.Args[0])
+			g.writef("), 10)")
+		}
+	case "atoi":
+		g.autoImport("strconv")
+		if len(d.Args) > 0 {
+			g.writef("func() (int64, bool) { v, err := strconv.ParseInt(")
+			g.emitValue(&d.Args[0])
+			g.writef(", 10, 64); return v, err == nil }()")
+		}
+	case "char_to_string":
+		if len(d.Args) > 0 {
+			g.writef("string([]byte{")
+			g.emitValue(&d.Args[0])
+			g.writef("})")
+		}
 	default:
 		// Built-in methods: string_X, slice_X, map_X
 		if strings.HasPrefix(d.Name, "string_") || strings.HasPrefix(d.Name, "slice_") || strings.HasPrefix(d.Name, "map_") {
