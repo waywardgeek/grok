@@ -1442,7 +1442,17 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 
 	case LExprSlice:
 		d := e.Data.(*LSliceData)
-		return g.emitValue(&d.Collection)
+		coll := g.emitValue(&d.Collection)
+		low := "0"
+		if d.Low != nil {
+			low = g.emitValue(d.Low)
+		}
+		high := fmt.Sprintf("%s.len", coll)
+		if d.High != nil {
+			high = g.emitValue(d.High)
+		}
+		sliceType := g.cType(e.Type)
+		return fmt.Sprintf("forge_subslice(%s, %s, %s, %s)", coll, low, high, sliceType)
 
 	case LExprWrapOptional:
 		d := e.Data.(*LWrapOptionalData)

@@ -138,6 +138,22 @@ func TestCBackendRuns(t *testing.T) {
 		}
 	})
 
+	t.Run("arraylist.fg", func(t *testing.T) {
+		path := filepath.Join(testdataDir, "arraylist.fg")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Skipf("can't read: %v", err)
+		}
+
+		cSrc := cPipeline(t, string(data), "arraylist")
+		output := compileCAndRun(t, cSrc, "arraylist")
+		expected := "3\n0\n1\n2\n2\n1\ntrue\n"
+		if output != expected {
+			t.Errorf("expected %q, got %q", expected, output)
+			t.Logf("C source:\n%s", cSrc)
+		}
+	})
+
 	t.Run("demo.fg", func(t *testing.T) {
 		path := filepath.Join(testdataDir, "demo.fg")
 		data, err := os.ReadFile(path)

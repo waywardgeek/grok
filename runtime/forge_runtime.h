@@ -47,6 +47,15 @@
 /* Pop the last element (returns it). Caller must check len > 0. */
 #define forge_pop(slice_ptr) ((slice_ptr)->data[--(slice_ptr)->len])
 
+/* Sub-slice: creates a new slice view [low:high). Shares underlying data. */
+#define forge_subslice(slice, low, high, SliceName) ({ \
+    SliceName _s; \
+    _s.data = (slice).data + (low); \
+    _s.len = (high) - (low); \
+    _s.cap = (slice).cap - (low); \
+    _s; \
+})
+
 /* Create a slice from an initializer list */
 #define forge_slice_lit(SliceName, ElemType, ...) ({ \
     ElemType _init[] = {__VA_ARGS__}; \

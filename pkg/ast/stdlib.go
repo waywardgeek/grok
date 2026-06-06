@@ -6,14 +6,30 @@ import (
 )
 
 // MergeStdlib merges interface declarations from a parsed stdlib file
-// into every block of the target file. This must be called before the
-// desugar passes so that relation declarations can reference stdlib
-// interfaces like ArrayList.
+// into every block of the target file. Only interfaces that are referenced
+// by a relation declaration are merged, to avoid polluting programs that
+// don't use them.
 func MergeStdlib(file *File, stdFile *File) {
-	// Collect all interface declarations from the stdlib
+	// Collect all relation hints (interface names used in relations)
+	usedIfaces := make(map[string]bool)
+	for _, block := range file.Blocks {
+		for _, rel := range block.Relations {
+			usedIfaces[rel.Hint] = true
+		}
+	}
+
+	if len(usedIfaces) == 0 {
+		return
+	}
+
+	// Collect only referenced interface declarations from the stdlib
 	var stdIfaces []InterfaceDecl
 	for _, block := range stdFile.Blocks {
-		stdIfaces = append(stdIfaces, block.Interfaces...)
+		for _, iface := range block.Interfaces {
+			if usedIfaces[iface.Name] {
+				stdIfaces = append(stdIfaces, iface)
+			}
+		}
 	}
 
 	if len(stdIfaces) == 0 {
@@ -48,9 +64,14 @@ func FindStdlibDir() string {
 		}
 	}
 
-	// Relative to working directory
-	if info, err := os.Stat("stdlib/std.fg"); err == nil && !info.IsDir() {
-		return "stdlib"
+	// Relative to working directory — walk up to find project root
+	dir, _ := os.Getwd()
+	for dir != "/" && dir != "." {
+		candidate := filepath.Join(dir, "stdlib")
+		if info, err := os.Stat(filepath.Join(candidate, "std.fg")); err == nil && !info.IsDir() {
+			return candidate
+		}
+		dir = filepath.Dir(dir)
 	}
 
 	return ""
