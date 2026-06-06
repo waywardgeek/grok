@@ -276,9 +276,11 @@ func TestParseBareRelationalConstraint(t *testing.T) {
 
 func TestParseClass(t *testing.T) {
 	input := `forge Test {
-  class HttpClient(base_url: string, timeout: u32) {
+  class HttpClient {
     why: "Manages HTTP connections."
 
+    base_url: string
+    timeout: u32
     pool: ConnectionPool guarded_by(mu)
     mu: lock
 
@@ -299,14 +301,11 @@ func TestParseClass(t *testing.T) {
 	if cls.Name != "HttpClient" {
 		t.Errorf("expected HttpClient, got %s", cls.Name)
 	}
-	if len(cls.CtorParams) != 2 {
-		t.Errorf("expected 2 ctor params, got %d", len(cls.CtorParams))
+	if len(cls.Fields) != 4 {
+		t.Errorf("expected 4 fields, got %d", len(cls.Fields))
 	}
-	if len(cls.Fields) != 2 {
-		t.Errorf("expected 2 fields, got %d", len(cls.Fields))
-	}
-	if cls.Fields[0].GuardedBy != "mu" {
-		t.Errorf("expected guarded_by(mu), got %q", cls.Fields[0].GuardedBy)
+	if cls.Fields[2].GuardedBy != "mu" {
+		t.Errorf("expected guarded_by(mu), got %q", cls.Fields[2].GuardedBy)
 	}
 	if len(cls.Methods) != 1 {
 		t.Errorf("expected 1 method, got %d", len(cls.Methods))
@@ -436,7 +435,7 @@ func TestParseImport(t *testing.T) {
 
 func TestParseGenericClass(t *testing.T) {
 	input := `forge Test {
-  class MutableStack<T>() {
+  class MutableStack<T> {
     items: [T] guarded_by(mu)
     mu: lock
 
@@ -493,7 +492,7 @@ func TestParseWhereClause(t *testing.T) {
 
 func TestParseClassImplements(t *testing.T) {
 	input := `forge Test {
-  class MemBuf() implements Reader, Writer {
+  class MemBuf implements Reader, Writer {
     data: [u8] guarded_by(mu)
     mu: lock
   }

@@ -498,6 +498,7 @@ func (p *Parser) parseEnumVariant() (*ast.EnumVariant, error) {
 	// Optional payload
 	if p.peek().Kind == TLParen {
 		p.next()
+		p.skipNewlines()
 		for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
 			field, err := p.parseTupleField()
 			if err != nil {
@@ -507,6 +508,7 @@ func (p *Parser) parseEnumVariant() (*ast.EnumVariant, error) {
 			if p.peek().Kind == TComma {
 				p.next()
 			}
+			p.skipNewlines()
 		}
 		if _, err := p.expect(TRParen); err != nil {
 			return nil, err
@@ -844,6 +846,7 @@ func (p *Parser) parseImplMapping() (*ast.ImplMapping, error) {
 		}
 		// Parse params
 		p.next() // consume '('
+		p.skipNewlines()
 		for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
 			param, err := p.parseParam()
 			if err != nil {
@@ -853,6 +856,7 @@ func (p *Parser) parseImplMapping() (*ast.ImplMapping, error) {
 			if p.peek().Kind == TComma {
 				p.next()
 			}
+			p.skipNewlines()
 		}
 		if _, err := p.expect(TRParen); err != nil {
 			return nil, err
@@ -905,24 +909,6 @@ func (p *Parser) parseClass() (*ast.ClassDecl, error) {
 		cls.TypeParams = params
 	}
 
-	// Constructor params
-	if _, err := p.expect(TLParen); err != nil {
-		return nil, err
-	}
-	for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
-		param, err := p.parseParam()
-		if err != nil {
-			return nil, err
-		}
-		cls.CtorParams = append(cls.CtorParams, *param)
-		if p.peek().Kind == TComma {
-			p.next()
-		}
-	}
-	if _, err := p.expect(TRParen); err != nil {
-		return nil, err
-	}
-
 	// Optional implements
 	if p.peek().Kind == TImplements {
 		p.next()
@@ -959,19 +945,28 @@ func (p *Parser) parseClass() (*ast.ClassDecl, error) {
 			}
 			cls.Source = src
 		} else if p.peek().Kind == TFunc || p.peek().Kind == TPub {
-			isPubMethod := false
+			isPub := false
 			if p.peek().Kind == TPub {
-				isPubMethod = true
+				isPub = true
 				p.next() // consume 'pub'
+				// After pub, could be func or a field
 				if p.peek().Kind != TFunc {
-					return nil, &ParseError{Message: "expected func after pub in class body", Span: p.peek().Span}
+					// pub field: pub name: Type [= default]
+					field, err := p.parseField()
+					if err != nil {
+						return nil, err
+					}
+					field.IsPublic = true
+					cls.Fields = append(cls.Fields, *field)
+					p.skipNewlines()
+					continue
 				}
 			}
 			fn, err := p.parseFunc()
 			if err != nil {
 				return nil, err
 			}
-			fn.IsPublic = isPubMethod
+			fn.IsPublic = isPub
 			cls.Methods = append(cls.Methods, *fn)
 		} else {
 			// Must be a field
@@ -991,6 +986,7 @@ func (p *Parser) parseClass() (*ast.ClassDecl, error) {
 	cls.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End}
 	return cls, nil
 }
+
 
 // parseFunc parses a function/method declaration with annotations.
 func (p *Parser) parseFunc() (*ast.FuncDecl, error) {
@@ -1026,6 +1022,7 @@ func (p *Parser) parseFunc() (*ast.FuncDecl, error) {
 	if _, err := p.expect(TLParen); err != nil {
 		return nil, err
 	}
+	p.skipNewlines()
 	for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
 		param, err := p.parseParam()
 		if err != nil {
@@ -1035,6 +1032,7 @@ func (p *Parser) parseFunc() (*ast.FuncDecl, error) {
 		if p.peek().Kind == TComma {
 			p.next()
 		}
+		p.skipNewlines()
 	}
 	if _, err := p.expect(TRParen); err != nil {
 		return nil, err
@@ -1253,6 +1251,16 @@ func (p *Parser) parseField() (*ast.Field, error) {
 		}
 	}
 
+	// Optional default value: = expr
+	if p.peek().Kind == TAssign {
+		p.next() // consume '='
+		defExpr, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		field.Default = defExpr
+	}
+
 	return field, nil
 }
 
@@ -1381,6 +1389,7 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 			return nil, err
 		}
 		var params []ast.TypeExpr
+		p.skipNewlines()
 		for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
 			param, err := p.parseTypeExpr()
 			if err != nil {
@@ -1390,6 +1399,7 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 			if p.peek().Kind == TComma {
 				p.next()
 			}
+			p.skipNewlines()
 		}
 		if _, err := p.expect(TRParen); err != nil {
 			return nil, err
@@ -1428,6 +1438,7 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 		// Tuple: (T, U) or (x: T, y: U)
 		p.next()
 		var fields []ast.TupleField
+		p.skipNewlines()
 		for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
 			field, err := p.parseTupleField()
 			if err != nil {
@@ -1437,6 +1448,7 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 			if p.peek().Kind == TComma {
 				p.next()
 			}
+			p.skipNewlines()
 		}
 		end, err := p.expect(TRParen)
 		if err != nil {

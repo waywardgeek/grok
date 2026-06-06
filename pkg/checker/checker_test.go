@@ -631,7 +631,7 @@ func TestInterfaceImplementsSatisfied(t *testing.T) {
     func greet(self) -> string
   }
 
-  class Dog() implements Greeter {
+  class Dog implements Greeter {
     func greet(self) -> string {
       return "woof"
     }
@@ -646,7 +646,7 @@ func TestInterfaceMissingMethod(t *testing.T) {
     func greet(self) -> string
   }
 
-  class Dog() implements Greeter {
+  class Dog implements Greeter {
     func bark(self) -> string {
       return "woof"
     }
@@ -661,7 +661,7 @@ func TestInterfaceWrongReturnType(t *testing.T) {
     func greet(self) -> string
   }
 
-  class Dog() implements Greeter {
+  class Dog implements Greeter {
     func greet(self) -> i32 {
       return 42
     }
@@ -676,7 +676,7 @@ func TestInterfaceWrongParamCount(t *testing.T) {
     func greet(self) -> string
   }
 
-  class Dog() implements Greeter {
+  class Dog implements Greeter {
     func greet(self, name: string) -> string {
       return "woof"
     }
@@ -700,7 +700,7 @@ func TestInterfaceComposition(t *testing.T) {
     implements Writer
   }
 
-  class File() implements ReadWriter {
+  class File implements ReadWriter {
     func read(self) -> string {
       return ""
     }
@@ -734,7 +734,7 @@ func TestInterfaceCompositionMissingMethod(t *testing.T) {
     implements Writer
   }
 
-  class File() implements ReadWriter {
+  class File implements ReadWriter {
     func read(self) -> string {
       return ""
     }
@@ -749,7 +749,7 @@ func TestInterfaceSubtyping(t *testing.T) {
     func greet(self) -> string
   }
 
-  class Dog() implements Greeter {
+  class Dog implements Greeter {
     func greet(self) -> string {
       return "woof"
     }
@@ -773,7 +773,7 @@ func TestInterfaceSubtypingFails(t *testing.T) {
     func greet(self) -> string
   }
 
-  class Cat() {
+  class Cat {
     func meow(self) -> string {
       return "meow"
     }
@@ -1458,7 +1458,8 @@ func TestUserDefinedConstraintSatisfied(t *testing.T) {
 		interface Printable {
 			func to_string(self) -> string
 		}
-		class Dog(name: string) {
+		class Dog {
+			name: string
 			func to_string(self) -> string {
 				return self.name
 			}
@@ -1467,7 +1468,7 @@ func TestUserDefinedConstraintSatisfied(t *testing.T) {
 			return item.to_string()
 		}
 		func main() {
-			let d = Dog("Rex")
+			let d = Dog { name: "Rex" }
 			let r = print_it<Dog>(d)
 		}
 	}`)
@@ -1479,13 +1480,14 @@ func TestUserDefinedConstraintViolated(t *testing.T) {
 		interface Printable {
 			func to_string(self) -> string
 		}
-		class Cat(name: string) {
+		class Cat {
+			name: string
 		}
 		func print_it<T: Printable>(item: T) -> string {
 			return item.to_string()
 		}
 		func main() {
-			let c = Cat("Whiskers")
+			let c = Cat { name: "Whiskers" }
 			let r = print_it<Cat>(c)
 		}
 	}`)
@@ -1630,7 +1632,7 @@ func TestModuleImportFileNotFound(t *testing.T) {
 
 func TestGuardedByAccessInsideLock(t *testing.T) {
 	c := parseAndCheck(t, `forge test {
-  class Counter() {
+  class Counter {
     count: i32 guarded_by(mu)
     mu: lock
 
@@ -1646,7 +1648,7 @@ func TestGuardedByAccessInsideLock(t *testing.T) {
 
 func TestGuardedByAccessOutsideLock(t *testing.T) {
 	c := parseAndCheck(t, `forge test {
-  class Counter() {
+  class Counter {
     count: i32 guarded_by(mu)
     mu: lock
 
@@ -1663,7 +1665,7 @@ func TestGuardedByAccessOutsideLock(t *testing.T) {
 
 func TestGuardedByWrongLock(t *testing.T) {
 	c := parseAndCheck(t, `forge test {
-  class TwoLocks() {
+  class TwoLocks {
     data: i32 guarded_by(mu1)
     mu1: lock
     mu2: lock
@@ -1680,7 +1682,7 @@ func TestGuardedByWrongLock(t *testing.T) {
 
 func TestGuardedByFreeFieldAccess(t *testing.T) {
 	c := parseAndCheck(t, `forge test {
-  class Mixed() {
+  class Mixed {
     label: string
     count: i32 guarded_by(mu)
     mu: lock
@@ -1695,7 +1697,7 @@ func TestGuardedByFreeFieldAccess(t *testing.T) {
 
 func TestGuardedByTopLevelLock(t *testing.T) {
 	c := parseAndCheck(t, `forge test {
-  class Counter() {
+  class Counter {
     count: i32 guarded_by(mu)
     mu: lock
   }

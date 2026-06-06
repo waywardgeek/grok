@@ -239,6 +239,18 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 					Data: &ast.CallExpr{Func: *expr, TypeArgs: typeArgs, Args: args},
 					Span: ast.Span{Start: expr.Span.Start, End: end},
 				}
+			} else if ok && p.peek().Kind == TLBrace && expr.Kind == ast.ExprIdent && p.isStructLitAhead() {
+				// Generic struct/class literal: TypeName<T> { field: value }
+				identName := expr.Data.(*ast.IdentExpr).Name
+				nameTok := Token{Kind: TIdent, Text: identName, Span: expr.Span}
+				var litErr error
+				expr, litErr = p.parseStructLit(nameTok)
+				if litErr != nil {
+					return nil, litErr
+				}
+				// Store type args on the struct lit
+				sl := expr.Data.(*ast.StructLitExpr)
+				sl.TypeArgs = typeArgs
 			} else {
 				// Not a generic call — restore and let binary handle it
 				*p.lex = saved

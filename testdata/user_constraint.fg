@@ -6,7 +6,9 @@ pub interface Printable {
   func to_string(self) -> string
 }
 
-class Dog(name: string) {
+class Dog {
+  name: string
+
   pub func to_string(self) -> string {
     return self.name
   }
@@ -17,7 +19,7 @@ func print_it<T: Printable>(item: T) -> string {
 }
 
 func main() {
-  let d = Dog("Rex")
+  let d = Dog { name: "Rex" }
   let result = print_it<Dog>(d)
   println(result)
 }

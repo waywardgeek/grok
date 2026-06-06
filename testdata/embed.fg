@@ -13,8 +13,8 @@ forge embed_test {
     field P.count: i32
   }
 
-  class Team(name: string) {}
-  class Player(name: string) {}
+  class Team { name: string }
+  class Player { name: string }
 
   relation Extended Team:team owns [Player:player]
 
@@ -23,7 +23,7 @@ forge embed_test {
   }
 
   func main() {
-    let t = Team("Warriors")
+    let t = Team { name: "Warriors" }
     println(f"count: {t.team_count}")
   }
 }

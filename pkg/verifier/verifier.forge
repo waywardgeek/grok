@@ -114,7 +114,7 @@ forge Verifier {
     Message: string
   }
 
-  class Result() {
+  class Result {
     why: "Container for verification findings. ErrorCount() determines if drift should fail a build."
     Findings: [Finding]
     func ErrorCount(self) -> int

@@ -733,15 +733,6 @@ func verifyClass(c forgeast.ClassDecl, goInfo *goTypeInfo, forgeFile, goFile str
 		}
 	}
 
-	for _, param := range c.CtorParams {
-		if param.IsSelf {
-			continue
-		}
-		if !findGoField(param.Name, goStruct.Fields) {
-			result.add(Warning, forgeFile, goFile, fmt.Sprintf("class %s: ctor param %s not found as field", c.Name, param.Name))
-		}
-	}
-
 	for _, forgeMethod := range c.Methods {
 		goName, found := findGoName(forgeMethod.Name, goStruct.Methods)
 		if !found {

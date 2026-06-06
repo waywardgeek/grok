@@ -42,7 +42,7 @@ forge calculator {
   }
 
   // Stack-based expression evaluator
-  class ExprEval() {
+  class ExprEval {
     values: [f64]
     ops: [string]
 
@@ -109,7 +109,7 @@ forge calculator {
     println(f"15 / 3 = {eval_simple(15.0, slash, 3.0)}")
 
     // Test stack-based evaluator: compute 3 + 4 * 2
-    let mut ev = ExprEval()
+    let mut ev = ExprEval {}
     ev.push_value(3.0)
     ev.push_op(plus)
     ev.push_value(4.0)
@@ -127,7 +127,7 @@ forge calculator {
     }
 
     // Test: (5 + 3) * 2
-    let mut ev2 = ExprEval()
+    let mut ev2 = ExprEval {}
     ev2.push_value(5.0)
     ev2.push_op(plus)
     ev2.push_value(3.0)

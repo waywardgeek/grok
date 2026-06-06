@@ -307,7 +307,8 @@ forge Checker {
   }
 
   // ---- Scope ----
-  class Scope(parent: Scope?) {
+  class Scope {
+    parent: Scope?
     why: "Tracks which variables were declared with 'let mut'."
     func Define(mut self, name: string, typ: Type?)
     func DefineMut(mut self, name: string, typ: Type?)
@@ -334,7 +335,7 @@ forge Checker {
     GuardedFields: map[string]string
   }
 
-  class Registry() {
+  class Registry {
     why: "Named type definitions. Structs, classes, enums, interfaces registered during first pass."
     func Register(mut self, name: string, info: TypeInfo?)
     func Lookup(self, name: string) -> TypeInfo?
@@ -364,7 +365,7 @@ forge Checker {
   """
 
   // ---- Checker ----
-  class Checker() {
+  class Checker {
     why: "Tracks nesting depth inside loops for break/continue validation."
     func CheckFile(mut self, file: File?)
       why: "Primary entry point. Registers all types, then checks all function bodies."

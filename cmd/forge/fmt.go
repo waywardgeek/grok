@@ -330,14 +330,6 @@ func fmtClass(b *strings.Builder, c *ast.ClassDecl) {
 	}
 	b.WriteString(fmt.Sprintf("class %s", c.Name))
 	fmtTypeParams(b, c.TypeParams)
-	b.WriteString("(")
-	for i, p := range c.CtorParams {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(fmt.Sprintf("%s: %s", p.Name, fmtType(&p.Type)))
-	}
-	b.WriteString(")")
 	if len(c.Implements) > 0 {
 		b.WriteString(" implements ")
 		b.WriteString(strings.Join(c.Implements, ", "))

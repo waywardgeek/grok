@@ -125,6 +125,14 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 			})
 		}
 
+		// Pre-register all class names so cross-references in structs/enums
+		// resolve to LTyClassHandle (must happen before struct & enum lowering)
+		for _, cls := range block.Classes {
+			if _, ok := l.classFields[cls.Name]; !ok {
+				l.classFields[cls.Name] = nil
+			}
+		}
+
 		// Lower structs
 		for _, s := range block.Structs {
 			prog.Structs = append(prog.Structs, l.lowerStructDecl(&s))
@@ -136,15 +144,7 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 		}
 
 		// Lower classes
-		// Pre-register class names so lowerTypeExpr can identify class types
-	// even when a class references another class declared later in the same block.
-	for _, cls := range block.Classes {
-		if _, exists := l.classFields[cls.Name]; !exists {
-			l.classFields[cls.Name] = nil // placeholder — populated below
-		}
-	}
-
-	for _, cls := range block.Classes {
+		for _, cls := range block.Classes {
 			prog.Classes = append(prog.Classes, l.lowerClassDecl(&cls))
 		}
 
@@ -215,6 +215,13 @@ func (l *Lowerer) registerTypes(block *ast.ForgeBlock) {
 		}
 	}
 
+	// Pre-register class names so enum/struct types can reference them
+	for _, cls := range block.Classes {
+		if _, exists := l.classFields[cls.Name]; !exists {
+			l.classFields[cls.Name] = nil
+		}
+	}
+
 	for _, e := range block.Enums {
 		var variants []LVariant
 		for i, v := range e.Variants {
@@ -249,11 +256,6 @@ func (l *Lowerer) registerTypes(block *ast.ForgeBlock) {
 		l.enumVariants[e.Name] = variants
 	}
 
-	// Pre-register all class names so cross-references resolve to LTyClassHandle
-	for _, cls := range block.Classes {
-		l.classFields[cls.Name] = nil
-	}
-
 	for _, cls := range block.Classes {
 		// Register class type params
 		if len(cls.TypeParams) > 0 {
@@ -272,11 +274,8 @@ func (l *Lowerer) registerTypes(block *ast.ForgeBlock) {
 		}
 		var fieldNames []string
 		var fields []LField
-		for _, p := range cls.CtorParams {
-			fieldNames = append(fieldNames, p.Name)
-			fields = append(fields, LField{Name: p.Name, Type: l.lowerTypeExpr(&p.Type)})
-		}
 		for _, f := range cls.Fields {
+			fieldNames = append(fieldNames, f.Name)
 			fields = append(fields, LField{Name: f.Name, Type: l.lowerTypeExpr(&f.Type)})
 		}
 		l.classCtorFields[cls.Name] = fieldNames
@@ -2771,6 +2770,16 @@ func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue {
 	}
 
 	resultType := l.exprType(expr)
+
+	// Check if this is a class (struct-literal construction for classes)
+	if _, isClass := l.classFields[sl.TypeName]; isClass {
+		return l.emitTemp(LExpr{
+			Kind: LExprClassAlloc,
+			Type: &LType{Kind: LTyClassHandle, Name: sl.TypeName, IsExported: l.exported[sl.TypeName]},
+			Data: &LClassAllocData{Class: sl.TypeName, Fields: fields},
+		})
+	}
+
 	if resultType.Kind == LTyAny {
 		typeName := sl.TypeName
 		// Check if it's a qualified import (e.g., sync.Mutex)

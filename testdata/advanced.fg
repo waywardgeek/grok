@@ -7,7 +7,9 @@ forge advanced {
     }
 
     // Class with constructor params and methods
-    pub class Counter(count: i32) {
+    pub class Counter {
+        count: i32
+
         pub func Increment(mut self) {
             self.count = self.count + 1
         }

@@ -72,19 +72,26 @@ forge Interfaces {
   }
 
   // Classes use DIFFERENT method names than the interface
-  class SimpleGraph(node_list: [SimpleNode]) {
+  class SimpleGraph {
+    node_list: [SimpleNode]
+
     pub func get_nodes(self) -> [SimpleNode] {
       return self.node_list
     }
   }
 
-  class SimpleNode(name: string, edges: [SimpleEdge]) {
+  class SimpleNode {
+    name: string
+    edges: [SimpleEdge]
+
     pub func get_edges(self) -> [SimpleEdge] {
       return self.edges
     }
   }
 
-  class SimpleEdge(target: SimpleNode) {
+  class SimpleEdge {
+    target: SimpleNode
+
     pub func get_target(self) -> SimpleNode {
       return self.target
     }
@@ -98,9 +105,12 @@ forge Interfaces {
   }
 
   // Folder and File classes — relation will inject default fields
-  class Folder(name: string, items: [File]) {}
+  class Folder {
+    name: string
+    items: [File]
+  }
 
-  class File(title: string) {}
+  class File { title: string }
 
   // This relation injects DoublyLinked default fields into Folder and File
   relation DoublyLinked Folder:files owns [File:from]
@@ -116,23 +126,23 @@ forge Interfaces {
   }
 
   func main() {
-    let n2 = SimpleNode("B", [])
-    let e1 = SimpleEdge(n2)
-    let n1 = SimpleNode("A", [e1])
-    let g = SimpleGraph([n1, n2])
+    let n2 = SimpleNode { name: "B", edges: [] }
+    let e1 = SimpleEdge { target: n2 }
+    let n1 = SimpleNode { name: "A", edges: [e1] }
+    let g = SimpleGraph { node_list: [n1, n2] }
     let count = count_edges<SimpleGraph, SimpleNode, SimpleEdge>(g)
     println(count)
 
-    let f1 = File("readme.txt")
-    let f2 = File("data.csv")
-    let dir = Folder("docs", [f1, f2])
+    let f1 = File { title: "readme.txt" }
+    let f2 = File { title: "data.csv" }
+    let dir = Folder { name: "docs", items: [f1, f2] }
     let num = count_children<Folder, File>(dir)
     println(num)
 
     // Test default append method
-    let dir2 = Folder("empty", [])
-    let f3 = File("new.txt")
-    let f4 = File("old.txt")
+    let dir2 = Folder { name: "empty", items: [] }
+    let f3 = File { title: "new.txt" }
+    let f4 = File { title: "old.txt" }
     dll_append<Folder, File>(dir2, f3)
     dll_append<Folder, File>(dir2, f4)
     if !isnull(dir2.files_first) {
@@ -152,9 +162,9 @@ forge Interfaces {
     }
 
     // Test parent destroy (cascade destroys remaining children)
-    let dir3 = Folder("temp", [])
-    let f5 = File("a.txt")
-    let f6 = File("b.txt")
+    let dir3 = Folder { name: "temp", items: [] }
+    let f5 = File { title: "a.txt" }
+    let f6 = File { title: "b.txt" }
     dll_append<Folder, File>(dir3, f5)
     dll_append<Folder, File>(dir3, f6)
     dir3.destroy()

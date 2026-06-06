@@ -162,7 +162,9 @@ forge std {
   //
   // Usage:
   //   relation HashedList MyMap owns [MyEntry]
-  //   class MyEntry(key: string, value: i32) {
+  //   class MyEntry {
+  //     key: string
+  //     value: i32
   //     pub func hash_key(self) -> u64 { return hash_string(self.key) }
   //   }
   pub interface HashedList<P, C> {
@@ -395,24 +397,31 @@ forge std {
 
   // Sym: an interned symbol with pre-computed hash.
   // Hash is computed once at creation; all subsequent lookups use the u64.
-  pub class Sym(name: string, hash: u64) {
+  pub class Sym {
+    name: string
+    hash: u64
+
     pub func get_name(self) -> string { return self.name }
     pub func get_hash(self) -> u64 { return self.hash }
   }
 
   // sym: create a Sym from a string, computing its FNV-1a hash once.
   func sym(name: string) -> Sym {
-    return Sym(name, hash_string(name))
+    return Sym { name: name, hash: hash_string(name) }
   }
 
   // Error: concrete error type for (T, error) returns and ? operator.
-  pub class Error(msg: string) {
+  pub class Error {
+    msg: string
+
     pub func message(self) -> string { return self.msg }
   }
 
   // StringBuilder: efficient string building via repeated append.
   // Uses string concatenation internally until string=[u8] is implemented.
-  pub class StringBuilder(buf: string) {
+  pub class StringBuilder {
+    buf: string
+
     pub func write(self, s: string) {
       self.buf = self.buf + s
     }
@@ -434,7 +443,7 @@ forge std {
 
   // new_string_builder: create an empty StringBuilder
   pub func new_string_builder() -> StringBuilder {
-    return StringBuilder("")
+    return StringBuilder { buf: "" }
   }
 
 }

@@ -2,7 +2,7 @@
 
 forge guarded_demo {
 
-  class Counter() {
+  class Counter {
     count: i32 guarded_by(mu)
     mu: lock
     label: string
@@ -19,7 +19,7 @@ forge guarded_demo {
   }
 
   func main() {
-    let c = Counter()
+    let c = Counter {}
 
     // Access guarded field inside lock — should be fine
     lock(c.mu) {

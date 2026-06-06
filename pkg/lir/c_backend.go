@@ -484,7 +484,7 @@ func (g *cGen) emitEnumDecl(e *LEnumDecl) {
 	g.indent++
 	for _, v := range e.Variants {
 		if len(v.Fields) > 0 {
-			g.linef("%s_%s_Data %s;", name, v.Name, strings.ToLower(v.Name))
+			g.linef("%s_%s_Data %s;", name, v.Name, cSafeName(strings.ToLower(v.Name)))
 		}
 	}
 	g.indent--
@@ -1040,7 +1040,7 @@ func (g *cGen) emitStmt(s *LStmt) {
 			if c.Binding != "" && d.EnumName != "" {
 				enumName := g.structName(d.EnumName, false)
 				variant := c.Binding
-				variantLower := strings.ToLower(variant)
+				variantLower := cSafeName(strings.ToLower(variant))
 				// Extract variant data and bind to name
 				g.linef("%s_%s_Data %s = %s.data.%s;",
 					enumName, variant, c.Binding,
@@ -1741,7 +1741,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		for _, f := range d.Fields {
 			fieldInits = append(fieldInits, g.emitValue(&f))
 		}
-		variantLower := strings.ToLower(d.Variant)
+		variantLower := cSafeName(strings.ToLower(d.Variant))
 		dataInit := strings.Join(fieldInits, ", ")
 		return fmt.Sprintf("(%s){.tag = %s_%s, .data.%s = {%s}}",
 			structName, structName, d.Variant, variantLower, dataInit)
@@ -1752,7 +1752,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 
 	case LExprVariantData:
 		d := e.Data.(*LVariantDataData)
-		variantLower := strings.ToLower(d.Variant)
+		variantLower := cSafeName(strings.ToLower(d.Variant))
 		if d.Field != "" {
 			return fmt.Sprintf("%s.data.%s.%s", g.emitValue(&d.Value), variantLower, d.Field)
 		}

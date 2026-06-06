@@ -162,6 +162,7 @@ type StructLitField struct {
 
 type StructLitExpr struct {
 	TypeName string
+	TypeArgs []TypeExpr // generic type args, e.g. Pair<string>
 	Fields   []StructLitField
 }
 

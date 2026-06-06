@@ -1,8 +1,8 @@
 // arraylist.fg — tests ArrayList relation from stdlib
 forge arraylist {
 
-  class Team(name: string) {}
-  class Player(name: string) {}
+  class Team { name: string }
+  class Player { name: string }
 
   relation ArrayList Team:roster owns [Player:team]
 
@@ -11,10 +11,10 @@ forge arraylist {
   }
 
   func main() {
-    let t = Team("Wolves")
-    let p1 = Player("Alice")
-    let p2 = Player("Bob")
-    let p3 = Player("Carol")
+    let t = Team { name: "Wolves" }
+    let p1 = Player { name: "Alice" }
+    let p2 = Player { name: "Bob" }
+    let p3 = Player { name: "Carol" }
 
     array_append<Team, Player>(t, p1)
     array_append<Team, Player>(t, p2)
@@ -31,8 +31,8 @@ forge arraylist {
     println(p3.team_index)
 
     // Parent destroy — cascade
-    let t2 = Team("Bears")
-    let p4 = Player("Dan")
+    let t2 = Team { name: "Bears" }
+    let p4 = Player { name: "Dan" }
     array_append<Team, Player>(t2, p4)
     t2.destroy()
     println(isnull(p4.team_parent))

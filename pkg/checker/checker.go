@@ -2318,10 +2318,6 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 	for _, tp := range cls.TypeParams {
 		c.scope.Define(tp.Name, &Type{Kind: TyVar, Name: tp.Name})
 	}
-	// Ctor params become struct fields
-	for _, p := range cls.CtorParams {
-		info.Fields[p.Name] = c.resolveTypeExpr(&p.Type)
-	}
 	for _, f := range cls.Fields {
 		info.Fields[f.Name] = c.resolveTypeExpr(&f.Type)
 		if f.GuardedBy != "" {
@@ -2333,25 +2329,49 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 	}
 	c.popScope()
 	c.registry.Register(cls.Name, info)
-	// Define class name in scope as constructor function
+
+	// Check for explicit constructor: func ClassName(self, ...)
 	var ctorParams []*Type
-	for _, p := range cls.CtorParams {
-		ctorParams = append(ctorParams, c.resolveTypeExpr(&p.Type))
+	var hasExplicitCtor bool
+	for _, m := range cls.Methods {
+		if m.Name == cls.Name {
+			hasExplicitCtor = true
+			for _, p := range m.Params {
+				if !p.IsSelf {
+					ctorParams = append(ctorParams, c.resolveTypeExpr(&p.Type))
+				}
+			}
+			break
+		}
 	}
+
 	var typeParamNames []string
 	var typeParamConstraints []string
 	for _, tp := range cls.TypeParams {
 		typeParamNames = append(typeParamNames, tp.Name)
 		typeParamConstraints = append(typeParamConstraints, tp.Constraint)
 	}
-	c.scope.Define(cls.Name, &Type{
-		Kind:                 TyFunc,
-		Name:                 cls.Name,
-		Params:               ctorParams,
-		Return:               info.Type,
-		TypeParamNames:       typeParamNames,
-		TypeParamConstraints: typeParamConstraints,
-	})
+
+	if hasExplicitCtor {
+		// Explicit constructor: define class name as a function
+		c.scope.Define(cls.Name, &Type{
+			Kind:                 TyFunc,
+			Name:                 cls.Name,
+			Params:               ctorParams,
+			Return:               info.Type,
+			TypeParamNames:       typeParamNames,
+			TypeParamConstraints: typeParamConstraints,
+		})
+	} else {
+		// No explicit constructor: define as type for struct-literal construction
+		c.scope.Define(cls.Name, &Type{
+			Kind:                 TyFunc,
+			Name:                 cls.Name,
+			Return:               info.Type,
+			TypeParamNames:       typeParamNames,
+			TypeParamConstraints: typeParamConstraints,
+		})
+	}
 }
 
 func (c *Checker) registerEnum(e *ast.EnumDecl) {

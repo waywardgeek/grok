@@ -17,7 +17,12 @@ forge demo {
 
   // --- Task class implementing both interfaces ---
 
-  class Task(title: string, desc: string, prio: i32, done: bool) implements Displayable, Prioritizable {
+  class Task implements Displayable, Prioritizable {
+    title: string
+    desc: string
+    prio: i32
+    done: bool
+
     pub func display(self) -> string {
       return f"[{self.prio}] {self.title}: {self.desc}"
     }
@@ -33,7 +38,8 @@ forge demo {
 
   // --- TaskList using generic-ish patterns ---
 
-  class TaskList(name: string) {
+  class TaskList {
+    name: string
     tasks: [Task]
 
     func add(mut self, task: Task) {

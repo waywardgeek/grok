@@ -149,7 +149,9 @@ type FuncDecl struct {
 // Field is a struct or class field.
 type Field struct {
 	Name      string
+	IsPublic  bool // true if declared with `pub`
 	Type      TypeExpr
+	Default   *Expr  // nil if no default value
 	GuardedBy string // empty if not guarded
 	Why       string
 	Span      Span
@@ -160,7 +162,6 @@ type ClassDecl struct {
 	Name       string
 	IsPublic   bool // true if declared with `pub`
 	TypeParams []TypeParam
-	CtorParams []Param
 	Implements []string
 	Fields     []Field
 	Methods    []FuncDecl

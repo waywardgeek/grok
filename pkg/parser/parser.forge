@@ -255,7 +255,9 @@ forge Parser {
     Span: Span
   }
 
-  class Lexer(Source: string, Filename: string) {
+  class Lexer {
+    Source: string
+    Filename: string
     why: "Stateful scanner. Handles triple-quoted strings, collapses newline sequences, tracks line/column. State is copyable for parser lookahead save/restore."
     Comments: [ast.Comment]
     func Next(mut self) -> Token
@@ -268,7 +270,8 @@ forge Parser {
     Span: Span
   }
 
-  class Parser(Lex: Lexer) {
+  class Parser {
+    Lex: Lexer
     why: "Recursive descent + Pratt hybrid parser. Declaration parsing via recursive descent; expression parsing via precedence climbing. Internal methods are unexported — only ParseFile/ParseString are public."
   }
 

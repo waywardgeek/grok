@@ -2,16 +2,16 @@
 
 forge owning_list {
 
-  class Team(name: string) {}
-  class Player(name: string) {}
+  class Team { name: string }
+  class Player { name: string }
 
   relation OwningList Team:team owns [Player:player]
 
   func main() {
-    let t = Team("Wolves")
-    let p1 = Player("Alice")
-    let p2 = Player("Bob")
-    let p3 = Player("Carol")
+    let t = Team { name: "Wolves" }
+    let p1 = Player { name: "Alice" }
+    let p2 = Player { name: "Bob" }
+    let p3 = Player { name: "Carol" }
 
     dll_append<Team, Player>(t, p1)
     dll_append<Team, Player>(t, p2)
