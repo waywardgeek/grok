@@ -22,13 +22,40 @@ func MergeStdlib(file *File, stdFile *File) {
 		return
 	}
 
-	// Collect only referenced interface declarations from the stdlib
-	var stdIfaces []InterfaceDecl
+	// Build a lookup of all stdlib interfaces by name
+	stdIfaceMap := make(map[string]InterfaceDecl)
 	for _, block := range stdFile.Blocks {
 		for _, iface := range block.Interfaces {
-			if usedIfaces[iface.Name] {
-				stdIfaces = append(stdIfaces, iface)
+			stdIfaceMap[iface.Name] = iface
+		}
+	}
+
+	// Transitively pull in interfaces referenced by embeds
+	queue := make([]string, 0, len(usedIfaces))
+	for name := range usedIfaces {
+		queue = append(queue, name)
+	}
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		iface, ok := stdIfaceMap[name]
+		if !ok {
+			continue
+		}
+		for _, emb := range iface.Embeds {
+			embName := emb.Name
+			if !usedIfaces[embName] {
+				usedIfaces[embName] = true
+				queue = append(queue, embName)
 			}
+		}
+	}
+
+	// Collect only referenced interface declarations from the stdlib
+	var stdIfaces []InterfaceDecl
+	for name := range usedIfaces {
+		if iface, ok := stdIfaceMap[name]; ok {
+			stdIfaces = append(stdIfaces, iface)
 		}
 	}
 

@@ -66,22 +66,9 @@ func DesugarInterfaceEmbeds(file *File) {
 					iface.Fields = append(iface.Fields, newField)
 				}
 
-				// Copy methods with type param substitution
-				for _, m := range parent.Methods {
-					newMethod := m
-					if mapped, ok := typeMap[m.ReceiverType]; ok {
-						newMethod.ReceiverType = mapped
-					}
-					// Substitute type params in method params and return type
-					for pi := range newMethod.Params {
-						newMethod.Params[pi].Type = substituteTypeParamsInTypeExprCopy(newMethod.Params[pi].Type, typeMap)
-					}
-					if newMethod.ReturnType != nil {
-						rt := substituteTypeParamsInTypeExprCopy(*newMethod.ReturnType, typeMap)
-						newMethod.ReturnType = &rt
-					}
-					iface.Methods = append(iface.Methods, newMethod)
-				}
+				// NOTE: Methods (standalone functions like dll_append) are NOT copied.
+				// They remain on the embedded interface and are extracted by
+				// DesugarDefaultImpls from there. Copying would cause duplicates.
 
 				// Copy destructors with type param substitution
 				for _, d := range parent.Destructors {
