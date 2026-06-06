@@ -73,8 +73,9 @@ type cGen struct {
 	chanCount int
 
 	// Spawn support
-	spawnID    int
-	spawnFuncs []cSpawnFunc
+	spawnID       int
+	spawnFuncs    []cSpawnFunc
+	spawnCaptures map[string]bool // variables captured by current spawn block (accessed via _ctx->)
 
 	// Interface vtable dispatch
 	ifaceByName map[string]*LInterfaceDecl // interface name → decl
@@ -293,7 +294,7 @@ func (g *cGen) generate() string {
 			g.linef("typedef struct %s_ctx {", sf.name)
 			g.indent++
 			for _, c := range sf.captures {
-				g.linef("%s %s;", c.typ, c.name)
+				g.linef("%s* %s;", c.typ, c.name) // pointer to original variable
 			}
 			g.indent--
 			g.linef("} %s_ctx;", sf.name)
@@ -302,12 +303,11 @@ func (g *cGen) generate() string {
 		g.indent++
 		if len(sf.captures) > 0 {
 			g.linef("%s_ctx* _ctx = (%s_ctx*)_arg;", sf.name, sf.name)
-			for _, c := range sf.captures {
-				g.linef("%s %s = _ctx->%s;", c.typ, c.name, c.name)
-			}
-			g.line("free(_ctx);")
+			// No local copies — body accesses via (*_ctx->name)
+			// No free — ctx is shared across goroutines spawned in a loop
 		}
 		g.buf.WriteString(sf.bodyStr)
+		g.linef("free(_ctx);")
 		g.line("return NULL;")
 		g.indent--
 		g.line("}")
@@ -799,6 +799,8 @@ func (g *cGen) emitStmt(s *LStmt) {
 		target := cSafeName(d.Target)
 		if g.inGenerator {
 			target = "_gen->" + target
+		} else if g.spawnCaptures != nil && g.spawnCaptures[d.Target] {
+			target = fmt.Sprintf("(*_ctx->%s)", target)
 		}
 		g.linef("%s = %s;", target, g.emitValue(&d.Value))
 
@@ -1019,15 +1021,23 @@ func (g *cGen) emitStmt(s *LStmt) {
 			}
 		}
 
-		// Emit the body into a separate buffer
+		// Emit the body into a separate buffer with capture awareness
 		savedBuf := g.buf
 		savedIndent := g.indent
+		savedCaptures := g.spawnCaptures
 		g.buf = strings.Builder{}
 		g.indent = 1
+		// Set spawn captures so emitValue redirects variable references to _ctx->
+		captureSet := map[string]bool{}
+		for _, c := range captures {
+			captureSet[c.name] = true
+		}
+		g.spawnCaptures = captureSet
 		g.emitStmts(d.Body)
 		bodyStr := g.buf.String()
 		g.buf = savedBuf
 		g.indent = savedIndent
+		g.spawnCaptures = savedCaptures
 
 		g.spawnFuncs = append(g.spawnFuncs, cSpawnFunc{
 			name:     funcName,
@@ -1035,13 +1045,13 @@ func (g *cGen) emitStmt(s *LStmt) {
 			captures: captures,
 		})
 
-		// Emit spawn call
+		// Emit spawn call — pass pointers to original variables (Go-style capture-by-reference)
 		if len(captures) > 0 {
 			g.linef("{")
 			g.indent++
 			g.linef("%s_ctx* _ctx = (%s_ctx*)malloc(sizeof(%s_ctx));", funcName, funcName, funcName)
 			for _, c := range captures {
-				g.linef("_ctx->%s = %s;", c.name, c.name)
+				g.linef("_ctx->%s = &%s;", c.name, c.name)
 			}
 			g.linef("forge_spawn(%s, _ctx);", funcName)
 			g.indent--
@@ -1060,12 +1070,10 @@ func (g *cGen) emitStmt(s *LStmt) {
 
 	case LStmtLock:
 		d := s.Data.(*LLock)
-		g.linef("/* lock(%s) */", g.emitValue(&d.Mutex))
-		g.line("{")
-		g.indent++
+		mutexVal := g.emitValue(&d.Mutex)
+		g.linef("pthread_mutex_lock(&%s);", mutexVal)
 		g.emitStmts(d.Body)
-		g.indent--
-		g.line("}")
+		g.linef("pthread_mutex_unlock(&%s);", mutexVal)
 
 	case LStmtExpr:
 		d := s.Data.(*LExprStmt)
@@ -1491,6 +1499,10 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 			return fmt.Sprintf("({ %s* _p = malloc(sizeof(%s)); *_p = (%s){%s}; _p; })",
 				name, name, name, strings.Join(fieldInits, ", "))
 		}
+		// Mutex types use PTHREAD_MUTEX_INITIALIZER
+		if e.Type != nil && e.Type.Kind == LTyMutex {
+			return "(pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER"
+		}
 		typeName := "/* struct */"
 		if e.Type != nil {
 			typeName = g.cType(e.Type)
@@ -1755,6 +1767,9 @@ func (g *cGen) emitValue(v *LValue) string {
 		name := cSafeName(v.Name)
 		if g.inGenerator {
 			return "_gen->" + name
+		}
+		if g.spawnCaptures != nil && g.spawnCaptures[v.Name] {
+			return fmt.Sprintf("(*_ctx->%s)", name)
 		}
 		return name
 	case LValTemp:
@@ -2209,7 +2224,7 @@ func (g *cGen) cType(t *LType) string {
 		}
 		return fmt.Sprintf("struct { %s; }", strings.Join(fields, "; "))
 	case LTyMutex:
-		return "int /* mutex */"
+		return "pthread_mutex_t"
 	case LTyTypeVar:
 		return fmt.Sprintf("void* /* typevar %s */", t.Name)
 	case LTyAny:
@@ -2969,6 +2984,10 @@ func collectUsedVars(stmts []LStmt) map[string]bool {
 			case LStmtBlock:
 				d := s.Data.(*LBlock)
 				walkStmts(d.Stmts)
+			case LStmtLock:
+				d := s.Data.(*LLock)
+				walkVal(&d.Mutex)
+				walkStmts(d.Body)
 			case LStmtReturn:
 				d := s.Data.(*LReturn)
 				for i := range d.Values {
@@ -3006,6 +3025,9 @@ func collectDeclaredVars(stmts []LStmt) map[string]bool {
 			case LStmtBlock:
 				d := s.Data.(*LBlock)
 				walkStmts(d.Stmts)
+			case LStmtLock:
+				d := s.Data.(*LLock)
+				walkStmts(d.Body)
 			}
 		}
 	}

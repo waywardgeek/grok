@@ -170,6 +170,26 @@ func TestCBackendRuns(t *testing.T) {
 		}
 	})
 
+	t.Run("lock.fg", func(t *testing.T) {
+		path := filepath.Join(testdataDir, "lock.fg")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Skipf("can't read: %v", err)
+		}
+
+		cSrc := cPipeline(t, string(data), "lock_demo")
+		output := compileCAndRun(t, cSrc, "lock")
+		// Thread ordering is nondeterministic, but final count must be 5
+		if !strings.Contains(output, "final count: 5") {
+			t.Errorf("expected 'final count: 5' in output, got:\n%s", output)
+			t.Logf("C source:\n%s", cSrc)
+		}
+		lines := strings.Split(strings.TrimSpace(output), "\n")
+		if len(lines) != 6 {
+			t.Errorf("expected 6 lines (5 increments + final), got %d:\n%s", len(lines), output)
+		}
+	})
+
 	t.Run("demo.fg", func(t *testing.T) {
 		path := filepath.Join(testdataDir, "demo.fg")
 		data, err := os.ReadFile(path)
