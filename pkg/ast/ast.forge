@@ -795,32 +795,32 @@ forge AST {
 // func DesugarInterfaceEmbeds(file *File)    :23
 //
 // substituteTypeParamsInTypeExprCopy returns a copy of te with type params substituted.
-// func substituteTypeParamsInTypeExprCopy(te TypeExpr, typeMap map[string]string) TypeExpr    :98
+// func substituteTypeParamsInTypeExprCopy(te TypeExpr, typeMap map[string]string) TypeExpr    :89
 //
 // DesugarDefaultImpls extracts interface methods with bodies into top-level
-// func DesugarDefaultImpls(file *File)    :115
+// func DesugarDefaultImpls(file *File)    :106
 //
 // DesugarInterfaceFields converts interface field declarations into getter/setter
-// func DesugarInterfaceFields(file *File)    :167
+// func DesugarInterfaceFields(file *File)    :158
 //
 // DesugarRelations processes relation declarations:
-// func DesugarRelations(file *File)    :204
+// func DesugarRelations(file *File)    :195
 //
 // deepCopyBlock creates a deep copy of a Block by JSON-like recursive copying.
-// func deepCopyBlock(b Block) Block    :342
+// func deepCopyBlock(b Block) Block    :333
 //
 // substituteTypeParamsInBlock rewrites type parameter references in a block's statements.
-// func substituteTypeParamsInBlock(block *Block, typeMap map[string]string)    :350
+// func substituteTypeParamsInBlock(block *Block, typeMap map[string]string)    :341
 //
-// func substituteTypeParamsInStmt(stmt *Stmt, typeMap map[string]string)    :356
+// func substituteTypeParamsInStmt(stmt *Stmt, typeMap map[string]string)    :347
 //
-// func substituteTypeParamsInExpr(expr *Expr, typeMap map[string]string)    :406
+// func substituteTypeParamsInExpr(expr *Expr, typeMap map[string]string)    :397
 //
-// func substituteTypeParamsInTypeExpr(te *TypeExpr, typeMap map[string]string)    :462
+// func substituteTypeParamsInTypeExpr(te *TypeExpr, typeMap map[string]string)    :453
 //
-// DesugarDestructors generates destroy methods on classes involved in `owns` relations.
-// func DesugarDestructors(file *File)    :481
+// DesugarDestructors generates destroy methods on classes involved in relations.
+// func DesugarDestructors(file *File)    :480
 //
 // concrete class names from the relation.
-// func rewriteFieldType(te TypeExpr, typeParams []TypeParam, rel RelationDecl) TypeExpr    :558
+// func rewriteFieldType(te TypeExpr, typeParams []TypeParam, rel RelationDecl) TypeExpr    :554
 
