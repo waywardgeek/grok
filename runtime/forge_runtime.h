@@ -17,6 +17,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <ctype.h>
+#include <unistd.h>
+
 
 /* -------------------------------------------------------------------------
  * Dynamic Slices
@@ -359,4 +361,62 @@ static inline ForgeUnion forge_union_bool(bool v)         { return (ForgeUnion){
 static inline ForgeUnion forge_union_string(const char* v){ return (ForgeUnion){FORGE_UNION_TAG_STRING, {.as_string = v}}; }
 static inline ForgeUnion forge_union_ptr(void* v)         { return (ForgeUnion){FORGE_UNION_TAG_PTR, {.as_ptr = v}}; }
 
+// --- File I/O ---
+// Uses typedef to ensure consistent struct type across the header
+
+typedef struct { const char* _0; bool _1; } forge_str_bool_t;
+
+static inline forge_str_bool_t forge_read_file(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) { forge_str_bool_t r = {"", false}; return r; }
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* buf = (char*)malloc(n + 1);
+    fread(buf, 1, n, f);
+    fclose(f);
+    buf[n] = '\0';
+    forge_str_bool_t r = {buf, true};
+    return r;
+}
+
+static inline bool forge_write_file(const char* path, const char* data) {
+    FILE* f = fopen(path, "wb");
+    if (!f) return false;
+    size_t n = strlen(data);
+    size_t written = fwrite(data, 1, n, f);
+    fclose(f);
+    return written == n;
+}
+
+// --- OS ---
+
+static inline const char* forge_getwd(void) {
+    static char buf[4096];
+    if (getcwd(buf, sizeof(buf))) return buf;
+    return "";
+}
+
+// --- Path manipulation ---
+
+static inline const char* forge_path_dir(const char* path) {
+    char* copy = strdup(path);
+    char* last = strrchr(copy, '/');
+    if (!last) { free(copy); return "."; }
+    *last = '\0';
+    return copy; // leaked, but simple
+}
+
+static inline const char* forge_path_base(const char* path) {
+    const char* last = strrchr(path, '/');
+    return last ? last + 1 : path;
+}
+
+static inline const char* forge_path_ext(const char* path) {
+    const char* base = forge_path_base(path);
+    const char* dot = strrchr(base, '.');
+    return dot ? dot : "";
+}
+
 #endif /* FORGE_RUNTIME_H */
+

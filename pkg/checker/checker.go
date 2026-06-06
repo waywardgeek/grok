@@ -373,19 +373,7 @@ func New() *Checker {
 		heldLocks: make(map[string]bool),
 	}
 	// Register builtin functions
-	// println(...) — variadic, accepts any types, returns unit
-	c.scope.Define("println", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "println"})
-	c.scope.Define("print", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "print"})
-	// len(collection) -> int — works on lists, strings, maps (Go's len returns int)
-	c.scope.Define("len", &Type{Kind: TyFunc, Params: nil, Return: &Type{Kind: TyInt, Bits: -1}, Name: "len"})
-	// append(list, elem) -> list — adds element to list, returns new list
-	c.scope.Define("append", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "append"})
-	// isnull(optional) -> bool — checks if an optional value is nil
-	c.scope.Define("isnull", &Type{Kind: TyFunc, Params: nil, Return: TypeBool, Name: "isnull"})
-	// make_channel(capacity?) -> channel<T> — creates a buffered or unbuffered channel
-	c.scope.Define("make_channel", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "make_channel"})
-	// hash_string(s: string) -> u64 — FNV-1a hash of a string
-	c.scope.Define("hash_string", &Type{Kind: TyFunc, Params: []*Type{{Kind: TyString}}, Return: &Type{Kind: TyUint, Bits: 64}, Name: "hash_string"})
+	c.registerBuiltins()
 	// Register builtin types
 	// error — Go's error interface, used in (T, error) return patterns
 	c.registry.Register("error", &TypeInfo{
@@ -397,6 +385,52 @@ func New() *Checker {
 // Errors returns all accumulated type errors.
 func (c *Checker) Errors() []error {
 	return c.errors
+}
+
+// registerBuiltins defines all built-in functions in the current scope.
+func (c *Checker) registerBuiltins() {
+	// Console I/O
+	c.scope.Define("println", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "println"})
+	c.scope.Define("print", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "print"})
+	c.scope.Define("eprint", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "eprint"})
+	c.scope.Define("eprintln", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "eprintln"})
+
+	// Collections
+	c.scope.Define("len", &Type{Kind: TyFunc, Params: nil, Return: &Type{Kind: TyInt, Bits: -1}, Name: "len"})
+	c.scope.Define("append", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "append"})
+	c.scope.Define("isnull", &Type{Kind: TyFunc, Params: nil, Return: TypeBool, Name: "isnull"})
+	c.scope.Define("make_channel", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "make_channel"})
+
+	// Hashing
+	c.scope.Define("hash_string", &Type{Kind: TyFunc, Params: []*Type{TypeString}, Return: &Type{Kind: TyUint, Bits: 64}, Name: "hash_string"})
+
+	// File I/O — read_file(path) -> (string, bool), write_file(path, data) -> bool
+	c.scope.Define("read_file", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: &Type{Kind: TyTuple, Fields: []TypeField{{Type: TypeString}, {Type: TypeBool}}}, Name: "read_file"})
+	c.scope.Define("write_file", &Type{Kind: TyFunc, Params: []*Type{TypeString, TypeString},
+		Return: TypeBool, Name: "write_file"})
+
+	// OS
+	c.scope.Define("os_args", &Type{Kind: TyFunc, Params: nil,
+		Return: ListType(TypeString), Name: "os_args"})
+	c.scope.Define("os_exit", &Type{Kind: TyFunc, Params: []*Type{TypeI32},
+		Return: TypeUnit, Name: "os_exit"})
+	c.scope.Define("os_getwd", &Type{Kind: TyFunc, Params: nil,
+		Return: TypeString, Name: "os_getwd"})
+
+	// Process execution — exec_command(program, args) -> (string, bool)
+	c.scope.Define("exec_command", &Type{Kind: TyFunc, Params: []*Type{TypeString, ListType(TypeString)},
+		Return: &Type{Kind: TyTuple, Fields: []TypeField{{Type: TypeString}, {Type: TypeBool}}}, Name: "exec_command"})
+
+	// Path manipulation
+	c.scope.Define("path_join", &Type{Kind: TyFunc, Params: []*Type{ListType(TypeString)},
+		Return: TypeString, Name: "path_join"})
+	c.scope.Define("path_dir", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: TypeString, Name: "path_dir"})
+	c.scope.Define("path_base", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: TypeString, Name: "path_base"})
+	c.scope.Define("path_ext", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: TypeString, Name: "path_ext"})
 }
 
 // CheckModuleFile parses, checks, and caches a .fg module file.
@@ -442,13 +476,7 @@ func (c *Checker) CheckModuleFile(importPath string, fromSpan ast.Span) *ModuleE
 	c.scope = NewScope(nil)
 	c.currentFile = absPath
 	// Re-register builtins in new scope
-	c.scope.Define("println", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "println"})
-	c.scope.Define("print", &Type{Kind: TyFunc, Params: nil, Return: TypeUnit, Name: "print"})
-	c.scope.Define("len", &Type{Kind: TyFunc, Params: nil, Return: &Type{Kind: TyInt, Bits: -1}, Name: "len"})
-	c.scope.Define("append", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "append"})
-	c.scope.Define("isnull", &Type{Kind: TyFunc, Params: nil, Return: TypeBool, Name: "isnull"})
-	c.scope.Define("make_channel", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "make_channel"})
-	c.scope.Define("hash_string", &Type{Kind: TyFunc, Params: []*Type{{Kind: TyString}}, Return: &Type{Kind: TyUint, Bits: 64}, Name: "hash_string"})
+	c.registerBuiltins()
 	c.registry.Register("error", &TypeInfo{
 		Type: &Type{Kind: TyInterface, Name: "error"},
 	})

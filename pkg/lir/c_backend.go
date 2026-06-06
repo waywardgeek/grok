@@ -81,6 +81,11 @@ type cGen struct {
 	ifaceByName map[string]*LInterfaceDecl // interface name → decl
 	implMap     map[string][]string        // class name → interfaces it implements
 	funcByName  map[string]*LFuncDecl      // "name" or "Class.method" → func decl
+
+	// OS builtin helpers needed
+	needsOsArgs  bool
+	needsExecCmd bool
+	needsPathJoin bool
 }
 
 type cSpawnFunc struct {
@@ -315,10 +320,92 @@ func (g *cGen) generate() string {
 		g.line("")
 	}
 
+	// Emit OS builtin helpers (after slice type defs are available)
+	g.emitOsHelpers()
+
 	// Now emit function bodies
 	g.buf.WriteString(funcCode)
 
 	return g.buf.String()
+}
+
+// cTupleType returns a C type for a tuple. For known patterns like (string, bool)
+// that have typedef'd types in the runtime, returns the typedef name instead of
+// an anonymous struct (which would be type-incompatible with runtime functions).
+func (g *cGen) cTupleType(t *LType) string {
+	if t.Kind == LTyTuple && len(t.Fields) == 2 {
+		if t.Fields[0].Type != nil && t.Fields[0].Type.Kind == LTyString &&
+			t.Fields[1].Type != nil && t.Fields[1].Type.Kind == LTyBool {
+			return "forge_str_bool_t"
+		}
+	}
+	return g.cType(t)
+}
+
+// ---------------------------------------------------------------------------
+// OS builtin helpers (emitted inline, after slice type defs are available)
+
+func (g *cGen) emitOsHelpers() {
+	sliceType := g.sliceTypeName(&LType{Kind: LTyString})
+
+	if g.needsOsArgs {
+		g.linef("static inline %s _forge_os_args(int argc, char** argv) {", sliceType)
+		g.indent++
+		g.linef("%s result = {0};", sliceType)
+		g.line("result.data = (const char**)malloc(sizeof(const char*) * argc);")
+		g.line("result.len = (int32_t)argc;")
+		g.line("result.cap = (int32_t)argc;")
+		g.line("for (int i = 0; i < argc; i++) result.data[i] = argv[i];")
+		g.line("return result;")
+		g.indent--
+		g.line("}")
+		g.line("")
+	}
+
+	if g.needsExecCmd {
+		g.linef("static inline forge_str_bool_t _forge_exec_command(const char* program, %s args) {", sliceType)
+		g.indent++
+		g.line("size_t total = strlen(program) + 1;")
+		g.line("for (int i = 0; i < args.len; i++) total += strlen(args.data[i]) + 3;")
+		g.line("char* cmd = (char*)malloc(total + 16);")
+		g.line("strcpy(cmd, program);")
+		g.line(`for (int i = 0; i < args.len; i++) { strcat(cmd, " "); strcat(cmd, args.data[i]); }`)
+		g.line(`strcat(cmd, " 2>&1");`)
+		g.line(`FILE* fp = popen(cmd, "r");`)
+		g.line("free(cmd);")
+		g.line(`if (!fp) { forge_str_bool_t r = {"", false}; return r; }`)
+		g.line("size_t cap = 4096, len = 0;")
+		g.line("char* out = (char*)malloc(cap);")
+		g.line("size_t n;")
+		g.line("while ((n = fread(out + len, 1, cap - len - 1, fp)) > 0) {")
+		g.indent++
+		g.line("len += n;")
+		g.line("if (len + 1 >= cap) { cap *= 2; out = (char*)realloc(out, cap); }")
+		g.indent--
+		g.line("}")
+		g.line("out[len] = '\\0';")
+		g.line("int status = pclose(fp);")
+		g.line("forge_str_bool_t r = {out, status == 0};")
+		g.line("return r;")
+		g.indent--
+		g.line("}")
+		g.line("")
+	}
+
+	if g.needsPathJoin {
+		g.linef("static inline const char* _forge_path_join(%s parts) {", sliceType)
+		g.indent++
+		g.line(`if (parts.len == 0) return "";`)
+		g.line("size_t total = 0;")
+		g.line("for (int i = 0; i < parts.len; i++) total += strlen(parts.data[i]) + 1;")
+		g.line("char* out = (char*)malloc(total);")
+		g.line("out[0] = '\\0';")
+		g.line(`for (int i = 0; i < parts.len; i++) { if (i > 0) strcat(out, "/"); strcat(out, parts.data[i]); }`)
+		g.line("return out;")
+		g.indent--
+		g.line("}")
+		g.line("")
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -435,7 +522,7 @@ func (g *cGen) emitFuncDecl(f *LFuncDecl) {
 	name := g.funcName(f)
 
 	if name == "main" {
-		g.linef("int main(void) {")
+		g.linef("int main(int _argc, char** _argv) {")
 	} else {
 		g.linef("%s %s(%s) {", retType, name, params)
 	}
@@ -1326,15 +1413,20 @@ func (g *cGen) emitMultiAssign(d *LMultiAssign) {
 		}
 	} else if len(d.Names) == 2 && d.Expr.Type != nil && d.Expr.Type.Kind == LTyTuple {
 		tmpName := fmt.Sprintf("_multi_%d", g.nextTemp())
-		tupleType := g.cType(d.Expr.Type)
+		tupleType := g.cTupleType(d.Expr.Type)
 		g.linef("%s %s = %s;", tupleType, tmpName, exprStr)
 		for i, name := range d.Names {
 			if name != "_" {
 				fieldType := "int"
+				var ltyp *LType
 				if i < len(d.Expr.Type.Fields) {
-					fieldType = g.cType(d.Expr.Type.Fields[i].Type)
+					ltyp = d.Expr.Type.Fields[i].Type
+					fieldType = g.cType(ltyp)
 				}
 				g.linef("%s %s = %s._%d;", fieldType, name, tmpName, i)
+				if ltyp != nil {
+					g.varTypes[name] = ltyp
+				}
 			}
 		}
 	} else {
@@ -1960,8 +2052,55 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 		}
 		return "0"
 
+	case "eprint":
+		return g.emitFprint("stderr", d.Args, false)
+	case "eprintln":
+		return g.emitFprint("stderr", d.Args, true)
+	case "read_file":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_read_file(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "write_file":
+		if len(d.Args) >= 2 {
+			return fmt.Sprintf("forge_write_file(%s, %s)", g.emitValue(&d.Args[0]), g.emitValue(&d.Args[1]))
+		}
+	case "os_args":
+		g.needsOsArgs = true
+		return "_forge_os_args(_argc, _argv)"
+	case "os_exit":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("exit(%s)", g.emitValue(&d.Args[0]))
+		}
+		return "exit(0)"
+	case "os_getwd":
+		return "forge_getwd()"
+	case "exec_command":
+		g.needsExecCmd = true
+		if len(d.Args) >= 2 {
+			return fmt.Sprintf("_forge_exec_command(%s, %s)", g.emitValue(&d.Args[0]), g.emitValue(&d.Args[1]))
+		}
+	case "path_join":
+		g.needsPathJoin = true
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("_forge_path_join(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "path_dir":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_path_dir(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "path_base":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_path_base(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "path_ext":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_path_ext(%s)", g.emitValue(&d.Args[0]))
+		}
+
 	case "println", "Println":
 		return g.emitPrintln(d.Args)
+	case "print", "Print":
+		return g.emitFprint("stdout", d.Args, false)
 	}
 	// Generic fallback
 	var args []string
@@ -1972,8 +2111,15 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 }
 
 func (g *cGen) emitPrintln(args []LValue) string {
+	return g.emitFprint("stdout", args, true)
+}
+
+func (g *cGen) emitFprint(stream string, args []LValue, newline bool) string {
 	if len(args) == 0 {
-		return `printf("\n")`
+		if newline {
+			return fmt.Sprintf(`fprintf(%s, "\n")`, stream)
+		}
+		return fmt.Sprintf(`fprintf(%s, "")`, stream)
 	}
 	var fmtParts []string
 	var argParts []string
@@ -1984,11 +2130,14 @@ func (g *cGen) emitPrintln(args []LValue) string {
 			argParts = append(argParts, argExpr)
 		}
 	}
-	fmtStr := strings.Join(fmtParts, " ") + `\n`
-	if len(argParts) == 0 {
-		return fmt.Sprintf(`printf("%s")`, fmtStr)
+	fmtStr := strings.Join(fmtParts, " ")
+	if newline {
+		fmtStr += `\n`
 	}
-	return fmt.Sprintf(`printf("%s", %s)`, fmtStr, strings.Join(argParts, ", "))
+	if len(argParts) == 0 {
+		return fmt.Sprintf(`fprintf(%s, "%s")`, stream, fmtStr)
+	}
+	return fmt.Sprintf(`fprintf(%s, "%s", %s)`, stream, fmtStr, strings.Join(argParts, ", "))
 }
 
 func (g *cGen) emitPrintf(args []LValue) string {

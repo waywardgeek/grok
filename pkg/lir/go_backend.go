@@ -27,6 +27,10 @@ type GoBackend struct {
 	suppressedTemps map[int]bool   // temps consumed by field-writeback patterns
 	needsIsNilHelper bool         // emit _isNil helper for generic nil checks
 	needsHashStringHelper bool    // emit _hashString helper for FNV-1a
+	needsReadFileHelper bool      // emit _readFile helper
+	needsWriteFileHelper bool     // emit _writeFile helper
+	needsGetWdHelper bool         // emit _getWd helper
+	needsExecHelper bool          // emit _execCommand helper
 	inGenericFunc    bool         // true when emitting a function with type params
 	currentFuncReturnType *LType // return type of the function currently being emitted
 }
@@ -159,6 +163,40 @@ func (g *GoBackend) emit(prog *LProgram) string {
 		out.WriteString("\th := fnv.New64a()\n")
 		out.WriteString("\th.Write([]byte(s))\n")
 		out.WriteString("\treturn h.Sum64()\n")
+		out.WriteString("}\n\n")
+	}
+
+	// Emit _readFile helper
+	if g.needsReadFileHelper {
+		out.WriteString("func _readFile(path string) (string, bool) {\n")
+		out.WriteString("\tdata, err := os.ReadFile(path)\n")
+		out.WriteString("\tif err != nil { return \"\", false }\n")
+		out.WriteString("\treturn string(data), true\n")
+		out.WriteString("}\n\n")
+	}
+
+	// Emit _writeFile helper
+	if g.needsWriteFileHelper {
+		out.WriteString("func _writeFile(path string, data string) bool {\n")
+		out.WriteString("\terr := os.WriteFile(path, []byte(data), 0644)\n")
+		out.WriteString("\treturn err == nil\n")
+		out.WriteString("}\n\n")
+	}
+
+	// Emit _getWd helper
+	if g.needsGetWdHelper {
+		out.WriteString("func _getWd() string {\n")
+		out.WriteString("\twd, _ := os.Getwd()\n")
+		out.WriteString("\treturn wd\n")
+		out.WriteString("}\n\n")
+	}
+
+	// Emit _execCommand helper
+	if g.needsExecHelper {
+		out.WriteString("func _execCommand(program string, args []string) (string, bool) {\n")
+		out.WriteString("\tcmd := exec.Command(program, args...)\n")
+		out.WriteString("\tout, err := cmd.CombinedOutput()\n")
+		out.WriteString("\treturn string(out), err == nil\n")
 		out.WriteString("}\n\n")
 	}
 
@@ -1700,6 +1738,88 @@ func (g *GoBackend) emitBuiltin(d *LBuiltinData) {
 		g.needsHashStringHelper = true
 		if len(d.Args) > 0 {
 			g.writef("_hashString(")
+			g.emitValue(&d.Args[0])
+			g.writef(")")
+		}
+	case "eprint":
+		g.autoImport("fmt")
+		g.autoImport("os")
+		g.writef("fmt.Fprint(os.Stderr, ")
+		g.emitArgs(d.Args)
+		g.writef(")")
+	case "eprintln":
+		g.autoImport("fmt")
+		g.autoImport("os")
+		g.writef("fmt.Fprintln(os.Stderr, ")
+		g.emitArgs(d.Args)
+		g.writef(")")
+	case "read_file":
+		g.autoImport("os")
+		if len(d.Args) > 0 {
+			g.needsReadFileHelper = true
+			g.writef("_readFile(")
+			g.emitValue(&d.Args[0])
+			g.writef(")")
+		}
+	case "write_file":
+		g.autoImport("os")
+		if len(d.Args) >= 2 {
+			g.needsWriteFileHelper = true
+			g.writef("_writeFile(")
+			g.emitValue(&d.Args[0])
+			g.writef(", ")
+			g.emitValue(&d.Args[1])
+			g.writef(")")
+		}
+	case "os_args":
+		g.autoImport("os")
+		g.writef("os.Args")
+	case "os_exit":
+		g.autoImport("os")
+		g.writef("os.Exit(int(")
+		if len(d.Args) > 0 {
+			g.emitValue(&d.Args[0])
+		}
+		g.writef("))")
+	case "os_getwd":
+		g.needsGetWdHelper = true
+		g.autoImport("os")
+		g.writef("_getWd()")
+	case "exec_command":
+		g.autoImport("os/exec")
+		g.needsExecHelper = true
+		if len(d.Args) >= 2 {
+			g.writef("_execCommand(")
+			g.emitValue(&d.Args[0])
+			g.writef(", ")
+			g.emitValue(&d.Args[1])
+			g.writef(")")
+		}
+	case "path_join":
+		g.autoImport("path/filepath")
+		if len(d.Args) > 0 {
+			g.writef("filepath.Join(")
+			g.emitValue(&d.Args[0])
+			g.writef("...)")
+		}
+	case "path_dir":
+		g.autoImport("path/filepath")
+		if len(d.Args) > 0 {
+			g.writef("filepath.Dir(")
+			g.emitValue(&d.Args[0])
+			g.writef(")")
+		}
+	case "path_base":
+		g.autoImport("path/filepath")
+		if len(d.Args) > 0 {
+			g.writef("filepath.Base(")
+			g.emitValue(&d.Args[0])
+			g.writef(")")
+		}
+	case "path_ext":
+		g.autoImport("path/filepath")
+		if len(d.Args) > 0 {
+			g.writef("filepath.Ext(")
 			g.emitValue(&d.Args[0])
 			g.writef(")")
 		}
