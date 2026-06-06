@@ -133,6 +133,17 @@ func cPipeline(t *testing.T, source, pkgName string) string {
 		file.Blocks[0].Name = pkgName
 	}
 
+	// Merge stdlib interfaces
+	stdlibDir := ast.FindStdlibDir()
+	if stdlibDir != "" {
+		stdPath := filepath.Join(stdlibDir, "std.fg")
+		if stdSrc, err := os.ReadFile(stdPath); err == nil {
+			if stdFile, err := parser.ParseFile(string(stdSrc), stdPath); err == nil {
+				ast.MergeStdlib(file, stdFile)
+			}
+		}
+	}
+
 	// Run desugar passes (interface fields → relations → destructors → default impls)
 	ast.DesugarInterfaceFields(file)
 	ast.DesugarRelations(file)

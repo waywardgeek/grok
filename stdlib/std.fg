@@ -1,0 +1,62 @@
+// std.fg — Forge standard library
+// Auto-imported into all Forge programs
+
+forge std {
+
+  // ArrayList: a parent P owns a dynamic array of children C.
+  // Children know their parent and index for O(1) swap-remove.
+  pub interface ArrayList<P, C> {
+    // The parent's array of children
+    field P.children: [C]
+
+    // Child back-reference and index
+    field C.parent: P?
+    field C.index: i32
+
+    // Append child to end of parent's array
+    pub func array_append(parent: P, child: C) {
+      let kids = parent.children()
+      let num: i32 = len(kids)
+      child.set_index(num)
+      child.set_parent(parent)
+      parent.set_children(append(kids, child))
+    }
+
+    // Remove child from parent's array using swap-remove (O(1))
+    pub func array_remove(child: C) {
+      let p = child.parent()
+      if isnull(p) {
+        return
+      }
+      let kids = p!.children()
+      let idx = child.index()
+      let last_idx: i32 = len(kids) - 1
+      if idx < last_idx {
+        // Swap with last element
+        let last_child = kids[last_idx]
+        last_child.set_index(idx)
+        kids[idx] = last_child
+      }
+      // Pop last element
+      p!.set_children(kids[0:last_idx])
+      child.set_parent(null)
+      child.set_index(0)
+    }
+
+    // Destructor for parent: cascade destroy all owned children
+    destructor P {
+      let kids = self.children()
+      let mut i: i32 = len(kids) - 1
+      while i >= 0 {
+        kids[i].set_parent(null)
+        kids[i].destroy()
+        i = i - 1
+      }
+    }
+
+    // Destructor for child: remove self from parent's array
+    destructor C {
+      array_remove<P, C>(self)
+    }
+  }
+}

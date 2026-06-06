@@ -181,25 +181,195 @@ func DesugarRelations(file *File) {
 				})
 			}
 
-			// Generate impl block with type args from the relation
+			// Merge into existing user impl block if present, otherwise create new one
 			if len(mappings) > 0 {
-				var typeArgs []TypeExpr
-				typeArgs = append(typeArgs, TypeExpr{
-					Kind: TypeNamed,
-					Data: NamedType{Name: rel.Parent.TypeName},
-				})
-				typeArgs = append(typeArgs, TypeExpr{
-					Kind: TypeNamed,
-					Data: NamedType{Name: rel.Child.TypeName},
-				})
+				parentName := rel.Parent.TypeName
+				childName := rel.Child.TypeName
 
-				block.ImplBlocks = append(block.ImplBlocks, ImplBlock{
-					InterfaceName: rel.Hint,
-					TypeArgs:      typeArgs,
-					Mappings:      mappings,
-					Span:          rel.Span,
-				})
+				// Look for existing impl block for same interface+types
+				var existingImpl *ImplBlock
+				for ii := range block.ImplBlocks {
+					ib := &block.ImplBlocks[ii]
+					if ib.InterfaceName == rel.Hint && len(ib.TypeArgs) >= 2 {
+						ta0, _ := ib.TypeArgs[0].Data.(NamedType)
+						ta1, _ := ib.TypeArgs[1].Data.(NamedType)
+						if ta0.Name == parentName && ta1.Name == childName {
+							existingImpl = ib
+							break
+						}
+					}
+				}
+
+				if existingImpl != nil {
+					// Merge: only add mappings not already present
+					existing := make(map[string]bool)
+					for _, m := range existingImpl.Mappings {
+						existing[m.TypeParam+"."+m.MethodName] = true
+					}
+					for _, m := range mappings {
+						key := m.TypeParam + "." + m.MethodName
+						if !existing[key] {
+							existingImpl.Mappings = append(existingImpl.Mappings, m)
+						}
+					}
+				} else {
+					var typeArgs []TypeExpr
+					typeArgs = append(typeArgs, TypeExpr{
+						Kind: TypeNamed,
+						Data: NamedType{Name: parentName},
+					})
+					typeArgs = append(typeArgs, TypeExpr{
+						Kind: TypeNamed,
+						Data: NamedType{Name: childName},
+					})
+
+					block.ImplBlocks = append(block.ImplBlocks, ImplBlock{
+						InterfaceName: rel.Hint,
+						TypeArgs:      typeArgs,
+						Mappings:      mappings,
+						Span:          rel.Span,
+					})
+				}
 			}
+		}
+	}
+}
+
+// deepCopyBlock creates a deep copy of a Block by JSON-like recursive copying.
+// This is a shallow-enough copy for our purposes: we copy the Stmts slice and
+// let substituteTypeParams handle the mutation.
+func deepCopyBlock(b Block) Block {
+	stmts := make([]Stmt, len(b.Stmts))
+	copy(stmts, b.Stmts)
+	return Block{Stmts: stmts}
+}
+
+// substituteTypeParamsInBlock rewrites type parameter references in a block's statements.
+// Used by DesugarDestructors to replace interface type params (e.g. P, C) with concrete class names.
+func substituteTypeParamsInBlock(block *Block, typeMap map[string]string) {
+	for i := range block.Stmts {
+		substituteTypeParamsInStmt(&block.Stmts[i], typeMap)
+	}
+}
+
+func substituteTypeParamsInStmt(stmt *Stmt, typeMap map[string]string) {
+	switch stmt.Kind {
+	case StmtExpr:
+		if d, ok := stmt.Data.(*ExprStmt); ok {
+			substituteTypeParamsInExpr(&d.Expr, typeMap)
+		}
+	case StmtAssign:
+		if d, ok := stmt.Data.(*AssignStmt); ok {
+			substituteTypeParamsInExpr(&d.Value, typeMap)
+		} else if d, ok := stmt.Data.(AssignStmt); ok {
+			substituteTypeParamsInExpr(&d.Value, typeMap)
+			stmt.Data = d
+		}
+	case StmtVarDecl:
+		if d, ok := stmt.Data.(*VarDeclStmt); ok {
+			if d.Value != nil {
+				substituteTypeParamsInExpr(d.Value, typeMap)
+			}
+		}
+	case StmtReturn:
+		if d, ok := stmt.Data.(*ReturnStmt); ok {
+			if d.Value != nil {
+				substituteTypeParamsInExpr(d.Value, typeMap)
+			}
+		}
+	case StmtIf:
+		if d, ok := stmt.Data.(*IfStmt); ok {
+			substituteTypeParamsInExpr(&d.Condition, typeMap)
+			substituteTypeParamsInBlock(&d.Then, typeMap)
+			for ei := range d.ElseIfs {
+				substituteTypeParamsInExpr(&d.ElseIfs[ei].Condition, typeMap)
+				substituteTypeParamsInBlock(&d.ElseIfs[ei].Body, typeMap)
+			}
+			if d.Else != nil {
+				substituteTypeParamsInBlock(d.Else, typeMap)
+			}
+		}
+	case StmtWhile:
+		if d, ok := stmt.Data.(*WhileStmt); ok {
+			substituteTypeParamsInExpr(&d.Condition, typeMap)
+			substituteTypeParamsInBlock(&d.Body, typeMap)
+		}
+	case StmtFor:
+		if d, ok := stmt.Data.(*ForStmt); ok {
+			substituteTypeParamsInExpr(&d.Collection, typeMap)
+			substituteTypeParamsInBlock(&d.Body, typeMap)
+		}
+	}
+}
+
+func substituteTypeParamsInExpr(expr *Expr, typeMap map[string]string) {
+	if expr == nil {
+		return
+	}
+	switch d := expr.Data.(type) {
+	case *CallExpr:
+		for i := range d.TypeArgs {
+			substituteTypeParamsInTypeExpr(&d.TypeArgs[i], typeMap)
+		}
+		substituteTypeParamsInExpr(&d.Func, typeMap)
+		for i := range d.Args {
+			substituteTypeParamsInExpr(&d.Args[i], typeMap)
+		}
+	case CallExpr:
+		for i := range d.TypeArgs {
+			substituteTypeParamsInTypeExpr(&d.TypeArgs[i], typeMap)
+		}
+		substituteTypeParamsInExpr(&d.Func, typeMap)
+		for i := range d.Args {
+			substituteTypeParamsInExpr(&d.Args[i], typeMap)
+		}
+		expr.Data = d
+	case *MethodCallExpr:
+		for i := range d.TypeArgs {
+			substituteTypeParamsInTypeExpr(&d.TypeArgs[i], typeMap)
+		}
+		substituteTypeParamsInExpr(&d.Receiver, typeMap)
+		for i := range d.Args {
+			substituteTypeParamsInExpr(&d.Args[i], typeMap)
+		}
+	case MethodCallExpr:
+		for i := range d.TypeArgs {
+			substituteTypeParamsInTypeExpr(&d.TypeArgs[i], typeMap)
+		}
+		substituteTypeParamsInExpr(&d.Receiver, typeMap)
+		for i := range d.Args {
+			substituteTypeParamsInExpr(&d.Args[i], typeMap)
+		}
+		expr.Data = d
+	case UnaryExpr:
+		substituteTypeParamsInExpr(&d.Operand, typeMap)
+		expr.Data = d
+	case BinaryExpr:
+		substituteTypeParamsInExpr(&d.Left, typeMap)
+		substituteTypeParamsInExpr(&d.Right, typeMap)
+		expr.Data = d
+	case FieldAccessExpr:
+		substituteTypeParamsInExpr(&d.Receiver, typeMap)
+		expr.Data = d
+	case IndexExpr:
+		substituteTypeParamsInExpr(&d.Receiver, typeMap)
+		substituteTypeParamsInExpr(&d.Index, typeMap)
+		expr.Data = d
+	}
+}
+
+func substituteTypeParamsInTypeExpr(te *TypeExpr, typeMap map[string]string) {
+	if te == nil {
+		return
+	}
+	switch te.Kind {
+	case TypeNamed:
+		nt := te.Data.(NamedType)
+		if replacement, ok := typeMap[nt.Name]; ok {
+			te.Data = NamedType{Name: replacement, Args: nt.Args}
+		}
+		for i := range nt.Args {
+			substituteTypeParamsInTypeExpr(&nt.Args[i], typeMap)
 		}
 	}
 }
@@ -252,7 +422,10 @@ func DesugarDestructors(file *File) {
 				if _, ok := classIdx[className]; !ok {
 					continue
 				}
-				destructorBodies[className] = append(destructorBodies[className], db.Body)
+				// Deep copy and substitute type params in the body
+				bodyCopy := deepCopyBlock(db.Body)
+				substituteTypeParamsInBlock(&bodyCopy, typeParamToClass)
+				destructorBodies[className] = append(destructorBodies[className], bodyCopy)
 			}
 		}
 

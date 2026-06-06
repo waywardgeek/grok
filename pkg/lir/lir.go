@@ -254,6 +254,7 @@ type LMethodCallData struct {
 	Args       []LValue
 	TypeArgs   []*LType // generic type arguments
 	IsExported bool
+	ParamTypes []*LType // parameter types from interface method signature (for nil arg handling)
 }
 
 type LBuiltinData struct {

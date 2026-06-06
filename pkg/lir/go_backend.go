@@ -26,6 +26,7 @@ type GoBackend struct {
 	nameExported   map[string]bool // type/func/method name → is exported
 	suppressedTemps map[int]bool   // temps consumed by field-writeback patterns
 	needsIsNilHelper bool         // emit _isNil helper for generic nil checks
+	inGenericFunc    bool         // true when emitting a function with type params
 }
 
 // scanFieldWritebacks pre-scans statements to find temps that will be consumed
@@ -377,6 +378,23 @@ func (g *GoBackend) emitTypeParamsWithRelational(tps []LTypeParam, relConstraint
 	g.writef("]")
 }
 
+// resolveTypeVarParam extracts a type variable from param types, unwrapping
+// Optional(TypeVar) since Go collapses class-handle optionals to the base type.
+func (g *GoBackend) resolveTypeVarParam(paramTypes []*LType, i int) *LType {
+	if paramTypes == nil || i >= len(paramTypes) {
+		return nil
+	}
+	pt := paramTypes[i]
+	if pt.Kind == LTyTypeVar {
+		return pt
+	}
+	// Optional(TypeVar) → TypeVar (Go collapses optional class handles)
+	if pt.Kind == LTyOptional && pt.Elem != nil && pt.Elem.Kind == LTyTypeVar {
+		return pt.Elem
+	}
+	return nil
+}
+
 // emitTypeArgs writes Go type argument list [int32, string] if non-empty.
 func (g *GoBackend) emitTypeArgs(tas []*LType) {
 	if len(tas) == 0 {
@@ -626,6 +644,8 @@ func (g *GoBackend) emitClassDecl(c *LClassDecl) {
 }
 
 func (g *GoBackend) emitFuncDecl(f *LFuncDecl) {
+	g.inGenericFunc = len(f.TypeParams) > 0
+	defer func() { g.inGenericFunc = false }()
 	name := g.visName(f.Name, f.IsExported)
 
 	// Build parameter list
@@ -729,9 +749,10 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 			break
 		}
 		g.writeIndent()
-		// Use typed declaration for temps with specific numeric types
-		if td.Expr.Type != nil && g.needsTypedDecl(td.Expr.Type) && isSimpleExpr(&td.Expr) {
-			g.writef("var %s %s = ", g.tempName(td.ID), g.goType(td.Expr.Type))
+		// Use cast for temps with specific numeric types to handle type mismatches
+		needsCast := td.Expr.Type != nil && g.needsTypedDecl(td.Expr.Type) && isSimpleExpr(&td.Expr)
+		if needsCast {
+			g.writef("%s := %s(", g.tempName(td.ID), g.goType(td.Expr.Type))
 		} else if g.exprIsNil(&td.Expr) {
 			// nil can't appear in := context; use var declaration
 			g.writef("var %s %s\n", g.tempName(td.ID), g.goType(td.Expr.Type))
@@ -740,6 +761,9 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 			g.writef("%s := ", g.tempName(td.ID))
 		}
 		g.emitExpr(&td.Expr)
+		if needsCast {
+			g.writef(")")
+		}
 		g.writef("\n")
 
 	case LStmtVarDecl:
@@ -749,10 +773,12 @@ func (g *GoBackend) emitStmt(s *LStmt) {
 			if vd.Name == "_" {
 				g.writef("_ = ")
 				g.emitValue(vd.Init)
-			} else if vd.Type != nil && (vd.Init.Kind == LValLitInt || vd.Init.Kind == LValLitUint || vd.Init.Kind == LValLitFloat) && g.needsTypedDecl(vd.Type) {
-				// Use typed declaration for literals when the Go type differs from inference
-				g.writef("var %s %s = ", vd.Name, g.goType(vd.Type))
+			} else if vd.Type != nil && g.needsTypedDecl(vd.Type) {
+				// Use typed declaration when the Go type might differ from inference
+				// (e.g. i32 from len() which returns int, or literal defaults)
+				g.writef("%s := %s(", vd.Name, g.goType(vd.Type))
 				g.emitValue(vd.Init)
+				g.writef(")")
 			} else if vd.Type != nil && (vd.Type.Kind == LTyTaggedUnion || vd.Type.Kind == LTyUnion) {
 				// Interface/union type — must use typed declaration to avoid concrete type
 				g.writef("var %s %s = ", vd.Name, g.goType(vd.Type))
@@ -1355,7 +1381,8 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 		g.emitValue(&d.Receiver)
 		isExported := d.IsExported
 		// Methods on type variables come from interface constraints — always exported in Go
-		if d.Receiver.Type != nil && d.Receiver.Type.Kind == LTyTypeVar {
+		isTypeVarReceiver := d.Receiver.Type != nil && d.Receiver.Type.Kind == LTyTypeVar
+		if isTypeVarReceiver {
 			isExported = true
 		}
 		g.writef(".%s", g.visName(d.Method, isExported))
@@ -1365,7 +1392,20 @@ func (g *GoBackend) emitExpr(e *LExpr) {
 			if i > 0 {
 				g.writef(", ")
 			}
-			g.emitValue(&arg)
+			// In generic functions, nil args to type-var receiver methods need
+			// zero-value emission since Go rejects bare nil for type parameters.
+			if g.inGenericFunc && arg.Kind == LValLitNull && isTypeVarReceiver {
+				// Use ParamTypes from the method signature if available
+				if pt := g.resolveTypeVarParam(d.ParamTypes, i); pt != nil {
+					g.writef("*new(%s)", pt.Name)
+				} else if arg.Type != nil && arg.Type.Kind == LTyTypeVar {
+					g.writef("*new(%s)", arg.Type.Name)
+				} else {
+					g.writef("*new(%s)", d.Receiver.Type.Name)
+				}
+			} else {
+				g.emitValue(&arg)
+			}
 		}
 		g.writef(")")
 
@@ -1847,7 +1887,13 @@ func (g *GoBackend) emitValue(v *LValue) {
 			g.writef("false")
 		}
 	case LValLitNull:
-		g.writef("nil")
+		// In generic functions, bare nil is invalid for type parameters.
+		// Emit *new(T) to get the zero value of the type param.
+		if g.inGenericFunc && v.Type != nil && v.Type.Kind == LTyTypeVar {
+			g.writef("*new(%s)", v.Type.Name)
+		} else {
+			g.writef("nil")
+		}
 	}
 }
 
@@ -1914,6 +1960,27 @@ func (g *GoBackend) needsTypedDecl(t *LType) bool {
 		return true // Go would infer int/uint
 	case LTyF32:
 		return true // Go would infer float64
+	}
+	return false
+}
+
+// needsNumericCast returns true when a variable declaration's init value has a
+// different numeric type than the declared type (e.g. len() returns int but
+// the variable is declared as i32).
+func (g *GoBackend) needsNumericCast(declType *LType, init *LValue) bool {
+	if declType == nil || init == nil || init.Type == nil {
+		return false
+	}
+	if !isNumericType(declType) || !isNumericType(init.Type) {
+		return false
+	}
+	return declType.Kind != init.Type.Kind || declType.Bits != init.Type.Bits
+}
+
+func isNumericType(t *LType) bool {
+	switch t.Kind {
+	case LTyI8, LTyI16, LTyI32, LTyI64, LTyU8, LTyU16, LTyU32, LTyU64, LTyF32, LTyF64, LTyPlatformInt, LTyPlatformUint:
+		return true
 	}
 	return false
 }

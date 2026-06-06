@@ -201,6 +201,19 @@ func cmdCompile(args []string) error {
 		files = append(files, parsedFile{file: file, input: input, output: out})
 	}
 
+	// Merge stdlib interfaces into all files before desugaring
+	stdlibDir := ast.FindStdlibDir()
+	if stdlibDir != "" {
+		stdPath := filepath.Join(stdlibDir, "std.fg")
+		if stdSrc, err := os.ReadFile(stdPath); err == nil {
+			if stdFile, err := parser.ParseFile(string(stdSrc), stdPath); err == nil {
+				for _, pf := range files {
+					ast.MergeStdlib(pf.file, stdFile)
+				}
+			}
+		}
+	}
+
 	// Desugar: interface fields → getters/setters, relations → field injection + impl blocks,
 	// destructors → destroy methods on owned classes, default impls → generic functions
 	for _, pf := range files {

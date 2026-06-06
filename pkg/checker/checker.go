@@ -1157,6 +1157,11 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 					call.Args[i].ResolvedType = paramTypes[i]
 				}
 			}
+			// Propagate expected type to nil args (needed for Go generics — bare nil
+			// is invalid for type parameters)
+			if call.Args[i].Kind == ast.ExprNil {
+				call.Args[i].ResolvedType = paramTypes[i]
+			}
 		}
 	}
 	return retType
@@ -1209,6 +1214,10 @@ func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 				}
 				for i := range mc.Args {
 					c.checkExpr(&mc.Args[i])
+					// Propagate expected type to nil args for Go generics
+					if mc.Args[i].Kind == ast.ExprNil && methType.Params != nil && i < len(methType.Params) {
+						mc.Args[i].ResolvedType = methType.Params[i]
+					}
 				}
 				return methType.Return
 			}

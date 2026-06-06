@@ -2092,7 +2092,13 @@ func (l *Lowerer) lowerExpr(expr *ast.Expr) LValue {
 	case ast.ExprBoolLit:
 		return l.lowerBoolLit(expr)
 	case ast.ExprNil:
-		return LValue{Kind: LValLitNull, Type: &LType{Kind: LTyAny}}
+		// Use checker's resolved type if available (important for generics —
+		// Go rejects bare nil for type parameters)
+		nilType := l.exprType(expr)
+		if nilType.Kind == LTyAny {
+			nilType = &LType{Kind: LTyAny}
+		}
+		return LValue{Kind: LValLitNull, Type: nilType}
 	case ast.ExprBinary:
 		return l.lowerBinary(expr)
 	case ast.ExprUnary:
@@ -2559,8 +2565,11 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 	recv := l.lowerExpr(&mc.Receiver)
 
 	var args []LValue
+	var paramTypes []*LType
 	for _, arg := range mc.Args {
 		args = append(args, l.lowerExpr(&arg))
+		// Capture checker-resolved param type for nil arg handling in Go backend
+		paramTypes = append(paramTypes, l.exprType(&arg))
 	}
 
 	resultType := l.exprType(expr)
@@ -2589,6 +2598,7 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 			Args:       args,
 			TypeArgs:   typeArgs,
 			IsExported: l.exported[mc.Method],
+			ParamTypes: paramTypes,
 		},
 	})
 }
