@@ -1469,7 +1469,7 @@ func (c *Checker) checkIndex(expr *ast.Expr) *Type {
 		if !indexType.IsInteger() {
 			c.error(expr.Span, "string index must be integer, got %s", indexType)
 		}
-		return TypeString // single char as string
+		return TypeU8 // string indexing returns a byte
 	}
 	return TypeUnknown
 }
