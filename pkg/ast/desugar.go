@@ -530,7 +530,12 @@ func DesugarDestructors(file *File) {
 		for className, bodies := range destructorBodies {
 			var allStmts []Stmt
 			for _, body := range bodies {
-				allStmts = append(allStmts, body.Stmts...)
+				// Wrap each destructor body in a block to avoid variable name collisions
+				b := body // copy for addressability
+				allStmts = append(allStmts, Stmt{
+					Kind: StmtBlock,
+					Data: &b,
+				})
 			}
 
 			destroyMethod := FuncDecl{

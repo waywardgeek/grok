@@ -185,7 +185,8 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 		}
 
 		for _, fn := range block.Functions {
-			prog.Functions = append(prog.Functions, l.lowerFuncDecl(&fn, ""))
+			receiver := fn.ReceiverType // func T.method(self) syntax
+			prog.Functions = append(prog.Functions, l.lowerFuncDecl(&fn, receiver))
 		}
 		for _, cls := range block.Classes {
 			// Set class type params in scope for method lowering

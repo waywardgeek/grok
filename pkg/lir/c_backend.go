@@ -5,6 +5,20 @@ import (
 	"strings"
 )
 
+// dedup removes duplicate entries from a slice, keeping the first occurrence.
+func dedup[T any](items []T, key func(T) string) []T {
+	seen := map[string]bool{}
+	var result []T
+	for _, item := range items {
+		k := key(item)
+		if !seen[k] {
+			seen[k] = true
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 // EmitC generates C source code from a monomorphized LIR program.
 // The program MUST be monomorphized before calling this — C has no generics.
 func EmitC(prog *LProgram) string {
@@ -124,6 +138,17 @@ func (g *cGen) generate() string {
 	// Pre-scan to collect all composite types used in the program
 	g.collectCompositeTypes()
 
+	// Deduplicate types (multi-file compilation can produce duplicates)
+	g.prog.Structs = dedup(g.prog.Structs, func(s LStructDecl) string { return s.Name })
+	g.prog.Classes = dedup(g.prog.Classes, func(c LClassDecl) string { return c.Name })
+	g.prog.Enums = dedup(g.prog.Enums, func(e LEnumDecl) string { return e.Name })
+	g.prog.Functions = dedup(g.prog.Functions, func(f LFuncDecl) string {
+		if f.Receiver != "" {
+			return f.Receiver + "." + f.Name
+		}
+		return f.Name
+	})
+
 	// Forward-declare structs, classes, and enums BEFORE composite types
 	for _, s := range g.prog.Structs {
 		g.linef("typedef struct %s %s;", g.structName(s.Name, s.IsExported), g.structName(s.Name, s.IsExported))
@@ -138,21 +163,11 @@ func (g *cGen) generate() string {
 		g.line("")
 	}
 
-	// Emit slice/optional/result type typedefs via runtime macros
+	// Emit slice type typedefs (only need forward declarations — uses ElemType*)
 	for elemType, name := range g.sliceTypes {
 		g.linef("FORGE_SLICE_DEF(%s, %s)", elemType, name)
 	}
-	for elemType, name := range g.optTypes {
-		g.linef("FORGE_OPT_DEF(%s, %s)", elemType, name)
-	}
-	for elemType, name := range g.resultTypes {
-		g.linef("FORGE_RESULT_DEF(%s, %s)", elemType, name)
-	}
-	for cElemType, suffix := range g.chanTypes {
-		chanName := fmt.Sprintf("ForgeChan_%s", suffix)
-		g.linef("FORGE_CHAN_DEF(%s, %s)", cElemType, chanName)
-	}
-	if len(g.sliceTypes)+len(g.optTypes)+len(g.resultTypes)+len(g.chanTypes) > 0 {
+	if len(g.sliceTypes) > 0 {
 		g.line("")
 	}
 
@@ -169,6 +184,21 @@ func (g *cGen) generate() string {
 	// Emit class definitions (heap-allocated structs)
 	for _, c := range g.prog.Classes {
 		g.emitClassDecl(&c)
+	}
+
+	// Emit optional/result/channel type typedefs (need complete types — uses ElemType val)
+	for elemType, name := range g.optTypes {
+		g.linef("FORGE_OPT_DEF(%s, %s)", elemType, name)
+	}
+	for elemType, name := range g.resultTypes {
+		g.linef("FORGE_RESULT_DEF(%s, %s)", elemType, name)
+	}
+	for cElemType, suffix := range g.chanTypes {
+		chanName := fmt.Sprintf("ForgeChan_%s", suffix)
+		g.linef("FORGE_CHAN_DEF(%s, %s)", cElemType, chanName)
+	}
+	if len(g.optTypes)+len(g.resultTypes)+len(g.chanTypes) > 0 {
+		g.line("")
 	}
 
 	// Emit generator state struct typedefs

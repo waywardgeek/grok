@@ -107,16 +107,17 @@ func MergeStdlib(file *File, stdFile *File) {
 		return
 	}
 
-	// Merge into every block of the target file
-	for i := range file.Blocks {
+	// Merge into the first block only (multi-file compilation merges blocks,
+	// so merging into every block would cause duplicate definitions)
+	if len(file.Blocks) > 0 {
 		if len(stdIfaces) > 0 {
-			file.Blocks[i].Interfaces = append(stdIfaces, file.Blocks[i].Interfaces...)
+			file.Blocks[0].Interfaces = append(stdIfaces, file.Blocks[0].Interfaces...)
 		}
 		if len(stdClasses) > 0 {
-			file.Blocks[i].Classes = append(stdClasses, file.Blocks[i].Classes...)
+			file.Blocks[0].Classes = append(stdClasses, file.Blocks[0].Classes...)
 		}
 		if len(stdFuncs) > 0 {
-			file.Blocks[i].Functions = append(stdFuncs, file.Blocks[i].Functions...)
+			file.Blocks[0].Functions = append(stdFuncs, file.Blocks[0].Functions...)
 		}
 	}
 }

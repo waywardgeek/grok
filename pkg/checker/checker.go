@@ -2199,12 +2199,21 @@ func (c *Checker) CheckFile(file *ast.File) {
 	if file.Filename != "" && c.currentFile == "" {
 		c.currentFile = file.Filename
 	}
+	// Phase 1: Register all types, functions, and constants across all blocks
+	// so cross-block references resolve correctly in multi-file compilation.
 	for i := range file.Blocks {
-		c.checkForgeBlock(&file.Blocks[i])
+		c.registerForgeBlock(&file.Blocks[i])
+	}
+	// Phase 2: Check function and method bodies (all names now in scope).
+	for i := range file.Blocks {
+		c.checkForgeBlockBodies(&file.Blocks[i])
 	}
 }
 
-func (c *Checker) checkForgeBlock(block *ast.ForgeBlock) {
+// registerForgeBlock registers all types, functions, constants, and imports
+// from a block into scope. Called across all blocks before checking bodies,
+// so cross-block references resolve correctly in multi-file compilation.
+func (c *Checker) registerForgeBlock(block *ast.ForgeBlock) {
 	// Register interfaces first (classes may implement them)
 	for i := range block.Interfaces {
 		c.registerInterface(&block.Interfaces[i])
@@ -2284,11 +2293,26 @@ func (c *Checker) checkForgeBlock(block *ast.ForgeBlock) {
 	for i := range block.Functions {
 		c.registerFunc(&block.Functions[i])
 	}
+}
 
+// checkForgeBlockBodies checks function and method bodies in a block.
+// Called after all blocks have been registered, so cross-block references work.
+func (c *Checker) checkForgeBlockBodies(block *ast.ForgeBlock) {
 	// Check function bodies
 	for i := range block.Functions {
 		if block.Functions[i].Body != nil {
-			c.checkFuncBody(&block.Functions[i])
+			fn := &block.Functions[i]
+			// For func T.method(self) syntax, define 'self' as the receiver type
+			if fn.ReceiverType != "" {
+				c.scope = NewScope(c.scope)
+				if recvInfo := c.registry.Lookup(fn.ReceiverType); recvInfo != nil {
+					c.scope.Define("self", recvInfo.Type)
+				}
+				c.checkFuncBody(fn)
+				c.scope = c.scope.parent
+			} else {
+				c.checkFuncBody(fn)
+			}
 		}
 	}
 

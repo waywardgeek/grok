@@ -197,6 +197,23 @@ match expr {
 }
 ```
 
+### Block Scoping
+
+Forge has block-level scoping like Go. Any `{ }` block creates a new scope — variables declared inside are local to that block:
+
+```forge
+func example() {
+    let x = 1
+    {
+        let x = 2       // shadows outer x, legal
+        println(x)      // prints 2
+    }
+    println(x)          // prints 1
+}
+```
+
+This is used internally by the compiler for code generation (e.g., destructor body injection wraps each relation's cleanup in a block to avoid variable name collisions). Block scoping works at all pipeline levels: AST (`StmtBlock`), LIR (`LStmtBlock`), and C backend (emits `{ }`). Block scoping is not yet exposed as user-facing Forge syntax but the infrastructure is complete.
+
 ## Functions
 
 ```forge
@@ -475,16 +492,16 @@ source: ["file.go"]
 
 These are for human/AI understanding, not runtime behavior.
 
-**Note**: `source`, `why`, `doc`, `fake`, and other annotation keywords are reserved — they cannot be used as field or variable names. Use `src` instead of `source`.
+**Note**: Annotation keywords (`source`, `why`, `doc`, `fake`, `field`, `lock`, `implements`) are **contextual** — they lex as identifiers and are only interpreted as keywords in annotation contexts. They CAN be used as variable/field names. The parser uses targeted lookahead to disambiguate (e.g., `lock` is only a keyword when followed by `(`).
 
 ## Known Gotchas
 
-- **`source` is a keyword** — can't use as field/param name. Use `src` or `src_text`.
-- **`fn` vs `func`** — `fn` is for type syntax only (e.g., `fn(i32) -> bool`), `func` for declarations.
+- **Annotation keywords are contextual** — `source`, `why`, `doc`, `fake`, `field`, `lock`, `implements` can be used as variable/field names (they lex as identifiers).
+- **`fn` vs `func`** — `func` is the only function keyword. `fn` is for type syntax only (e.g., `fn(i32) -> bool`) and is a contextual keyword — it can be used as a variable name.
 - **No ternary if-expression** — use `let mut x = ...; if cond { x = a } else { x = b }`.
 - **`?` returns optional** — after `let x = foo()?`, `x` is `T?`, not `T`. Use `x!` to unwrap.
 - **`forge fmt` lexer bug** — keywords inside string literals are tokenized as keywords, causing parse failures on strings containing words like `doc`, `source`, etc.
-- **Checker warnings for cross-file refs** — the checker prints "undefined variable" warnings for symbols defined in other `.fg` files (especially `self` in methods). These are non-fatal; the lowerer proceeds.
+- **Checker warnings for cross-file refs** — the checker uses a two-phase approach (register all types/functions across blocks, then check bodies), so most cross-file references resolve correctly. Remaining warnings come from within-block ordering issues (e.g., `dict_get` calling `hash_lookup` which is an interface method, not a free function). These are non-fatal; the lowerer proceeds but produces `void*` types for unresolved expressions.
 - **No `is` operator** — `expr.kind is Variant` doesn't exist. Use a helper function with `match` or a `match` expression directly.
 - **Enum variant construction** — must use positional args: `Variant(a, b, c)`. Named args like `Variant(x: a, y: b)` are not supported in call-syntax construction (use struct literal syntax `Struct { x: a }` for structs only).
 - **`append(slice, item)` builtin** — exists for plain slices; for relation-owned lists use `array_append<P,C>(parent, child)`.
@@ -494,6 +511,14 @@ These are for human/AI understanding, not runtime behavior.
 **Completed .fg files**: `bootstrap/ast.fg`, `bootstrap/lexer.fg`, `bootstrap/parser.fg`, `bootstrap/expr_parser.fg`
 
 **Compilation**: `forge compile --c bootstrap/ast.fg bootstrap/lexer.fg bootstrap/parser.fg bootstrap/expr_parser.fg` produces ~6,149 lines of C. Checker warnings are non-fatal.
+
+**Compiler architecture notes** (learned during bootstrap):
+- `CheckFile` uses two-phase processing: register all types/functions across blocks first, then check bodies. This is required for multi-file compilation.
+- `DesugarDestructors` wraps each relation's destructor body in a `StmtBlock` to avoid variable name collisions when multiple relations contribute to the same `destroy()` method.
+- `MergeStdlib` merges stdlib into the first block only (not every block) to avoid duplicate type definitions.
+- `EmitC` deduplicates structs, classes, enums, and functions by name before emission (function dedup uses `Receiver.Name` key to avoid colliding methods like `Lexer.peek` and `Parser.peek`).
+- Composite type macros are ordered: forward declarations → `FORGE_SLICE_DEF` (uses pointer) → struct/class/enum definitions → `FORGE_OPT_DEF`/`FORGE_RESULT_DEF` (use complete types).
+- `func T.method(self)` external method syntax: the lowerer passes `fn.ReceiverType` as the receiver, and the checker defines `self` in scope when `ReceiverType` is set.
 
 **Next to port**: checker.fg, lowerer.fg, then remaining compiler passes.
 
