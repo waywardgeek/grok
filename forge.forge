@@ -1,6 +1,34 @@
 // forge.forge — project-level understanding of the Forge toolchain
 forge Forge {
-  why: "Language toolchain and structural integrity engine. Two modes: verification (.forge vs Go drift detection) and compilation (.fg → Go/C via parser → checker → LIR → backends). Relations and multi-class interfaces enable ownership modeling. .forge files are the primary design artifact for Forge-Driven Development."
+  why: "Language toolchain and structural integrity engine. Two modes: verification (.forge vs Go drift detection) and compilation (.fg → Go/C via parser → checker → LIR → backends). Relations and multi-class interfaces enable ownership modeling. .forge files are the primary design artifact for Understanding-Driven Development (UDD)."
+
+  doc "Invariants — Cross-Cutting": """
+    These invariants affect multiple modules and are the most common source of
+    multi-session debugging cycles. Read these first.
+
+    1. AST Expr is a VALUE TYPE. Structs containing Expr fields (StructLitField.Value,
+    CallExpr.Args []Expr, BinaryExpr.Left/Right, AssignStmt.Target/Value) store by
+    value. The checker annotates ResolvedType via pointer (&expr). Any COPY of the
+    containing struct (Go range loop, function arg, interface boxing) creates a new
+    Expr whose ResolvedType won't have the checker's annotation. Use index-based
+    iteration: `for i := range slice` with `&slice[i]`, never `for _, x := range`.
+    The dataAs[T] helper's `case T: return &v` also returns pointer to local copy.
+
+    2. ClassRenames after monomorphization. LIR expressions carry ORIGINAL generic
+    class names (e.g., 'DictEntry'). The program's class/struct lists contain only
+    MONOMORPHIZED names ('DictEntry_i32'). Any function that looks up fields, emits
+    types, or resolves methods by class name MUST check prog.ClassRenames first.
+    Without this, lookups fail silently → void*/LTyAny fallback → gcc errors.
+
+    3. MergeStdlib into block 0 ONLY. Merging into every block creates duplicate
+    struct definitions in generated C. Must also merge RELATIONS (not just
+    classes/functions) and transitively pull called functions.
+
+    4. Desugar order matters: InterfaceEmbeds → InterfaceFields → Relations →
+    Destructors → DefaultImpls. Each pass creates AST consumed by the next.
+    DesugarDestructors wraps each relation's body in StmtBlock (block scoping)
+    to avoid variable name collisions.
+  """
 
   doc "System Architecture": """
     Classic compiler pipeline with a parallel verification track:
@@ -132,6 +160,26 @@ forge Forge {
     - Language server: AST + Span for IDE integration
     - CI integration: forge verify as pre-commit hook
     - Bootstrap: rewrite Forge compiler in Forge
+  """
+
+  doc "Known Failures": """
+    Pre-existing test failures as of 2026-06-07. Do NOT investigate these without
+    explicit instruction — they are known issues, not regressions.
+
+    1. TestCBackendRuns/demo.fg — MergeStdlib pulls Dict/Sym code into programs
+    that don't use Dict. The Sym class is emitted as struct (not class handle),
+    causing gcc errors. Root cause: MergeStdlib doesn't distinguish whether a
+    program actually uses Dict; it pulls transitively based on relation types.
+
+    2. TestVerifyAstForge — ast.forge still references CtorParams field on
+    ClassDecl, which was removed from the Go implementation. Run `forge update`
+    on ast.forge to fix.
+
+    3. Checker warnings for stdlib interface methods (dict_get calling hash_lookup,
+    etc.) — interface methods are desugared to class methods, but Dict functions
+    call them as free functions. The checker warns but the lowerer proceeds,
+    producing LTyAny for unresolved expressions. The C backend's inferExprType
+    + resolveFieldType recover concrete types in most cases.
   """
 
   source: ["cmd/forge/main.go", "cmd/forge/shared.go", "cmd/forge/fmt.go", "cmd/forge/update.go"]
