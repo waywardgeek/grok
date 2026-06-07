@@ -448,7 +448,72 @@ Child must implement `hash_key(self) -> u64`. Functions: `hash_insert`, `hash_lo
 
 **IO/OS:** `read_file(path) -> (string, bool)`, `write_file(path, content) -> bool`, `os_args() -> [string]`, `os_exit(code)`, `os_getwd() -> string`, `exec_command(name, args) -> (string, bool)`, `path_join(a, b)`, `path_dir(p)`, `path_base(p)`, `path_ext(p)`.
 
+**Testing:** `assert(cond, msg)`, `assert_eq(actual, expected, msg)`. See [Testing](#testing).
+
 **Operators:** `x!` unwrap optional, `<T>(expr)` cast, `x[i]` index, `x[lo:hi]` slice.
+
+## Testing
+
+Forge has built-in testing support. No frameworks, no ceremony — just assertions, a naming convention, and a CLI command.
+
+### Test Functions
+
+Any function whose name starts with `test_` is a test. No arguments, no return value:
+
+```forge
+func test_lexer_keywords() {
+    let lex = Lexer { source: "if else while" }
+    let tok = lex.next()
+    assert_eq(tok.kind, TIf, "expected if keyword")
+}
+
+func test_lower_type_primitives() {
+    let lowerer = Lowerer { temp_id: 0, scope: Dict<LType> {} }
+    let te = TypeExpr { kind: TEIdent, name: "i32" }
+    let lt = lowerer.lower_type(te)
+    assert(!isnull(lt), "should resolve i32")
+    assert_eq(lt!.kind, TyI32, "should be TyI32")
+}
+```
+
+### Assertions
+
+Two builtins, both compiler-provided (they inject file and line automatically):
+
+| Builtin | Behavior |
+|---|---|
+| `assert(cond, msg)` | If `cond` is false, prints `FAIL file:line: msg` and exits with code 1 |
+| `assert_eq(a, b, msg)` | If `a != b`, prints `FAIL file:line: msg` with expected/actual values and exits with code 1 |
+
+`assert_eq` uses auto-generated `to_string()` for enums (prints variant name) and primitives. For classes and structs, it prints the type name.
+
+### Running Tests
+
+```
+forge test test_lexer.fg lexer.fg ast.fg
+```
+
+`forge test` compiles all listed `.fg` files, discovers `test_*` functions, generates a `main()` that calls each one, compiles the C output with gcc, and runs it:
+
+```
+PASS  test_lexer_keywords (0.1ms)
+PASS  test_lexer_strings (0.1ms)
+FAIL  test_lexer_escapes
+  assert_eq failed at test_lexer.fg:47
+    expected: TStringLit
+    got:      TError
+
+3 tests, 2 passed, 1 failed
+```
+
+Tests run sequentially in declaration order. A failed assertion exits that test immediately but does not stop the suite — remaining tests still run.
+
+### Test File Conventions
+
+- Test files are regular `.fg` files — no special syntax or annotations
+- Name test files `test_*.fg` by convention (not enforced)
+- Test functions can use all language features including classes, generics, and relations
+- Tests share a compilation unit with the code they test — no import system needed
 
 ## Stdlib Classes
 
@@ -508,9 +573,9 @@ These are for human/AI understanding, not runtime behavior.
 
 ## Bootstrap Status
 
-**Completed .fg files**: `bootstrap/ast.fg`, `bootstrap/lexer.fg`, `bootstrap/parser.fg`, `bootstrap/expr_parser.fg`
+**Completed .fg files**: `bootstrap/ast.fg`, `bootstrap/lexer.fg`, `bootstrap/parser.fg`, `bootstrap/expr_parser.fg`, `bootstrap/desugar.fg`, `bootstrap/checker.fg`, `bootstrap/lir.fg`, `bootstrap/lowerer.fg`
 
-**Compilation**: `forge compile --c bootstrap/ast.fg bootstrap/lexer.fg bootstrap/parser.fg bootstrap/expr_parser.fg` produces ~6,149 lines of C. Checker warnings are non-fatal.
+**Compilation**: `forge compile --c bootstrap/*.fg` produces ~15,844 lines of C. Checker warnings are non-fatal.
 
 **Compiler architecture notes** (learned during bootstrap):
 - `CheckFile` uses two-phase processing: register all types/functions across blocks first, then check bodies. This is required for multi-file compilation.
@@ -520,7 +585,7 @@ These are for human/AI understanding, not runtime behavior.
 - Composite type macros are ordered: forward declarations → `FORGE_SLICE_DEF` (uses pointer) → struct/class/enum definitions → `FORGE_OPT_DEF`/`FORGE_RESULT_DEF` (use complete types).
 - `func T.method(self)` external method syntax: the lowerer passes `fn.ReceiverType` as the receiver, and the checker defines `self` in scope when `ReceiverType` is set.
 
-**Next to port**: checker.fg, lowerer.fg, then remaining compiler passes.
+**Next to port**: optimizer.fg, monomorphizer.fg, c_backend.fg. Also: implement `forge test` and write bootstrap unit tests.
 
 **Key design rules for bootstrap code**:
 - Classes for most things, structs only for simple value types (Pos, Span, LexerState)

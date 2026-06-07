@@ -854,6 +854,8 @@ for val in range(0, 10) {
 | `itoa(n)` | `int -> string` | Integer to string |
 | `atoi(s)` | `string -> (i64, bool)` | String to integer |
 | `char_to_string(b)` | `u8 -> string` | Byte to string |
+| `assert(cond, msg)` | `(bool, string) -> unit` | Fail test if false (see [Testing](#testing)) |
+| `assert_eq(a, b, msg)` | `(T, T, string) -> unit` | Fail test if not equal (see [Testing](#testing)) |
 
 ### IO/OS Built-ins
 
@@ -883,7 +885,142 @@ for val in range(0, 10) {
 
 ---
 
-## Stdlib Classes
+## Testing
+
+Testing is a first-class feature of Forge, not an afterthought bolted on via libraries. The design is minimal and opinionated: two assertion builtins, a naming convention, and a CLI command. No test frameworks, no assertion libraries, no mock systems.
+
+### Design Rationale
+
+Forge is a language for writing compilers and systems software, primarily by AI agents. The testing system reflects what those users actually need:
+
+1. **Fast feedback** — write a test, run it, see what broke. No configuration, no build files, no test runner setup.
+2. **Runtime verification** — Forge's type checker has intentional gaps (cross-file resolution produces warnings, not errors). Tests catch what the checker misses.
+3. **Minimal ceremony** — a test is just a function. No test classes, no decorators, no registration. If it starts with `test_`, it's a test.
+
+### Test Functions
+
+A test function has no arguments and no return value. Its name starts with `test_`:
+
+```forge
+func test_lexer_basic() {
+    let lex = Lexer { source: "let x = 42" }
+    let tok = lex.next()
+    assert_eq(tok.kind, TLet, "first token should be let")
+}
+```
+
+Test functions can use all language features — classes, generics, relations, f-strings, error handling. They share a compilation unit with the code they test.
+
+### Assertion Builtins
+
+Two builtins are provided by the compiler, not the standard library. This is intentional: assertions need file and line information that only the compiler can inject.
+
+#### `assert(condition: bool, message: string)`
+
+If `condition` is false, prints the failure message with file and line, then terminates the test:
+
+```forge
+assert(len(tokens) > 0, "lexer should produce at least one token")
+assert(!isnull(result), "parse should succeed")
+```
+
+Output on failure:
+```
+FAIL  test_lexer_basic
+  assert failed at test_lexer.fg:15
+    lexer should produce at least one token
+```
+
+#### `assert_eq(actual: T, expected: T, message: string)`
+
+If `actual != expected`, prints the failure message along with both values, then terminates the test:
+
+```forge
+assert_eq(tok.kind, TLet, "first token kind")
+assert_eq(result.name, "main", "parsed function name")
+assert_eq(count, 42, "element count")
+```
+
+Output on failure:
+```
+FAIL  test_lexer_basic
+  assert_eq failed at test_lexer.fg:16
+    first token kind
+    expected: TLet
+    got:      TIdent
+```
+
+**Value display:** `assert_eq` needs to convert values to strings for the "expected/got" output. This works via auto-generated `to_string()` functions:
+
+| Type | Display |
+|---|---|
+| Enums | Variant name (e.g., `TLet`, `BinAdd`, `TyI32`) |
+| `bool` | `true` / `false` |
+| `i8`–`i64`, `u8`–`u64` | Decimal number |
+| `f32`, `f64` | Decimal with fraction |
+| `string` | The string value (quoted in assert output) |
+| Structs | Type name (e.g., `Pos`) |
+| Classes | Type name (e.g., `Lexer`) |
+
+Auto-generated enum `to_string()` is the critical piece — most test assertions compare enum variants (token kinds, type kinds, expression kinds).
+
+### The `forge test` Command
+
+```
+forge test [files...]
+```
+
+`forge test` compiles all listed `.fg` files together, discovers all `test_*` functions, generates a `main()` that invokes each test with timing and result tracking, compiles with gcc, and runs the binary.
+
+Example:
+```
+forge test test_lexer.fg lexer.fg ast.fg
+```
+
+Output:
+```
+PASS  test_lexer_keywords (0.1ms)
+PASS  test_lexer_strings (0.2ms)
+PASS  test_lexer_numbers (0.1ms)
+FAIL  test_lexer_escapes
+  assert_eq failed at test_lexer.fg:47
+    expected: TStringLit
+    got:      TError
+
+4 tests, 3 passed, 1 failed
+```
+
+**Execution model:**
+- Tests run sequentially in source declaration order
+- A failed assertion stops that test function immediately (no partial execution)
+- The suite continues — remaining tests still run
+- Exit code: 0 if all pass, 1 if any fail
+
+**No test discovery from directories.** You explicitly list files. This matches Forge's current compilation model (no module system, no implicit file discovery). When modules arrive, `forge test` will gain directory-based discovery.
+
+### Test File Conventions
+
+- Test files are regular `.fg` files — no special syntax, no annotations
+- Name test files `test_*.fg` by convention (not enforced by the compiler)
+- Place test files alongside the code they test
+- Helper functions used only by tests can live in test files (they're just regular functions)
+
+### What Is Not Included (and Why)
+
+| Feature | Reason for exclusion |
+|---|---|
+| Test fixtures / setUp / tearDown | Enterprise pattern. Tests should be self-contained. |
+| Mocking | Forge is for compilers, not web services. Use real objects. |
+| Property-based testing | Requires random generation — out of scope for bootstrap. |
+| Code coverage | Requires C instrumentation. Potential future addition. |
+| Snapshot testing | Too complex for the value it provides at this stage. |
+| Test filtering (`--filter`) | Nice-to-have. Could add `forge test --filter lexer` later. |
+| Parallel execution | Sequential is simpler and sufficient for compiler tests. |
+| Subtests / nested tests | Adds complexity without clear benefit for Forge's use cases. |
+
+The testing system can grow, but the baseline is intentionally small. Two builtins, one convention, one command.
+
+---
 
 - **`Sym`** — interned symbol wrapping string + hash. Create via `sym("name")`.
   Methods: `get_name() -> string`, `get_hash() -> u64`. Hash once, compare by
@@ -1077,6 +1214,7 @@ specialized bodies for transitive instantiations.
 | `forge update file.forge` | Refresh function index and deps |
 | `forge fmt file.fg` | Format source (comment-preserving) |
 | `forge gen pkg/path/` | Scaffold .forge from Go packages |
+| `forge test file.fg ...` | Compile, discover `test_*` functions, run tests |
 
 ---
 
