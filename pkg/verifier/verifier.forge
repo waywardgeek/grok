@@ -188,31 +188,31 @@ forge Verifier {
 //
 // func verifyClass(c forgeast.ClassDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result)    :717
 //
-// func verifyEnum(e forgeast.EnumDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result)    :779
+// func verifyEnum(e forgeast.EnumDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result)    :770
 //
-// func verifyInterface(i forgeast.InterfaceDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result)    :799
+// func verifyInterface(i forgeast.InterfaceDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result)    :790
 //
-// func verifyFunction(f forgeast.FuncDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result)    :817
+// func verifyFunction(f forgeast.FuncDecl, goInfo *goTypeInfo, forgeFile, goFile string, result *Result)    :808
 //
 // toGoFieldName tries PascalCase first (exported), then the original name (unexported).
-// func toGoFieldName(name string) string    :841
+// func toGoFieldName(name string) string    :832
 //
 // findGoField checks if a field exists, trying PascalCase, camelCase, and exact match.
-// func findGoField(name string, fields map[string]string) bool    :846
+// func findGoField(name string, fields map[string]string) bool    :837
 //
 // findGoFieldType returns the Go type string for a field, trying PascalCase, camelCase, and exact match.
-// func findGoFieldType(name string, fields map[string]string) (string, bool)    :852
+// func findGoFieldType(name string, fields map[string]string) (string, bool)    :843
 //
 // verifyFuncSignature checks parameter count and return type of a forge function against Go.
-// func verifyFuncSignature(context string, forgeFunc forgeast.FuncDecl, goFunc *goFuncInfo, forgeFile, goFile string, result *Result)    :868
+// func verifyFuncSignature(context string, forgeFunc forgeast.FuncDecl, goFunc *goFuncInfo, forgeFile, goFile string, result *Result)    :859
 //
-// func toGoMethodName(name string) string    :940
+// func toGoMethodName(name string) string    :931
 //
 // snakeToPascal converts snake_case to PascalCase.
-// func snakeToPascal(s string) string    :945
+// func snakeToPascal(s string) string    :936
 //
 // snakeToCamel converts snake_case to camelCase.
-// func snakeToCamel(s string) string    :959
+// func snakeToCamel(s string) string    :950
 
 // --- dependencies ---
 //

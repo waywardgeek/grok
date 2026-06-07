@@ -2,9 +2,9 @@
 
 ## Executive Summary
 
-The `lir` (Low-level Intermediate Representation) module serves as the critical bridge between the high-level, semantically rich Abstract Syntax Tree (AST) and the backend-specific code generators in the Forge compiler. Its primary mission is to resolve all semantic complexity of the Forge language into a simplified, flat representation that makes backend implementation a straightforward exercise in syntax mapping. 
+The `lir` (Low-level Intermediate Representation) module is the architectural bridge between the high-level, semantically rich Abstract Syntax Tree (AST) and the target-specific code generators of the Forge compiler. Its primary mission is to resolve the semantic complexity of the Forge language—such as generics, optional types, tagged unions, and method dispatch—into a simplified, flat representation. This transformation ensures that backends can remain "thin" emitters, focused primarily on syntax mapping rather than complex semantic resolution.
 
-The LIR is built on several foundational design principles that distinguish it from traditional compiler IRs. First, it preserves **structured control flow** (if, while, for, switch) rather than decomposing logic into basic blocks and jumps. This preservation is essential for generating idiomatic high-level target code, particularly for the Go backend. Second, it enforces **flat expressions**, where every sub-expression is assigned to a unique, named temporary variable. This SSA-like flattening ensures that backends never have to deal with nested expression trees. Third, it performs **semantic resolution**, lowering high-level Forge features like optional types, tagged unions (enums), method dispatch, and closures into explicit LIR constructs. Finally, the LIR is **backend agnostic**, providing a common foundation for multiple targets while offering optional passes like monomorphization for backends that require it.
+The LIR is built on four foundational design principles. First, it preserves **structured control flow** (if, while, for, switch) instead of decomposing logic into basic blocks and jumps, which is essential for generating idiomatic high-level target code like Go. Second, it enforces **flat expressions**, where every sub-expression is assigned to a unique, named temporary variable, ensuring that backends never encounter nested expression trees. Third, it performs **semantic resolution**, lowering high-level Forge features into explicit LIR constructs. Finally, it is **backend agnostic**, providing a common foundation for multiple targets while offering optional passes like monomorphization for backends that require it.
 
 ## File Inventory
 
@@ -19,7 +19,6 @@ The LIR is built on several foundational design principles that distinguish it f
 *   [mono_test.go](mono_test.go): Unit tests for the monomorphization pass, ensuring correct specialization and name mangling.
 *   [c_backend_test.go](c_backend_test.go): Tests for the C code generator, verifying the emission of valid C code.
 *   [e2e_test.go](e2e_test.go): End-to-end tests that exercise the entire pipeline from lowering through optimization and code generation.
-*   [dump_c_test.go](dump_c_test.go): A utility test for dumping generated C code for manual inspection.
 
 ## Architecture and Data Flow
 
@@ -52,6 +51,15 @@ The `lir` module exposes a clean, functional API for interacting with the LIR pi
 
 ## Implementation Details
 
+### LIR Data Structures
+
+The LIR is defined by four primary categories of data structures:
+
+*   **LType**: Represents the Forge type system in a form suitable for code generation. It includes primitive types (integers, floats, bool, string), unit/void, error, and complex types like `LTyStruct`, `LTyClassHandle` (heap-allocated), `LTyTaggedUnion` (enums), `LTySlice`, `LTyMap`, `LTyChannel`, `LTyGenerator`, `LTyOptional`, and `LTyErrorResult`. It also preserves `LTyTypeVar` for generic support.
+*   **LValue**: The operands of the LIR. These are flat and include named variables (`LValVar`), SSA-like temporaries (`LValTemp`), global variables (`LValGlobal`), and various literals (int, uint, float, string, bool, null).
+*   *   **LExpr**: Right-hand side expressions that are always bound to a temporary via `LTempDef`. They reference only `LValue` operands, never nested expressions. Kinds include binary/unary operations, casts, field access, calls (regular, method, builtin), and construction (struct, class, slice, map, channel).
+*   **LStmt**: Structured statements that form the program's control flow. Kinds include variable management (`LStmtTempDef`, `LStmtVarDecl`, `LStmtAssign`), field/index mutation (`LStmtStructSet`, `LStmtClassSet`, `LStmtIndexSet`), and structured control flow (`LStmtIf`, `LStmtWhile`, `LStmtFor`, `LStmtSwitch`, `LStmtTypeSwitch`, `LStmtBlock`, `LStmtReturn`, `LStmtBreak`, `LStmtContinue`). It also includes concurrency primitives (`LStmtSpawn`, `LStmtLock`, `LStmtSend`, `LStmtSelect`, `LStmtYield`).
+
 ### The Lowering Pass
 
 The `Lowerer` is the most complex component of the module, responsible for the heavy lifting of semantic resolution. It maintains a stateful mapping of AST nodes to LIR constructs and tracks visibility, imports, and type information. A central feature of the lowerer is **expression flattening**. Every sub-expression in the AST is assigned to a unique temporary variable (`LValTemp`). This ensures that all `LExpr` instances in the LIR reference only simple operands, never nested expressions. For example, `a + b * c` is lowered into `%0 = b * c` followed by `%1 = a + %0`.
@@ -73,13 +81,22 @@ Another vital optimization is **multi-return destructuring**. Forge allows funct
 
 ### Monomorphization
 
-For backends like C that lack native generic support, monomorphization is mandatory. The pass operates in four distinct phases. First, it indexes all generic declarations in the program. Second, it performs a deep walk of all function bodies to collect every unique instantiation of generic functions, classes, and structs based on the concrete type arguments used at call sites. Third, it generates specialized copies of these declarations, mangling their names (e.g., `Stack_i32`) to ensure uniqueness. Finally, it rewrites all call sites and type references throughout the program to use these specialized, non-generic versions.
+For backends like C that lack native generic support, monomorphization is mandatory. The pass operates in four distinct phases:
+
+1.  **Indexing**: It indexes all generic declarations (functions, structs, classes) in the program.
+2.  **Collection**: It performs a deep walk of all function bodies to collect every unique instantiation of generic functions, classes, and structs based on the concrete type arguments used at call sites.
+3.  **Specialization**: It generates specialized copies of these declarations, mangling their names (e.g., `Stack_i32`) to ensure uniqueness. This involves deep cloning the function bodies and substituting type variables with concrete types.
+4.  **Rewriting**: It rewrites all call sites and type references throughout the program to use these specialized, non-generic versions.
+
+A critical aspect of monomorphization in Forge is handling **Impl Method Renames**. When a class implements an interface through an `impl` block, the lowerer may generate forwarding wrappers or rename methods to avoid collisions (especially in C). The monomorphizer tracks these renames in `prog.ImplMethodRenames` and ensures that specialized versions of default interface methods call the correct concrete method names on specialized classes.
 
 ### Backends
 
 The **Go Backend** is designed as a "thin" emitter. It leverages Go's native support for generics, interfaces, and concurrency. It uses a `strings.Builder` to accumulate code and maintains a map of required imports, which are automatically added to the file header. It handles Forge-specific features like generators by emitting a goroutine and channel pattern that matches Forge's lazy iteration semantics.
 
 The **C Backend** is significantly more involved due to C's lack of high-level features. It relies on a small runtime header (`forge_runtime.h`) that defines macros and structures for slices, optional types, and error results. It hoists lambdas to top-level static functions and uses `malloc` for class allocations. It also implements a sophisticated type inference mechanism to resolve `LTyAny` types into concrete C types where possible, ensuring type safety in the generated code.
+
+One of the most complex transformations in the C backend is the **Generator State Machine**. Forge generators are lowered into a stateful struct and two functions: an `_init` function that allocates the state and copies parameters, and a `_next` function that executes the body. The `_next` function uses a `switch` statement with `goto` labels (a variation of Duff's Device) to resume execution from the last `yield` point. Local variables that must persist across yields are hoisted into the generator's state struct.
 
 ## Dependencies
 

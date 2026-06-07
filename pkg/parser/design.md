@@ -4,14 +4,17 @@ The `parser` module is the foundational entry point for the Forge compiler front
 
 ## Executive Summary
 
-The `parser` module serves as the "front door" of the compilation pipeline. It takes raw source text and produces a comprehensive representation of the program's structure as defined in the [pkg/ast](../ast/design.md) module. The module is designed to handle the unique syntactic requirements of the Forge language, including significant newlines, complex f-string interpolation, and a rich set of declarative constructs for architectural specification. By producing a unified AST, it allows subsequent stages of the compiler, such as the checker and the lowerer, to operate on a consistent data model regardless of the original source file's purpose.
+The `parser` module serves as the "front door" of the compilation pipeline. It takes raw source text and produces a comprehensive representation of the program's structure as defined in the [pkg/ast](../ast/design.md) module. The module is designed to handle the unique syntactic requirements of the Forge language, including significant newlines, complex f-string interpolation, and a rich set of declarative constructs for architectural specification. By producing a unified AST, it allows subsequent stages of the compiler, such as the checker and the lowerer, to operate on a consistent data model regardless of the original source file's purpose. The parser is designed to be LL(1) where possible, using targeted backtracking only for specific grammatical ambiguities.
 
 ## File Inventory
 
-- [lexer.go](lexer.go): Implements a stateful, hand-written lexical scanner. It tokenizes the source text into a stream of `Token` objects, handles significant newlines, and collects line comments for inclusion in the final AST.
-- [parser.go](parser.go): Contains the core `Parser` implementation and the recursive descent logic for top-level declarations. It manages the parsing of `forge` blocks, classes, interfaces, enums, and complex type expressions.
+- [lexer.go](lexer.go): Implements a stateful, hand-written lexical scanner. It tokenizes the source text into a stream of `Token` objects, handles significant newlines, and collects line comments for inclusion in the final AST. It also manages complex literal scanning for triple-quoted strings and f-strings.
+- [parser.go](parser.go): Contains the core `Parser` implementation and the recursive descent logic for top-level declarations. It manages the parsing of `forge` blocks, classes, interfaces, enums, and complex type expressions. It handles the high-level structure of both `.forge` and `.fg` files.
 - [expr_parser.go](expr_parser.go): Implements the expression engine using the Pratt algorithm and the statement parser using recursive descent. It also manages specialized logic for match expressions, lambdas, and the recursive parsing of interpolated f-strings.
 - [parser.forge](parser.forge): A Forge specification file that provides a high-level architectural overview and self-documentation of the parser module.
+- [lexer_test.go](lexer_test.go): Unit tests for the lexical scanner, covering tokenization, newline handling, and literal scanning.
+- [parser_test.go](parser_test.go): Unit tests for the declaration parser, ensuring correct AST construction for various Forge constructs.
+- [expr_parser_test.go](expr_parser_test.go): Unit tests for the expression and statement parser, covering precedence, control flow, and complex expression trees.
 
 ## Architecture and Data Flow
 
@@ -38,31 +41,58 @@ The module provides two primary entry points for external callers:
 
 - **`Parser`**: The central parsing engine. While it can be instantiated manually, it is typically used through the package-level entry points. It maintains the lexer state and a list of accumulated errors.
 - **`Lexer`**: The stateful scanner responsible for tokenization. It provides `Peek` and `Next` methods for the parser to consume tokens.
-- **`ParseError`**: A specialized error type that implements the `error` interface. It includes a descriptive message and an `ast.Span` that identifies the exact location of the error in the source code.
+- **`ParseError`**: A specialized error type that implements the `error` interface. It includes a descriptive message, an `ast.Span` identifying the location, and the original source line for enhanced error reporting.
+- **`Token`**: Represents a single lexical unit, containing its kind, raw text, and source span.
 
 ## Implementation Details
 
 ### Lexical Scanning and Significant Newlines
 
-The lexer is a stateful scanner that uses a `peek`/`advance` pattern. It is responsible for identifying keywords, literals, and punctuation. A critical aspect of the Forge lexer is its handling of newlines. Newlines are preserved as tokens to separate statements, but the lexer automatically collapses multiple consecutive newlines and skips whitespace that does not contribute to the structure. This allows the parser to remain simple while supporting an ergonomic, newline-sensitive syntax.
+The lexer is a stateful scanner that uses a `peek`/`advance` pattern. It is responsible for identifying keywords, literals, and punctuation. A critical aspect of the Forge lexer is its handling of newlines. Newlines are preserved as tokens to separate statements, but the lexer automatically collapses multiple consecutive newlines and skips whitespace that does not contribute to the structure. This allows the parser to remain simple while supporting an ergonomic, newline-sensitive syntax. The lexer also collects comments into a dedicated slice, which the parser later attaches to the root `ast.File` node.
 
 ### Disambiguation and Backtracking
 
-The Forge grammar contains several ambiguities that require lookahead to resolve. The parser handles these cases using a simple but effective backtracking mechanism: it saves the current state of the `Lexer` (which is a small, copyable struct), attempts to parse a specific construct, and restores the saved state if the attempt fails. This is used in two primary scenarios:
-- **Struct Literals vs. Blocks**: When the parser encounters an identifier followed by `{`, it peeks ahead to see if the content looks like a field initializer (`name: value`) to distinguish a struct literal from a block of code.
+The Forge grammar contains several ambiguities that require lookahead to resolve. The parser handles these cases using a simple but effective backtracking mechanism: it saves the current state of the `Lexer` (which is a small, copyable struct), attempts to parse a specific construct, and restores the saved state if the attempt fails. This is used in several primary scenarios:
+- **Struct Literals vs. Blocks**: When the parser encounters an identifier followed by `{`, it peeks ahead to see if the content looks like a field initializer (`name: value`) or an empty literal `{}` to distinguish a struct literal from a block of code.
 - **Generic Calls vs. Comparisons**: The `<` operator can start a generic argument list or a comparison. The parser attempts to parse a type argument list and backtracks if it fails or if the following token is not an opening parenthesis.
+- **Why Annotations vs. Fields**: The `why` keyword can start an annotation (`why: "..."`) or be a field name (`why: Type`). The parser peeks ahead to see if a string literal follows the colon.
+- **Tuple Field Labels**: When parsing tuple types or literals, the parser checks if an identifier is followed by a colon to distinguish labeled fields from positional ones.
 
 ### Pratt Parsing for Expressions
 
-The expression parser in `expr_parser.go` implements the Pratt algorithm, also known as precedence climbing. This approach is particularly well-suited for languages with many levels of operator precedence. The parser maintains a table of precedence levels and associativity for each operator. When parsing an expression, it recursively climbs the precedence ladder, ensuring that operators are grouped correctly. Postfix operators, such as member access (`.`), function calls (`()`), and indexing (`[]`), are handled in a loop after the primary expression is parsed, allowing for arbitrary chaining of operations.
+The expression parser in `expr_parser.go` implements the Pratt algorithm, also known as precedence climbing. This approach is particularly well-suited for languages with many levels of operator precedence. The parser maintains a table of precedence levels and associativity for each operator.
 
-### Contextual Keywords
+The precedence levels are defined as follows:
+1.  **OR**: `||`
+2.  **AND**: `&&`
+3.  **Bitwise OR**: `|`
+4.  **Bitwise XOR**: `^`
+5.  **Bitwise AND**: `&`
+6.  **Equality**: `==`, `!=`
+7.  **Comparison**: `<`, `>`, `<=`, `>=`
+8.  **Shift**: `<<`, `>>`
+9.  **Additive**: `+`, `-`
+10. **Multiplicative**: `*`, `/`, `%`
+11. **Unary**: `-`, `!` (prefix)
+12. **Postfix**: `.`, `()`, `[]`, `!`, `?`
 
-To maintain a clean and ergonomic syntax, Forge treats many keywords (such as `why`, `doc`, and `source`) as "contextual." The `expectIdentLike` method allows these tokens to be used as identifiers in positions where they are not ambiguous, such as field names or parameter names. This prevents the language from having an overly restrictive set of reserved words.
+When parsing an expression, it recursively climbs the precedence ladder, ensuring that operators are grouped correctly. Postfix operators, such as member access (`.`), function calls (`()`), indexing (`[]`), unwrap (`!`), and try (`?`), are handled in a loop after the primary expression is parsed, allowing for arbitrary chaining of operations.
+
+### Contextual Keywords and Aliases
+
+To maintain a clean and ergonomic syntax, Forge treats many keywords (such as `why`, `doc`, `source`, and various annotations) as "contextual." The `expectIdentLike` method allows these tokens to be used as identifiers in positions where they are not ambiguous, such as field names or parameter names. This prevents the language from having an overly restrictive set of reserved words, which is particularly important for self-documenting `.forge` files. Additionally, `null` is treated as a keyword alias for `nil`, both mapping to the same `TNil` token kind and `ExprNil` AST node to accommodate developers from different backgrounds.
 
 ### Statement and Block Parsing
 
-Statements are parsed using recursive descent, recognizing keywords like `let`, `if`, `for`, `while`, `match`, and `return`. If no keyword is matched, the parser attempts to parse an expression statement or an assignment. Assignments desugar compound operators (like `+=`) into their binary equivalents during the parsing phase, simplifying the work for later compiler stages.
+Statements are parsed using recursive descent, recognizing keywords like `let`, `if`, `for`, `while`, `match`, `return`, `spawn`, `select`, `lock`, and `yield`. If no keyword is matched, the parser attempts to parse an expression statement or an assignment. Assignments desugar compound operators (like `+=`) into their binary equivalents during the parsing phase, simplifying the work for later compiler stages. The `match` statement supports complex pattern matching, including variant patterns, tuple patterns, and guards.
+
+### F-String Interpolation
+
+F-strings (`f"..."`) are handled by capturing the raw content in the lexer. The parser then scans this content for `{expr}` boundaries. For each expression found, it creates a new `Parser` instance to process the embedded text, and then merges the resulting AST nodes into a `StringInterpExpr`. This recursive approach allows for full expression power within interpolated strings.
+
+### Recursive Type Parsing
+
+The parser handles Forge's recursive type system through a tiered approach in `parseTypeExpr`. It first parses a "base type" (named types, sequences `[T]`, tuples `(T, U)`, etc.), then checks for optional suffixes like `?` (optional) or `|` (union), and finally checks for function type arrows `->`. This structure correctly handles precedence, such as `[T]?` being an optional sequence versus `[T?]` being a sequence of optionals.
 
 ## Dependencies
 
@@ -70,6 +100,7 @@ Statements are parsed using recursive descent, recognizing keywords like `let`, 
 
 ## Technical Debt and Future Work
 
-- **Error Recovery**: The current implementation often stops at the first encountered error. Implementing a synchronization mechanism (e.g., skipping to the next newline or closing brace) would allow the parser to report multiple errors in a single pass, improving the developer experience.
+- **Error Recovery**: The current implementation often stops at the first encountered error. Implementing a synchronization mechanism (e.g., skipping to the next forge block or closing brace) would allow the parser to report multiple errors in a single pass, improving the developer experience.
 - **Performance of Backtracking**: While copying the `Lexer` state is simple, it can be inefficient for deeply nested ambiguities. A more formal lookahead buffer or a GLR-based approach might be considered if parsing performance becomes a bottleneck.
-- **F-String Interpolation**: The recursive invocation of the parser for f-strings is powerful but creates overhead. Pre-tokenizing the interpolated parts during the initial lexing phase or using a more integrated approach could improve efficiency.
+- **Multi-line Arrays**: Some declarative constructs like `source: [...]` currently require single-line formatting due to parser limitations.
+- **Requires/Ensures Expressions**: Currently, these annotations capture raw text rather than fully parsed expression trees. Moving to a parsed representation would allow for better validation during the checking phase.

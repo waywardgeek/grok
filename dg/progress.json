@@ -35,45 +35,45 @@
       "main.go": "a386bfece72b241e11a404b97c020c412ec2998aed6284d3e7b19637e282a225"
     },
     "pkg/ast": {
-      "ast.go": "7a7691da4d7a2d9d59df92111a3b2e88739a49f43fcb82f9d8dc3d898f1253aa",
-      "desugar.go": "4a01f768cdc80ef54354ab3751415de4fb9af3b0684bdccd3ed285974a3e99cf",
-      "expr.go": "b1b65597407f5b3fe22cc4a450dbebaeca9fd75a85231fa662cb6a83e0669385"
+      "ast.go": "8652a61e075bbfd0115e390087fe3e6fe1e5ea6d09eefb622c329e259bfae538",
+      "desugar.go": "3e156d1f6eaea3405147dd4c29ea2be475255125bae709e50bb148dfb6ae57a0",
+      "expr.go": "30e7f5797e9ae016e5a40af782323f604d35fb39ba3a26001b143b3c602d7203",
+      "stdlib.go": "359fc3972d6b75c61b0f517a7187a76aa2049766b4626093dfa8b542658b5081"
     },
     "pkg/checker": {
-      "checker.go": "01e035219a1b6cc083589b3ac2e5f2913d2c41b4efeca31547539940cb7e3022",
-      "checker_test.go": "26ef3c9092863013df7aacc745b87df359f9d963002348e332b957a7aac361c3"
+      "checker.go": "60773dcb63a2032a45e0b29840716c01cfc8155b1fe25257f6d940486cc8e2c5",
+      "checker_test.go": "5b8e717138a56a655d4a3380e0285945f2a718bdd25f0a77fbd6d2ef2b07a264"
     },
     "pkg/lir": {
-      "c_backend.go": "6d92c514f65a170893ed4badf2c56150aa1a6ce1b51ca523cd617db27791b34b",
-      "c_backend_test.go": "95cfd3695a98ef102ad8635ef896605afdb865864073d267c55449b97cf78f19",
-      "dump_c_test.go": "86576a74a3845a7488afe707c61dedb2182d907cbde33261731affd6e5a5a9a4",
-      "e2e_test.go": "4e94511c1b488bd1e72c6c33abc030653eaf6058a4bcbe1a49b642fb89922bbc",
-      "go_backend.go": "e101e2d586f0fdbda07c0ab1720ffd28bcba7a611b5b8ba92c9270c68dbe5f4a",
-      "lir.go": "6cdc2259e7154526607f5f4b81b3c265fb927670b8594fe9bbd23ced2954d1ae",
-      "lower.go": "fd689d5c9f5bd42e93baf5ebe640e5b5ead641e6ffe79859a63a43893761a48d",
+      "c_backend.go": "1f53596a06bd577801042948d6a1515339816fe3e45af07939ea897682aec631",
+      "c_backend_test.go": "d04f12da520e3fd64f522f4e0058836c313e03e817dc09744b75ad3e58f4951b",
+      "e2e_test.go": "8199a20406ec18798c1d4e4938477fc24a224c85d421dcd82fb5cc58db137264",
+      "go_backend.go": "b159a106994b56e1b14fa1fa7a3e7d5d712465acbf095eb14429eb9a1509926f",
+      "lir.go": "728610ce7bd83a6f2481f60e7d5a0d2e338ff18d4a529e6e213e12e4bb16ed38",
+      "lower.go": "8c5a8d5cb17cfa1bba827ce11f9d45c820b871b08c1fef7e9cfa68ddd0f4859e",
       "lower_test.go": "e6c8201565514dd45b592342d490ebf882b54fe4b976bc1f0ce214edc50328fa",
-      "mono_test.go": "dee1f3f26859ebbc6b74ae1a6bbe50b662e227d9584d77ffaeb96ffdf166c0a1",
-      "monomorphize.go": "3a25355ea12a798ce3700ea40418b0ebf2494d5e984bfaea5fb4e23a3eeacc74",
+      "mono_test.go": "eb5913094d8be9c9e027a89a7d257fdc87c70cca33566c982eabd841791eb7d0",
+      "monomorphize.go": "5d2993354b89c29de10c9839bf8bbc8e58138ad22a9f0a978fcb58b9a43f82b6",
       "optimize.go": "0451ec86501fd1ca152a11a8e6d72b29c5dbf6f4286785de4a8830ac4027070a"
     },
     "pkg/parser": {
-      "expr_parser.go": "fecf5ad2976e5a0e9a32fe935370aeb2298e732d8cccf471586965f47f4a5dce",
-      "expr_parser_test.go": "2490a71e959e785eacd71b6ab3722ac9cca93bdd971036694d8c8dcaef1fb962",
-      "lexer.go": "34bc7a9357bac6d15f0adb26a29c6655308f683686c4a953336dab5cd0b134ce",
-      "lexer_test.go": "3e34df6bb1698964562949c9050f8eba4e28780b1689d0cd4383ae75e5cff3a3",
-      "parser.go": "c687d1ec7dfd76759047ad7f253a79aae1604a36c4162b7b78d691ea4da3dbd9",
-      "parser_test.go": "89f127a77e057659b062cdf67c4ca622014dafcfc18bd903761a25f6704f3bc9"
+      "expr_parser.go": "f96140434048c1bcf2b9c61614414043e31dec7c18c71b67eee103c311b2084e",
+      "expr_parser_test.go": "99614c17f0bbe01abac971288dbfaae5fad9e7cd5b31a849926dececae4f7928",
+      "lexer.go": "e152522655a9b6176e9ba93d7acf353b84a98830d379dadc8de29cac225246c3",
+      "lexer_test.go": "ac286fd738580f00725898c07ad91745b7fa8ee56d3eaf71aa4bac09f6e9a94b",
+      "parser.go": "48b43072608df25af9b7640042e09ebddc21511d5234969a54a1bdd9f29bb4b9",
+      "parser_test.go": "cd5856c305687a01f0487d79307dc73334d21e11d97dd0452abbad6c668f8487"
     },
     "pkg/transpiler": {
       "transpiler.go": "8eceb86477a0ce01e45312133f4daa7455a72338e594c1b57224efffb7e9385b",
       "transpiler_test.go": "2ada817bf4662394a7cf777bfc4cdb0933be060c526f4f08015af65163fcca37"
     },
     "pkg/verifier": {
-      "verifier.go": "a385e1b47e225c835db20c0004803f6874bc871ebacc79d9974573c240e8cb76",
+      "verifier.go": "3540d3054fad5262cc4d46acecc46376f4c64b242692834a7c8334a3d3a9f33d",
       "verifier_test.go": "69f368e89242c0a58c85b285e78938ebae55973e35fc91bde9da00b78f86e440"
     },
     "runtime": {
-      "forge_runtime.h": "12e1de449c84a64baa4e90238bb672d22292a7a34de9b2f4186a5aa177a486a3"
+      "forge_runtime.h": "4707c14513a7a14ef874d8ea68b4511c8268fb8281c4ec0224b7c9c9cf211b5d"
     }
   },
   "processed_files": [
@@ -110,6 +110,19 @@
     "[refined] /Users/bill/projects/clean_grok/pkg/parser/design.md",
     "[refined] /Users/bill/projects/clean_grok/pkg/transpiler/design.md",
     "[refined] /Users/bill/projects/clean_grok/pkg/verifier/design.md",
+    "[initial] /Users/bill/projects/forge/pkg/ast/design.md",
+    "[initial] /Users/bill/projects/forge/pkg/checker/design.md",
+    "[initial] /Users/bill/projects/forge/pkg/lir/design.md",
+    "[initial] /Users/bill/projects/forge/pkg/parser/design.md",
+    "[initial] /Users/bill/projects/forge/pkg/verifier/design.md",
+    "[initial] /Users/bill/projects/forge/runtime/design.md",
+    "[synthesis] project-design.md",
+    "[refined] /Users/bill/projects/forge/pkg/ast/design.md",
+    "[refined] /Users/bill/projects/forge/pkg/checker/design.md",
+    "[refined] /Users/bill/projects/forge/pkg/lir/design.md",
+    "[refined] /Users/bill/projects/forge/pkg/parser/design.md",
+    "[refined] /Users/bill/projects/forge/pkg/verifier/design.md",
+    "[refined] /Users/bill/projects/forge/runtime/design.md",
     "[initial] /Users/bill/projects/forge/pkg/ast/design.md",
     "[initial] /Users/bill/projects/forge/pkg/checker/design.md",
     "[initial] /Users/bill/projects/forge/pkg/lir/design.md",
