@@ -2450,8 +2450,8 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 
 	// Lower arguments
 	var args []LValue
-	for _, arg := range ce.Args {
-		args = append(args, l.lowerExpr(&arg))
+	for i := range ce.Args {
+		args = append(args, l.lowerExpr(&ce.Args[i]))
 	}
 
 	// Get function name
@@ -2621,8 +2621,8 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 		if _, isImport := l.importAliases[identName]; isImport {
 			// Package-qualified call — lower args and emit as LExprCall
 			var args []LValue
-			for _, arg := range mc.Args {
-				args = append(args, l.lowerExpr(&arg))
+			for i := range mc.Args {
+				args = append(args, l.lowerExpr(&mc.Args[i]))
 			}
 			funcName := identName + "." + mc.Method
 			return l.emitTemp(LExpr{
@@ -2637,10 +2637,10 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 
 	var args []LValue
 	var paramTypes []*LType
-	for _, arg := range mc.Args {
-		args = append(args, l.lowerExpr(&arg))
+	for i := range mc.Args {
+		args = append(args, l.lowerExpr(&mc.Args[i]))
 		// Capture checker-resolved param type for nil arg handling in Go backend
-		paramTypes = append(paramTypes, l.exprType(&arg))
+		paramTypes = append(paramTypes, l.exprType(&mc.Args[i]))
 	}
 
 	resultType := l.exprType(expr)
@@ -2826,19 +2826,23 @@ func (l *Lowerer) lowerTupleLit(expr *ast.Expr) LValue {
 func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue {
 	sl := dataAs[ast.StructLitExpr](expr.Data)
 	var fields []LFieldInit
-	for _, f := range sl.Fields {
-		val := l.lowerExpr(&f.Value)
-		fields = append(fields, LFieldInit{Name: f.Name, Value: val})
+	for i := range sl.Fields {
+		val := l.lowerExpr(&sl.Fields[i].Value)
+		fields = append(fields, LFieldInit{Name: sl.Fields[i].Name, Value: val})
 	}
 
 	resultType := l.exprType(expr)
 
 	// Check if this is a class (struct-literal construction for classes)
 	if _, isClass := l.classFields[sl.TypeName]; isClass {
+		var typeArgs []*LType
+		for _, ta := range sl.TypeArgs {
+			typeArgs = append(typeArgs, l.lowerTypeExpr(&ta))
+		}
 		return l.emitTemp(LExpr{
 			Kind: LExprClassAlloc,
 			Type: &LType{Kind: LTyClassHandle, Name: sl.TypeName, IsExported: l.exported[sl.TypeName]},
-			Data: &LClassAllocData{Class: sl.TypeName, Fields: fields},
+			Data: &LClassAllocData{Class: sl.TypeName, Fields: fields, TypeArgs: typeArgs},
 		})
 	}
 

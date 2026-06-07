@@ -44,79 +44,118 @@ func Monomorphize(prog *LProgram) {
 		m.collectFromStmts(prog.Functions[i].Body)
 	}
 
-	// Phase 2: Generate specialized copies
+	// Phase 2: Generate specialized copies (iterate until no new instances)
 	var newFuncs []LFuncDecl
 	var newClasses []LClassDecl
 	var newStructs []LStructDecl
 
-	// Specialize generic functions (non-method)
-	for funcName, instances := range m.funcInstances {
-		orig, ok := m.funcByName[funcName]
-		if !ok || len(orig.TypeParams) == 0 {
-			continue
-		}
-		for _, types := range instances {
-			if len(types) != len(orig.TypeParams) {
+	// Track which specializations we've already generated
+	generatedFuncs := map[string]bool{}
+	generatedClasses := map[string]bool{}
+	generatedStructs := map[string]bool{}
+
+	for {
+		newInThisRound := 0
+
+		// Specialize generic functions (non-method)
+		for funcName, instances := range m.funcInstances {
+			orig, ok := m.funcByName[funcName]
+			if !ok || len(orig.TypeParams) == 0 {
 				continue
 			}
-			subst := map[string]*LType{}
-			for i, tp := range orig.TypeParams {
-				subst[tp.Name] = types[i]
-			}
-			mangledName := mangleName(orig.Name, types)
-			spec := m.specializeFunc(orig, subst, mangledName, "")
-			newFuncs = append(newFuncs, spec)
-		}
-	}
-
-	// Specialize generic classes + their methods
-	for className, instances := range m.classInstances {
-		orig, ok := m.classByName[className]
-		if !ok || len(orig.TypeParams) == 0 {
-			continue
-		}
-		for _, types := range instances {
-			if len(types) != len(orig.TypeParams) {
-				continue
-			}
-			subst := map[string]*LType{}
-			for i, tp := range orig.TypeParams {
-				subst[tp.Name] = types[i]
-			}
-			mangledName := mangleName(orig.Name, types)
-			m.classRenames[orig.Name] = mangledName
-			spec := m.specializeClass(orig, subst, mangledName)
-			newClasses = append(newClasses, spec)
-
-			// Specialize all methods of this class
-			for _, method := range m.methodsByClass[className] {
-				methSubst := map[string]*LType{}
-				for k, v := range subst {
-					methSubst[k] = v
+			for tk, types := range instances {
+				genKey := funcName + "!" + tk
+				if generatedFuncs[genKey] {
+					continue
 				}
-				specMethod := m.specializeFunc(method, methSubst, method.Name, mangledName)
-				newFuncs = append(newFuncs, specMethod)
+				if len(types) != len(orig.TypeParams) {
+					continue
+				}
+				generatedFuncs[genKey] = true
+				newInThisRound++
+				subst := map[string]*LType{}
+				for i, tp := range orig.TypeParams {
+					subst[tp.Name] = types[i]
+				}
+				mangledName := mangleName(orig.Name, types)
+				spec := m.specializeFunc(orig, subst, mangledName, "")
+				newFuncs = append(newFuncs, spec)
+				// Re-collect from specialized body to discover transitive instantiations
+				m.collectFromStmts(spec.Body)
 			}
 		}
-	}
 
-	// Specialize generic structs
-	for structName, instances := range m.structInstances {
-		orig, ok := m.structByName[structName]
-		if !ok || len(orig.TypeParams) == 0 {
-			continue
-		}
-		for _, types := range instances {
-			if len(types) != len(orig.TypeParams) {
+		// Specialize generic classes + their methods
+		for className, instances := range m.classInstances {
+			orig, ok := m.classByName[className]
+			if !ok || len(orig.TypeParams) == 0 {
 				continue
 			}
-			subst := map[string]*LType{}
-			for i, tp := range orig.TypeParams {
-				subst[tp.Name] = types[i]
+			for tk, types := range instances {
+				genKey := className + "!" + tk
+				if generatedClasses[genKey] {
+					continue
+				}
+				if len(types) != len(orig.TypeParams) {
+					continue
+				}
+				generatedClasses[genKey] = true
+				newInThisRound++
+				subst := map[string]*LType{}
+				for i, tp := range orig.TypeParams {
+					subst[tp.Name] = types[i]
+				}
+				mangledName := mangleName(orig.Name, types)
+				m.classRenames[orig.Name] = mangledName
+				spec := m.specializeClass(orig, subst, mangledName)
+				newClasses = append(newClasses, spec)
+
+				// Specialize all methods of this class
+				for _, method := range m.methodsByClass[className] {
+					methKey := className + "." + method.Name + "!" + tk
+					if generatedFuncs[methKey] {
+						continue
+					}
+					generatedFuncs[methKey] = true
+					methSubst := map[string]*LType{}
+					for k, v := range subst {
+						methSubst[k] = v
+					}
+					specMethod := m.specializeFunc(method, methSubst, method.Name, mangledName)
+					newFuncs = append(newFuncs, specMethod)
+					m.collectFromStmts(specMethod.Body)
+				}
 			}
-			mangledName := mangleName(orig.Name, types)
-			spec := m.specializeStruct(orig, subst, mangledName)
-			newStructs = append(newStructs, spec)
+		}
+
+		// Specialize generic structs
+		for structName, instances := range m.structInstances {
+			orig, ok := m.structByName[structName]
+			if !ok || len(orig.TypeParams) == 0 {
+				continue
+			}
+			for tk, types := range instances {
+				genKey := structName + "!" + tk
+				if generatedStructs[genKey] {
+					continue
+				}
+				if len(types) != len(orig.TypeParams) {
+					continue
+				}
+				generatedStructs[genKey] = true
+				newInThisRound++
+				subst := map[string]*LType{}
+				for i, tp := range orig.TypeParams {
+					subst[tp.Name] = types[i]
+				}
+				mangledName := mangleName(orig.Name, types)
+				spec := m.specializeStruct(orig, subst, mangledName)
+				newStructs = append(newStructs, spec)
+			}
+		}
+
+		if newInThisRound == 0 {
+			break
 		}
 	}
 

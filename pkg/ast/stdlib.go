@@ -103,7 +103,97 @@ func MergeStdlib(file *File, stdFile *File) {
 		}
 	}
 
-	if len(stdIfaces) == 0 && len(stdClasses) == 0 && len(stdFuncs) == 0 {
+	// Collect stdlib relations whose participant types are being merged.
+	// This handles e.g. "relation HashedList Dict<V>:d owns [DictEntry<V>:d]"
+	// which gives Dict its fields via the HashedList interface.
+	mergedClasses := make(map[string]bool)
+	for _, cls := range stdClasses {
+		mergedClasses[cls.Name] = true
+	}
+
+	var stdRelations []RelationDecl
+	for _, block := range stdFile.Blocks {
+		for _, rel := range block.Relations {
+			parentName := rel.Parent.TypeName
+			childName := rel.Child.TypeName
+			if mergedClasses[parentName] || mergedClasses[childName] {
+				stdRelations = append(stdRelations, rel)
+				// Also ensure the interface hint is merged
+				if rel.Hint != "" && !usedIfaces[rel.Hint] {
+					usedIfaces[rel.Hint] = true
+					if iface, ok := stdIfaceMap[rel.Hint]; ok {
+						stdIfaces = append(stdIfaces, iface)
+						// Transitively pull embedded interfaces
+						for _, emb := range iface.Embeds {
+							if !usedIfaces[emb.Name] {
+								usedIfaces[emb.Name] = true
+								if embIface, ok := stdIfaceMap[emb.Name]; ok {
+									stdIfaces = append(stdIfaces, embIface)
+								}
+							}
+						}
+					}
+				}
+				// Ensure both participant types are merged
+				if !mergedClasses[parentName] {
+					if cls, ok := stdClassMap[parentName]; ok {
+						mergedClasses[parentName] = true
+						stdClasses = append(stdClasses, cls)
+					}
+				}
+				if !mergedClasses[childName] {
+					if cls, ok := stdClassMap[childName]; ok {
+						mergedClasses[childName] = true
+						stdClasses = append(stdClasses, cls)
+					}
+				}
+			}
+		}
+	}
+
+	// Transitively pull in functions called by already-merged functions.
+	// E.g. dict_set calls sym() which must also be merged.
+	mergedFuncs := make(map[string]bool)
+	for _, fn := range stdFuncs {
+		mergedFuncs[fn.Name] = true
+	}
+	changed := true
+	for changed {
+		changed = false
+		for name, fn := range stdFuncMap {
+			if mergedFuncs[name] {
+				continue
+			}
+			// Check if any merged function calls this one
+			for _, mfn := range stdFuncs {
+				calls := make(map[string]bool)
+				if mfn.Body != nil {
+					collectFuncCallNames(mfn.Body.Stmts, calls)
+				}
+				if calls[name] {
+					mergedFuncs[name] = true
+					stdFuncs = append(stdFuncs, fn)
+					changed = true
+					// Also merge return type classes
+					if fn.ReturnType != nil {
+						retNames := make(map[string]bool)
+						collectTypeNames(fn.ReturnType, retNames)
+						for rn := range retNames {
+							if cls, ok := stdClassMap[rn]; ok {
+								if !mergedClasses[rn] {
+									mergedClasses[rn] = true
+									stdClasses = append(stdClasses, cls)
+								}
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+	}
+
+	if len(stdIfaces) == 0 && len(stdClasses) == 0 && len(stdFuncs) == 0 && len(stdRelations) == 0 {
 		return
 	}
 
@@ -118,6 +208,9 @@ func MergeStdlib(file *File, stdFile *File) {
 		}
 		if len(stdFuncs) > 0 {
 			file.Blocks[0].Functions = append(stdFuncs, file.Blocks[0].Functions...)
+		}
+		if len(stdRelations) > 0 {
+			file.Blocks[0].Relations = append(stdRelations, file.Blocks[0].Relations...)
 		}
 	}
 }
@@ -296,6 +389,12 @@ func collectFuncCallNamesExpr(expr *Expr, names map[string]bool) {
 			collectFuncCallNamesExpr(&d.Receiver, names)
 			for i := range d.Args {
 				collectFuncCallNamesExpr(&d.Args[i], names)
+			}
+		}
+	case ExprStructLit:
+		if d, ok := expr.Data.(*StructLitExpr); ok {
+			for i := range d.Fields {
+				collectFuncCallNamesExpr(&d.Fields[i].Value, names)
 			}
 		}
 	}

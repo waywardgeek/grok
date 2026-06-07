@@ -919,6 +919,7 @@ func (c *Checker) checkExpr(expr *ast.Expr) *Type {
 	}
 	t := c.inferExpr(expr)
 	expr.ResolvedType = t
+
 	return t
 }
 
@@ -2857,21 +2858,21 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 			posIdx = len(info.FieldOrder) // prevent further positional
 		}
 	}
-	for _, f := range sl.Fields {
-		valType := c.checkExpr(&f.Value)
+	for i := range sl.Fields {
+		valType := c.checkExpr(&sl.Fields[i].Value)
 		// Try both the literal field name and lowercase version (Forge uses lowercase,
 		// struct literals may use Go-exported names)
-		fieldType, ok := info.Fields[f.Name]
+		fieldType, ok := info.Fields[sl.Fields[i].Name]
 		if !ok {
-			lower := strings.ToLower(f.Name[:1]) + f.Name[1:]
+			lower := strings.ToLower(sl.Fields[i].Name[:1]) + sl.Fields[i].Name[1:]
 			fieldType, ok = info.Fields[lower]
 		}
 		if ok {
 			if !c.assignableTo(valType, fieldType) && valType.Kind != TyUnknown && fieldType.Kind != TyUnknown {
-				c.error(expr.Span, "field %s: expected %s, got %s", f.Name, fieldType, valType)
+				c.error(expr.Span, "field %s: expected %s, got %s", sl.Fields[i].Name, fieldType, valType)
 			}
 		} else {
-			c.error(expr.Span, "struct %s has no field %q", sl.TypeName, f.Name)
+			c.error(expr.Span, "struct %s has no field %q", sl.TypeName, sl.Fields[i].Name)
 		}
 	}
 	return info.Type
