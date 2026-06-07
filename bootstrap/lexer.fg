@@ -118,6 +118,15 @@ forge lexer {
 
   // ---- Lexer ----
 
+  // LexerState: snapshot of lexer position for backtracking.
+  // Value type — copied cheaply for save/restore.
+  struct LexerState {
+    pos: i32
+    line: i32
+    column: i32
+    peeked_token: Token?
+  }
+
   class Lexer {
     src: string
     filename: Sym?
@@ -129,6 +138,22 @@ forge lexer {
     annot_keywords: Dict<TokenKind>?
   }
   relation ArrayList Lexer:lc owns [Comment:lc]
+
+  func Lexer.save_state(self) -> LexerState {
+    return LexerState {
+      pos: self.pos,
+      line: self.line,
+      column: self.column,
+      peeked_token: self.peeked_token
+    }
+  }
+
+  func Lexer.restore_state(self, state: LexerState) {
+    self.pos = state.pos
+    self.line = state.line
+    self.column = state.column
+    self.peeked_token = state.peeked_token
+  }
 
   func new_lexer(src_text: string, filename: Sym) -> Lexer {
     let lex = Lexer {
