@@ -51,10 +51,10 @@ forge bootstrap {
        combines them. All Parser methods, helper functions, and constants from
        both files are available to each other.
 
-    6. Keyword lookup uses if-else chains, not Dict. The C backend needs no
-       runtime initialization for keyword tables. Dict/HashedList would require
-       constructor calls before first use. If-else chains compile to direct
-       string comparisons.
+    6. Keyword lookup uses Dict<TokenKind> on the Lexer. The dicts are
+       initialized in new_lexer() via init_keywords() and init_annot_keywords().
+       O(1) hash lookup via Sym keys. No global mutable state — each Lexer
+       instance owns its keyword tables.
 
     7. Token.text preserves original source text. Even for keywords, text contains
        the matched string ("func", "class", etc.). The parser converts to Sym via
