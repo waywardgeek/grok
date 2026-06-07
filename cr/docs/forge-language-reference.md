@@ -1,16 +1,26 @@
 # Forge Language Reference (Bootstrap Edition)
 
-Concise reference for writing Forge code. Based on parser, checker, and test files as of 2026-06-06.
+Concise reference for writing Forge code. Based on parser, checker, and test files as of 2026-06-07.
+
+## Bootstrap Philosophy
+
+**The #1 goal of the bootstrap is to make Forge as awesome as Go — maybe even better — for writing compilers.** The bootstrap compiler is being ported from Go to Forge. Every time we hit jank, friction, or missing features, we fix the compiler rather than work around the issue. The bootstrap process is the design feedback loop that makes Forge great.
+
+**Key principles:**
+- Don't work around language issues — fix them in the compiler
+- If something feels janky, that's a signal to improve the language
+- The bootstrap .fg files (ast.fg, lexer.fg, parser.fg, expr_parser.fg) are the primary test of language ergonomics
+- Target: C backend via monomorphization (not Go backend)
 
 ## File Structure
 
 ```forge
 forge BlockName {
-  // types, functions, relations, impls
+  // types, functions, relations, impls, constants
 }
 ```
 
-Each `.fg` file has one or more `forge` blocks.
+Each `.fg` file has one or more `forge` blocks. Multiple `.fg` files can be compiled together: `forge compile --c file1.fg file2.fg ...` — they are merged into a single compilation unit.
 
 ## Primitives
 
@@ -153,12 +163,24 @@ type Name = string
 type Callback = fn(i32) -> bool
 ```
 
-## Variables
+## Variables & Constants
 
 ```forge
 let x = 42              // immutable
 let mut y: i32 = 0      // mutable, typed
 ```
+
+**Top-level constants** can be declared directly inside `forge` blocks:
+
+```forge
+forge parser {
+  let PREC_NONE: i32 = 0
+  let PREC_OR: i32 = 1
+  // ...
+}
+```
+
+These compile to `static` globals in C.
 
 ## Control Flow
 
@@ -462,4 +484,21 @@ These are for human/AI understanding, not runtime behavior.
 - **No ternary if-expression** — use `let mut x = ...; if cond { x = a } else { x = b }`.
 - **`?` returns optional** — after `let x = foo()?`, `x` is `T?`, not `T`. Use `x!` to unwrap.
 - **`forge fmt` lexer bug** — keywords inside string literals are tokenized as keywords, causing parse failures on strings containing words like `doc`, `source`, etc.
-- **Checker warnings for cross-file refs** — the checker prints "undefined variable" warnings for symbols defined in other `.fg` files. These are non-fatal; the lowerer proceeds.
+- **Checker warnings for cross-file refs** — the checker prints "undefined variable" warnings for symbols defined in other `.fg` files (especially `self` in methods). These are non-fatal; the lowerer proceeds.
+- **No `is` operator** — `expr.kind is Variant` doesn't exist. Use a helper function with `match` or a `match` expression directly.
+- **Enum variant construction** — must use positional args: `Variant(a, b, c)`. Named args like `Variant(x: a, y: b)` are not supported in call-syntax construction (use struct literal syntax `Struct { x: a }` for structs only).
+- **`append(slice, item)` builtin** — exists for plain slices; for relation-owned lists use `array_append<P,C>(parent, child)`.
+
+## Bootstrap Status
+
+**Completed .fg files**: `bootstrap/ast.fg`, `bootstrap/lexer.fg`, `bootstrap/parser.fg`, `bootstrap/expr_parser.fg`
+
+**Compilation**: `forge compile --c bootstrap/ast.fg bootstrap/lexer.fg bootstrap/parser.fg bootstrap/expr_parser.fg` produces ~6,149 lines of C. Checker warnings are non-fatal.
+
+**Next to port**: checker.fg, lowerer.fg, then remaining compiler passes.
+
+**Key design rules for bootstrap code**:
+- Classes for most things, structs only for simple value types (Pos, Span, LexerState)
+- ArrayList relations for parent→child ownership
+- Dict<V> for hash tables, Sym for identifiers (hash once)
+- All parameters must be named: `func foo(x: i32)` not `func foo(i32)`
