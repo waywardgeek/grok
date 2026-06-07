@@ -90,6 +90,71 @@ forge AST {
     Each pass generates AST consumed by later passes and the checker.
   """
 
+  doc "Invariants — Pointer Stability": """
+    CRITICAL: Expr and Stmt are VALUE TYPES (structs), not pointers.
+
+    Many containing structs store Expr by value, not *Expr:
+    - CallExpr.Func: Expr (value)
+    - CallExpr.Args: []Expr (slice of values)
+    - StructLitField.Value: Expr (value)
+    - AssignStmt.Target/Value: Expr (value)
+    - BinaryExpr.Left/Right: Expr (value)
+    - TupleLitExpr.Elems, ListLitExpr.Elems: []Expr (slice of values)
+
+    Some store *Expr (pointer):
+    - VarDeclStmt.Value: *Expr (pointer — shared across checker/lowerer)
+    - ReturnStmt.Value: *Expr (pointer)
+
+    DANGER: Go's `for _, x := range slice` copies each element. If you take
+    `&x`, you get a pointer to a LOCAL COPY, not to the slice element. The
+    checker annotates ResolvedType on Expr pointers. If the checker uses
+    `&slice[i]` but the lowerer uses `&x` from a range loop, the lowerer
+    reads a different Expr whose ResolvedType was never set.
+
+    RULE: Always use `for i := range slice` with `&slice[i]` when you need
+    a stable pointer to an Expr inside a slice. Never use `for _, x := range`
+    and then `&x` for any value-type AST node.
+  """
+
+  doc "Invariants — Data Field and dataAs": """
+    Expr.Data and Stmt.Data are `any` (interface) fields storing typed payloads.
+    The parser stores POINTERS: e.g., &ast.CallExpr{...} into Expr.Data.
+    Accessing via expr.Data.(*ast.CallExpr) returns the original pointer.
+
+    DANGER: The lowerer's dataAs[T](data any) helper has a `case T: return &v`
+    fallback that returns a pointer to a LOCAL COPY when Data stores a value
+    instead of a pointer. Prefer direct type assertion expr.Data.(*Type) when
+    pointer stability matters.
+  """
+
+  doc "Invariants — Checker Annotations": """
+    The checker annotates AST nodes IN PLACE via pointer:
+    - Expr.ResolvedType: set by checkExpr(expr *Expr) to *checker.Type
+    - CallExpr.InferredTypeArgs: set during generic call resolution
+    - VarDeclStmt.Value.ResolvedType: set for declared type propagation
+
+    These annotations flow from checker to lowerer via shared AST pointers.
+    Any code between checker and lowerer that copies Expr by value breaks
+    this contract. Pipeline: Parse → MergeStdlib → DesugarAll → Check →
+    MergeFiles → Lower.
+
+    MergeFiles copies ForgeBlock values but Functions slice headers still
+    point to the same backing array. FuncDecl.Body is *Block (pointer).
+    Safe AS LONG AS nobody copies individual Expr values from their structs.
+  """
+
+  doc "Invariants — Desugaring Order": """
+    The five desugar passes MUST run in this order:
+    1. InterfaceEmbeds (flatten embedded interfaces)
+    2. InterfaceFields (field → getter/setter methods)
+    3. Relations (inject fields + impl blocks)
+    4. Destructors (generate destroy methods from owns relations)
+    5. DefaultImpls (extract interface methods to top-level functions)
+
+    Each pass generates AST consumed by later passes. Running out of order
+    produces silent failures. All desugar runs BEFORE the checker.
+  """
+
   doc "Technical Debt": """
     - No semantic validation: no checks for circular interface inheritance or
     duplicate fields at the AST level
@@ -230,6 +295,7 @@ forge AST {
 
   struct IntLitExpr {
     Value: string
+    TypeHint: string
   }
 
   struct FloatLitExpr {
@@ -345,6 +411,7 @@ forge AST {
   struct StructLitExpr {
     TypeName: string
     Fields: [StructLitField]
+    TypeArgs: [TypeExpr]
   }
 
   struct StringInterpExpr {
@@ -458,6 +525,7 @@ forge AST {
     Guard: Expr?
     Body: Block
     Span: Span
+    Patterns: [Pattern]
   }
 
   // optional guard clause: `if <expr>`
@@ -582,6 +650,8 @@ forge AST {
     GuardedBy: string
     Why: string
     Span: Span
+    Default: Expr?
+    IsPublic: bool
   }
 
   struct ClassDecl {
@@ -749,6 +819,7 @@ forge AST {
     Source: [string]
     Fake: string
     Span: Span
+    Constants: [ConstDecl]
   }
 
   struct Comment {
@@ -775,6 +846,14 @@ forge AST {
 
   pub func DesugarDestructors(file: File?)
 
+  pub struct ConstDecl {
+    IsPublic: bool
+    Name: string
+    Span: Span
+    Type: TypeExpr?
+    Value: Expr
+  }
+
   source: ["ast.go", "expr.go", "desugar.go"]
 }
 // --- index ---
@@ -785,7 +864,7 @@ forge AST {
 // file: ast.go
 //
 // DocComment returns the contiguous block of comments immediately preceding
-// func (f *File) DocComment(line int) []Comment    :358
+// func (f *File) DocComment(line int) []Comment    :369
 //
 // file: expr.go
 //
@@ -822,5 +901,5 @@ forge AST {
 // func DesugarDestructors(file *File)    :480
 //
 // concrete class names from the relation.
-// func rewriteFieldType(te TypeExpr, typeParams []TypeParam, rel RelationDecl) TypeExpr    :554
+// func rewriteFieldType(te TypeExpr, typeParams []TypeParam, rel RelationDecl) TypeExpr    :559
 

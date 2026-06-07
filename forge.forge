@@ -92,18 +92,27 @@ forge Forge {
     depending on runtime macros for slices, optionals, errors, unions.
   """
 
-  doc "GDD Methodology": """
-    .forge files are the primary design artifact — machine-verifiable understanding.
-    AI writes, human reviews 100%. Implementation language naming conventions
-    (PascalCase for Go). Cross-file public concepts only.
+  doc "UDD Methodology": """
+    Understanding-Driven Development (UDD) — formerly Grok-Driven Development.
+    .forge files are the primary design artifact: compressed understanding that
+    fits in AI context for any system size. Code is a projection of understanding.
+
+    Key properties:
+    - AI writes .forge files as post-process, human reviews them
+    - Structural verifier catches signature/type drift at commit time
+    - .forge files replace design.md — they have a forcing function for accuracy
+      (AI is the primary consumer; stale .forge → wrong design decisions)
+    - Read .forge BEFORE modifying source in that directory
+    - Zone 2 function index enables surgical file reads (line number jumps)
 
     Three zones in .forge files:
-    1. Human-curated declarations + doc blocks (the "why" and "what")
+    1. Human-reviewed declarations + doc blocks (the "why" and "what")
     2. Auto-generated function index (forge update)
     3. Auto-generated dependencies (forge update)
 
-    doc/why annotations carry architectural narrative.
-    Structural declarations carry verifiable contract.
+    Critical addition: doc "Invariants" blocks capture operational contracts
+    that prevent cross-session rediscovery of module behaviors. These are
+    the knowledge that, if lost, causes multi-iteration debugging cycles.
   """
 
   doc "Module Map": """

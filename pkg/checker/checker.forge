@@ -212,6 +212,43 @@ forge Checker {
     - Cascade/Expr: check inner expression(s)
   """
 
+  doc "Invariants — Two-Phase Checking": """
+    CheckFile is split into two phases:
+    1. registerForgeBlock: registers all types/functions/constants across ALL
+       blocks. This must complete for all blocks before phase 2 starts, so
+       cross-block type references resolve correctly in multi-file compilation.
+    2. checkForgeBlockBodies: checks function/method bodies.
+
+    Phase 1 uses `for _, f := range block.Functions` (copies ok — only reads
+    names/types, doesn't annotate Expr nodes).
+    Phase 2 uses `for i := range block.Functions` with `&block.Functions[i]`
+    (pointer into slice — REQUIRED because checkExpr annotates ResolvedType
+    on Expr nodes reached through the FuncDecl's Body pointer).
+  """
+
+  doc "Invariants — ResolvedType Contract": """
+    checkExpr(expr *Expr) sets expr.ResolvedType = *checker.Type on every
+    expression it visits. This is the sole mechanism for type information
+    to flow from checker to lowerer.
+
+    The lowerer reads ResolvedType via exprType(expr *Expr). If ResolvedType
+    is nil, the lowerer falls back to LTyAny (void* in C), which causes
+    type errors in generated code.
+
+    RULE: Every path through checkExpr must set expr.ResolvedType before
+    returning. Every path in the lowerer that accesses an Expr must use
+    the SAME pointer the checker annotated (see AST Pointer Stability
+    invariants).
+
+    Special cases where checker also annotates sub-expressions:
+    - Binary coercion: b.Left.ResolvedType / b.Right.ResolvedType set
+      to widened type for numeric literal operands
+    - Call args: call.Args[i].ResolvedType set to param type (index-based!)
+    - Method args: mc.Args[i].ResolvedType set to param type (index-based!)
+    - Struct lit fields: sl.Fields[i].Value checked via &sl.Fields[i].Value
+    - VarDecl: decl.Value.ResolvedType set to declared type when compatible
+  """
+
   doc "Known Limitations": """
     - No error recovery: first error stops checking that branch
     - Cast only supports numeric ↔ numeric
@@ -308,8 +345,8 @@ forge Checker {
 
   // ---- Scope ----
   class Scope {
-    parent: Scope?
     why: "Tracks which variables were declared with 'let mut'."
+    parent: Scope?
     func Define(mut self, name: string, typ: Type?)
     func DefineMut(mut self, name: string, typ: Type?)
       why: "Defines a mutable variable — adds to both vars and mutables maps."
@@ -333,6 +370,7 @@ forge Checker {
     Methods: map[string]Type?
     Variants: map[string]VariantInfo?
     GuardedFields: map[string]string
+    FieldOrder: [string]
   }
 
   class Registry {
@@ -409,201 +447,214 @@ forge Checker {
 //
 // file: checker.go
 //
-// func (t *Type) String() string    :64
+// func (t *Type) String() string    :65
 //
-// func IntType(bits int) *Type    :152
+// func IntType(bits int) *Type    :157
 //
-// func UintType(bits int) *Type    :153
+// func UintType(bits int) *Type    :158
 //
-// func FloatType(bits int) *Type    :154
+// func FloatType(bits int) *Type    :159
 //
-// func ListType(elem *Type) *Type    :155
+// func ListType(elem *Type) *Type    :160
 //
-// func MapType(key, val *Type) *Type    :156
+// func MapType(key, val *Type) *Type    :161
 //
-// func OptionalType(elem *Type) *Type    :157
+// func OptionalType(elem *Type) *Type    :162
 //
 // Equal checks structural type equality.
-// func (t *Type) Equal(other *Type) bool    :160
+// func (t *Type) Equal(other *Type) bool    :165
 //
 // numericWidens checks if 'from' can implicitly widen to 'to'.
-// func numericWidens(from, to *Type) bool    :209
+// func numericWidens(from, to *Type) bool    :214
 //
 // coerceNumeric returns the wider type if one side can widen to the other, else nil.
-// func coerceNumeric(left, right *Type) *Type    :227
+// func coerceNumeric(left, right *Type) *Type    :232
 //
 // IsNumeric returns true for int, uint, and float types.
-// func (t *Type) IsNumeric() bool    :247
+// func (t *Type) IsNumeric() bool    :252
 //
 // IsInteger returns true for int and uint types.
-// func (t *Type) IsInteger() bool    :252
+// func (t *Type) IsInteger() bool    :257
 //
-// func NewScope(parent *Scope) *Scope    :265
+// func NewScope(parent *Scope) *Scope    :270
 //
-// func (s *Scope) Define(name string, typ *Type)    :269
+// func (s *Scope) Define(name string, typ *Type)    :274
 //
-// func (s *Scope) DefineMut(name string, typ *Type)    :273
+// func (s *Scope) DefineMut(name string, typ *Type)    :278
 //
-// func (s *Scope) IsMutable(name string) bool    :278
+// func (s *Scope) IsMutable(name string) bool    :283
 //
-// func (s *Scope) Lookup(name string) *Type    :288
+// func (s *Scope) Lookup(name string) *Type    :293
 //
-// func NewRegistry() *Registry    :320
+// func NewRegistry() *Registry    :326
 //
-// func (r *Registry) Register(name string, info *TypeInfo)    :324
+// func (r *Registry) Register(name string, info *TypeInfo)    :330
 //
-// func (r *Registry) Lookup(name string) *TypeInfo    :328
+// func (r *Registry) Lookup(name string) *TypeInfo    :334
 //
-// func (e *CheckError) Error() string    :340
+// func (e *CheckError) Error() string    :346
 //
 // New creates a new type checker.
-// func New() *Checker    :366
+// func New() *Checker    :372
 //
 // Errors returns all accumulated type errors.
-// func (c *Checker) Errors() []error    :395
+// func (c *Checker) Errors() []error    :394
+//
+// registerBuiltins defines all built-in functions in the current scope.
+// func (c *Checker) registerBuiltins()    :399
 //
 // CheckModuleFile parses, checks, and caches a .fg module file.
-// func (c *Checker) CheckModuleFile(importPath string, fromSpan ast.Span) *ModuleExports    :401
+// func (c *Checker) CheckModuleFile(importPath string, fromSpan ast.Span) *ModuleExports    :454
 //
-// func (c *Checker) error(span ast.Span, msg string, args ...any)    :508
+// func (c *Checker) error(span ast.Span, msg string, args ...any)    :557
 //
-// func (c *Checker) pushScope()    :515
+// func (c *Checker) pushScope()    :564
 //
-// func (c *Checker) popScope()    :519
+// func (c *Checker) popScope()    :568
 //
 // resolveTypeExpr converts an AST TypeExpr to a checker Type.
-// func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type    :524
+// func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type    :573
 //
-// func (c *Checker) resolveNamedType(name string, args []ast.TypeExpr) *Type    :583
+// func (c *Checker) resolveNamedType(name string, args []ast.TypeExpr) *Type    :632
 //
 // assignableTo checks if 'from' type can be used where 'to' type is expected.
-// func (c *Checker) assignableTo(from, to *Type) bool    :642
+// func (c *Checker) assignableTo(from, to *Type) bool    :693
 //
 // substituteType replaces type variables in a type according to a substitution map.
-// func substituteType(t *Type, subst map[string]*Type) *Type    :736
+// func substituteType(t *Type, subst map[string]*Type) *Type    :791
 //
 // inferTypeArgs infers generic type arguments from actual argument types.
-// func (c *Checker) inferTypeArgs(fnType *Type, argTypes []*Type) map[string]*Type    :782
+// func (c *Checker) inferTypeArgs(fnType *Type, argTypes []*Type) map[string]*Type    :837
 //
 // matchTypeVars recursively walks a parameter type and an argument type in parallel,
-// func matchTypeVars(param, arg *Type, subst map[string]*Type)    :807
+// func matchTypeVars(param, arg *Type, subst map[string]*Type)    :862
 //
-// func (c *Checker) checkExpr(expr *ast.Expr) *Type    :861
+// func (c *Checker) checkExpr(expr *ast.Expr) *Type    :916
 //
-// func (c *Checker) inferExpr(expr *ast.Expr) *Type    :870
+// func (c *Checker) inferExpr(expr *ast.Expr) *Type    :926
 //
-// func (c *Checker) checkUnary(expr *ast.Expr) *Type    :935
+// func (c *Checker) checkUnary(expr *ast.Expr) *Type    :995
 //
-// func (c *Checker) checkBinary(expr *ast.Expr) *Type    :955
+// func (c *Checker) checkBinary(expr *ast.Expr) *Type    :1015
 //
-// func (c *Checker) checkCall(expr *ast.Expr) *Type    :1056
+// func (c *Checker) checkCall(expr *ast.Expr) *Type    :1116
 //
-// func (c *Checker) checkMethodCall(expr *ast.Expr) *Type    :1170
+// func (c *Checker) checkMethodCall(expr *ast.Expr) *Type    :1230
 //
 // checkBuiltinMethod resolves methods on built-in types (string, list, map).
-// func (c *Checker) checkBuiltinMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1235
+// func (c *Checker) checkBuiltinMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1295
 //
-// func (c *Checker) checkStringMethod(method string, args []ast.Expr, expr *ast.Expr) *Type    :1249
+// func (c *Checker) checkStringMethod(method string, args []ast.Expr, expr *ast.Expr) *Type    :1309
 //
-// func (c *Checker) checkListMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1297
+// func (c *Checker) checkListMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1357
 //
-// func (c *Checker) checkMapMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1334
+// func (c *Checker) checkMapMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1394
 //
-// func (c *Checker) checkChannelMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1361
+// func (c *Checker) checkChannelMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type    :1421
 //
 // Helper: check expected arg count
-// func (c *Checker) expectArgs(method string, args []ast.Expr, expected int, expr *ast.Expr)    :1383
+// func (c *Checker) expectArgs(method string, args []ast.Expr, expected int, expr *ast.Expr)    :1443
 //
 // Helper: check arg type
-// func (c *Checker) expectArgType(method string, arg *ast.Expr, idx int, expected *Type)    :1390
+// func (c *Checker) expectArgType(method string, arg *ast.Expr, idx int, expected *Type)    :1450
 //
 // extractLockName returns the name of the lock expression for guarded_by tracking.
-// func (c *Checker) extractLockName(expr *ast.Expr) string    :1399
+// func (c *Checker) extractLockName(expr *ast.Expr) string    :1459
 //
-// func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type    :1410
+// func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type    :1470
 //
-// func (c *Checker) checkIndex(expr *ast.Expr) *Type    :1444
+// func (c *Checker) checkIndex(expr *ast.Expr) *Type    :1504
 //
-// func (c *Checker) checkSlice(expr *ast.Expr) *Type    :1469
+// func (c *Checker) checkSlice(expr *ast.Expr) *Type    :1529
 //
-// func (c *Checker) checkListLit(expr *ast.Expr) *Type    :1494
+// func (c *Checker) checkListLit(expr *ast.Expr) *Type    :1554
 //
-// func (c *Checker) checkTupleLit(expr *ast.Expr) *Type    :1509
+// func (c *Checker) checkTupleLit(expr *ast.Expr) *Type    :1569
 //
-// func (c *Checker) checkMapLit(expr *ast.Expr) *Type    :1519
+// func (c *Checker) checkMapLit(expr *ast.Expr) *Type    :1579
 //
-// func (c *Checker) checkMatchExpr(expr *ast.Expr) *Type    :1539
+// func (c *Checker) checkMatchExpr(expr *ast.Expr) *Type    :1599
 //
-// func (c *Checker) checkCast(expr *ast.Expr) *Type    :1579
+// func (c *Checker) checkCast(expr *ast.Expr) *Type    :1639
 //
-// func (c *Checker) checkUnwrap(expr *ast.Expr) *Type    :1594
+// func (c *Checker) checkUnwrap(expr *ast.Expr) *Type    :1654
 //
 // isErrorType returns true if the type represents Go's error interface.
-// func isErrorType(t *Type) bool    :1607
+// func isErrorType(t *Type) bool    :1667
 //
-// func (c *Checker) checkTry(expr *ast.Expr) *Type    :1617
+// func (c *Checker) checkTry(expr *ast.Expr) *Type    :1677
 //
-// func (c *Checker) checkLambda(expr *ast.Expr) *Type    :1658
+// func (c *Checker) checkLambda(expr *ast.Expr) *Type    :1718
 //
-// func (c *Checker) checkStmt(stmt *ast.Stmt)    :1693
+// func (c *Checker) checkStmt(stmt *ast.Stmt)    :1753
 //
-// func (c *Checker) checkVarDecl(stmt *ast.Stmt)    :1766
+// func (c *Checker) checkVarDecl(stmt *ast.Stmt)    :1826
 //
-// func (c *Checker) checkAssign(stmt *ast.Stmt)    :1841
+// func (c *Checker) checkAssign(stmt *ast.Stmt)    :1901
 //
-// func (c *Checker) checkReturn(stmt *ast.Stmt)    :1857
+// func (c *Checker) checkReturn(stmt *ast.Stmt)    :1917
 //
-// func (c *Checker) checkIf(stmt *ast.Stmt)    :1873
+// func (c *Checker) checkIf(stmt *ast.Stmt)    :1933
 //
-// func (c *Checker) checkFor(stmt *ast.Stmt)    :1892
+// func (c *Checker) checkFor(stmt *ast.Stmt)    :1952
 //
-// func (c *Checker) checkWhile(stmt *ast.Stmt)    :1925
+// func (c *Checker) checkWhile(stmt *ast.Stmt)    :1985
 //
-// func (c *Checker) checkMatch(stmt *ast.Stmt)    :1936
+// func (c *Checker) checkMatch(stmt *ast.Stmt)    :1996
 //
 // satisfiesConstraint checks whether a concrete type satisfies a named constraint.
-// func (c *Checker) satisfiesConstraint(t *Type, constraint string) bool    :2023
+// func (c *Checker) satisfiesConstraint(t *Type, constraint string) bool    :2083
 //
 // bindUnionPattern handles match arms for union types. PatIdent names are
-// func (c *Checker) bindUnionPattern(pat *ast.Pattern, matchType *Type)    :2049
+// func (c *Checker) bindUnionPattern(pat *ast.Pattern, matchType *Type)    :2109
 //
 // bindPattern introduces variables from a pattern into the current scope.
-// func (c *Checker) bindPattern(pat *ast.Pattern, matchType *Type)    :2083
+// func (c *Checker) bindPattern(pat *ast.Pattern, matchType *Type)    :2143
 //
-// func (c *Checker) checkBlock(block *ast.Block)    :2128
+// func (c *Checker) checkBlock(block *ast.Block)    :2188
 //
 // CheckFile type-checks an entire AST file.
-// func (c *Checker) CheckFile(file *ast.File)    :2139
+// func (c *Checker) CheckFile(file *ast.File)    :2199
 //
-// func (c *Checker) checkForgeBlock(block *ast.ForgeBlock)    :2148
+// registerForgeBlock registers all types, functions, constants, and imports
+// func (c *Checker) registerForgeBlock(block *ast.ForgeBlock)    :2217
 //
-// func (c *Checker) registerStruct(s *ast.StructDecl)    :2240
+// checkForgeBlockBodies checks function and method bodies in a block.
+// func (c *Checker) checkForgeBlockBodies(block *ast.ForgeBlock)    :2301
 //
-// func (c *Checker) registerClass(cls *ast.ClassDecl)    :2255
+// func (c *Checker) registerStruct(s *ast.StructDecl)    :2342
 //
-// func (c *Checker) registerEnum(e *ast.EnumDecl)    :2303
+// func (c *Checker) registerClass(cls *ast.ClassDecl)    :2358
 //
-// func (c *Checker) registerInterface(iface *ast.InterfaceDecl)    :2336
+// func (c *Checker) registerEnum(e *ast.EnumDecl)    :2427
+//
+// registerImplMethods processes an impl block and registers the interface's methods
+// func (c *Checker) registerImplMethods(impl *ast.ImplBlock)    :2463
+//
+// substituteMethodType replaces type variables in a function type with concrete types.
+// func (c *Checker) substituteMethodType(t *Type, subst map[string]*Type) *Type    :2515
+//
+// func (c *Checker) registerInterface(iface *ast.InterfaceDecl)    :2548
 //
 // checkImplements verifies that a class satisfies all its declared interfaces.
-// func (c *Checker) checkImplements(cls *ast.ClassDecl)    :2379
+// func (c *Checker) checkImplements(cls *ast.ClassDecl)    :2591
 //
-// func (c *Checker) registerFunc(fn *ast.FuncDecl)    :2420
+// func (c *Checker) registerFunc(fn *ast.FuncDecl)    :2632
 //
 // grantRelationalMethods populates typeVarMethods from a relational constraint.
-// func (c *Checker) grantRelationalMethods(ifaceName string, typeArgs []ast.TypeExpr)    :2428
+// func (c *Checker) grantRelationalMethods(ifaceName string, typeArgs []ast.TypeExpr)    :2640
 //
 // funcDeclToTypeWithSubst is like funcDeclToType but substitutes type param names.
-// func (c *Checker) funcDeclToTypeWithSubst(fn *ast.FuncDecl, subst map[string]string) *Type    :2470
+// func (c *Checker) funcDeclToTypeWithSubst(fn *ast.FuncDecl, subst map[string]string) *Type    :2682
 //
 // substTypeVarNames replaces type variable names according to the substitution map.
-// func (c *Checker) substTypeVarNames(t *Type, subst map[string]string) *Type    :2489
+// func (c *Checker) substTypeVarNames(t *Type, subst map[string]string) *Type    :2701
 //
-// func (c *Checker) funcDeclToType(fn *ast.FuncDecl) *Type    :2514
+// func (c *Checker) funcDeclToType(fn *ast.FuncDecl) *Type    :2726
 //
-// func (c *Checker) checkFuncBody(fn *ast.FuncDecl)    :2546
+// func (c *Checker) checkFuncBody(fn *ast.FuncDecl)    :2758
 //
-// func (c *Checker) checkStructLit(expr *ast.Expr) *Type    :2595
+// func (c *Checker) checkStructLit(expr *ast.Expr) *Type    :2807
 
 // --- dependencies ---
 //
