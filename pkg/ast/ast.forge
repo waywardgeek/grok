@@ -168,6 +168,27 @@ forge AST {
 
     The primitiveTypes map in stdlib.go is the exclusion filter. Any new
     primitive type added to the language must also be added there.
+
+    collectFuncCallNamesStmt and collectFuncCallNamesExpr MUST handle ALL
+    StmtKind/ExprKind variants (default cases panic). Missing a case silently
+    drops function calls, preventing the merger from pulling needed stdlib
+    functions. The match-arm bug (2026-06-07) was caused by missing StmtMatch,
+    StmtWhile, StmtBlock, and others — range() wasn't found in multi-file
+    compilation because calls inside match arms were never walked.
+  """
+
+  doc "Invariants — Stmt/Expr Data Type Mapping": """
+    The Data field on Stmt and Expr holds a typed payload. The type varies per
+    Kind, and several mappings are NON-OBVIOUS:
+
+    StmtBlock → Data is *Block (NOT *BlockStmt — there is no BlockStmt type)
+    ExprMatch → Data is *MatchStmt (shared with StmtMatch — no separate MatchExpr)
+    StmtCascade → Data is *CascadeStmt
+    SelectCase.Body → Block (value type, NOT *Block)
+    MapLitExpr → uses Entries []MapEntry (NOT Keys/Values slices)
+
+    Getting these wrong compiles fine (Data is any) but type assertions silently
+    return nil, causing the code path to be skipped entirely.
   """
 
   doc "Technical Debt": """

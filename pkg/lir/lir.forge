@@ -70,8 +70,12 @@ forge Lir {
     to avoid breaking Go backend which uses Stack[int32] syntax.
   """
 
-  doc "Go Backend": """
-    Thin emitter leveraging Go's native generics, interfaces, goroutines.
+  doc "Go Backend (DELETED 2026-06-07)": """
+    The Go backend was deleted in commit 8221e5a. C is the sole compilation
+    target. The Go backend had Optional(TypeVar) issues and was 2,731 lines.
+    The information below is retained for historical context only.
+
+    Was a thin emitter leveraging Go's native generics, interfaces, goroutines.
     Maintains import map for auto-insertion. Key patterns:
     - Generators → goroutine + channel (lazy iteration)
     - isnull → _isNil() helper using reflect (Go nil interface gotcha)

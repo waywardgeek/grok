@@ -22,7 +22,10 @@ forge Forge {
 
     3. MergeStdlib into block 0 ONLY. Merging into every block creates duplicate
     struct definitions in generated C. Must also merge RELATIONS (not just
-    classes/functions) and transitively pull called functions.
+    classes/functions) and transitively pull called functions. The two collection
+    functions (collectFuncCallNamesStmt/Expr) MUST handle ALL StmtKind/ExprKind
+    variants with a default panic — missing cases silently drop function calls,
+    preventing stdlib functions from being pulled (the match-arm bug, 2026-06-07).
 
     4. Desugar order matters: InterfaceEmbeds → InterfaceFields → Relations →
     Destructors → DefaultImpls. Each pass creates AST consumed by the next.

@@ -2,7 +2,7 @@
 // This is the self-hosting Forge compiler written in Forge, compiled via C backend.
 
 forge bootstrap {
-  why: "Self-hosting compiler: Forge source → C → native binary. Proves the language can express its own toolchain. Four files: ast.fg (types), lexer.fg (tokenization), parser.fg (PEG/Pratt parsing), expr_parser.fg (expressions/statements/patterns)."
+  why: "Self-hosting compiler: Forge source → C → native binary. Proves the language can express its own toolchain. Seven files: ast.fg (types), lexer.fg (tokenization), parser.fg (PEG/Pratt parsing), expr_parser.fg (expressions/statements/patterns), desugar.fg (AST transforms), checker.fg (type checking)."
 
   doc "Architecture": """
     The bootstrap compiler is a port of the Go compiler (pkg/parser/, pkg/ast/)
@@ -20,9 +20,10 @@ forge bootstrap {
       with the same name, so all Parser methods are available across both files
 
     Compilation command:
-      go run ./cmd/forge/ compile bootstrap/ast.fg bootstrap/lexer.fg \
-        bootstrap/parser.fg bootstrap/expr_parser.fg
-      gcc -std=gnu11 -o forge-bootstrap out.c -Iruntime/ -lpthread
+      forge compile --c bootstrap/ast.fg bootstrap/lexer.fg \
+        bootstrap/parser.fg bootstrap/expr_parser.fg bootstrap/desugar.fg \
+        bootstrap/checker.fg
+      gcc -std=gnu11 -o forge-bootstrap ast.c -Iruntime/ -lpthread
   """
 
   doc "Invariants": """
@@ -59,6 +60,21 @@ forge bootstrap {
     7. Token.text preserves original source text. Even for keywords, text contains
        the matched string ("func", "class", etc.). The parser converts to Sym via
        sym(tok.text) when storing in AST nodes.
+
+    8. `from` is a reserved keyword in Forge. Cannot be used as a parameter name.
+       Use `src` or similar alternatives. Other reserved keywords that commonly
+       conflict: `type`, `match`, `in`, `select`, `spawn`, `lock`.
+
+    9. Tuple field access `.0`, `.1` is NOT supported in Forge syntax. Use
+       tuple destructuring (`let a, b = expr`) or manual if-else for small
+       index ranges. The parser cannot distinguish `.0` (field access) from
+       a float literal.
+
+    10. `resolved_type: Type?` on Expr creates cross-block C type ordering issues.
+        Type is defined in checker.fg but Expr is in ast.fg. Since the C backend
+        emits structs in declaration order, ForgeOpt_Type may not exist when Expr
+        is defined. For bootstrap, the checker stores types externally rather than
+        annotating Expr directly.
   """
 
   doc "Coding Conventions": """
@@ -114,7 +130,15 @@ forge bootstrap {
                       InterfaceFields, Relations, Destructors, DefaultImpls.
                       Helper functions for type param substitution, deep copy,
                       field type rewriting. Entry point: desugar_all(file).
+
+    checker.fg      — ~1760 lines. Type checker. forge checker { } block.
+                      Two-phase: register_forge_block (types/signatures) then
+                      check_forge_block_bodies (function bodies). TypeKind enum
+                      with 20+ kinds. Scope chain with parent pointers, Dict<Type>
+                      for variable lookups. Numeric widening, pattern binding for
+                      match arms, enum variant destructuring.
+                      Entry point: check_file(file: File) -> Checker.
   """
 
-  source: ["bootstrap/ast.fg", "bootstrap/lexer.fg", "bootstrap/parser.fg", "bootstrap/expr_parser.fg", "bootstrap/desugar.fg"]
+  source: ["bootstrap/ast.fg", "bootstrap/lexer.fg", "bootstrap/parser.fg", "bootstrap/expr_parser.fg", "bootstrap/desugar.fg", "bootstrap/checker.fg"]
 }
