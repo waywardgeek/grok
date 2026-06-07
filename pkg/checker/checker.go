@@ -445,6 +445,8 @@ func (c *Checker) registerBuiltins() {
 		Return: TypeString, Name: "itoa"})
 	c.scope.Define("atoi", &Type{Kind: TyFunc, Params: []*Type{TypeString},
 		Return: &Type{Kind: TyTuple, Fields: []TypeField{{Type: &Type{Kind: TyInt, Bits: 64}}, {Type: TypeBool}}}, Name: "atoi"})
+	c.scope.Define("parse_float", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: &Type{Kind: TyTuple, Fields: []TypeField{{Type: &Type{Kind: TyFloat, Bits: 64}}, {Type: TypeBool}}}, Name: "parse_float"})
 	c.scope.Define("char_to_string", &Type{Kind: TyFunc, Params: []*Type{TypeU8},
 		Return: TypeString, Name: "char_to_string"})
 }

@@ -12,7 +12,7 @@ forge stdlib {
     //   5. Transitive pulling: functions called by already-merged functions also get merged
     //   6. Merged into block 0 of the user file only (multi-file: each file independently)
     //
-    // stdlib/string.fg — String utility functions (str_contains, str_starts_with, etc.)
+    // stdlib/string.fg — String utility functions (str_contains, str_split_n, etc.)
   }
 
   doc "Identifiers" {

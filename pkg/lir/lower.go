@@ -2229,6 +2229,21 @@ func (l *Lowerer) exprType(expr *ast.Expr) *LType {
 	return &LType{Kind: LTyAny}
 }
 
+// knownPackageReturnType returns the correct LType for known package-qualified
+// functions when the checker doesn't annotate the expression (cross-package calls).
+func (l *Lowerer) knownPackageReturnType(funcName string) *LType {
+	switch funcName {
+	case "errors.New", "fmt.Errorf":
+		return &LType{Kind: LTyError}
+	case "strconv.Itoa":
+		return &LType{Kind: LTyString}
+	case "strconv.Atoi":
+		// Returns (int, error) but we represent as result type
+		return &LType{Kind: LTyAny} // handled by inferExprType
+	}
+	return &LType{Kind: LTyAny}
+}
+
 // --- Individual expression lowering ---
 
 func (l *Lowerer) lowerIdent(expr *ast.Expr) LValue {
@@ -2500,9 +2515,14 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 	if strings.Contains(funcName, ".") {
 		parts := strings.SplitN(funcName, ".", 2)
 		if _, isImport := l.importAliases[parts[0]]; isImport {
+			retType := l.exprType(expr)
+			// Override return type for known stdlib functions when checker doesn't annotate
+			if retType.Kind == LTyAny {
+				retType = l.knownPackageReturnType(funcName)
+			}
 			return l.emitTemp(LExpr{
 				Kind: LExprCall,
-				Type: l.exprType(expr),
+				Type: retType,
 				Data: &LCallData{Func: funcName, Args: args, TypeArgs: typeArgs, IsExported: true},
 			})
 		}
@@ -2625,9 +2645,13 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 				args = append(args, l.lowerExpr(&mc.Args[i]))
 			}
 			funcName := identName + "." + mc.Method
+			retType := l.exprType(expr)
+			if retType.Kind == LTyAny {
+				retType = l.knownPackageReturnType(funcName)
+			}
 			return l.emitTemp(LExpr{
 				Kind: LExprCall,
-				Type: l.exprType(expr),
+				Type: retType,
 				Data: &LCallData{Func: funcName, Args: args, TypeArgs: typeArgs, IsExported: true},
 			})
 		}

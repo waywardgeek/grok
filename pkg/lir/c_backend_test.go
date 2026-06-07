@@ -227,11 +227,9 @@ func cPipeline(t *testing.T, source, pkgName string) string {
 	// Merge stdlib interfaces
 	stdlibDir := ast.FindStdlibDir()
 	if stdlibDir != "" {
-		stdPath := filepath.Join(stdlibDir, "std.fg")
-		if stdSrc, err := os.ReadFile(stdPath); err == nil {
-			if stdFile, err := parser.ParseFile(string(stdSrc), stdPath); err == nil {
-				ast.MergeStdlib(file, stdFile)
-			}
+		stdFile := loadTestStdlib(t, stdlibDir)
+		if stdFile != nil {
+			ast.MergeStdlib(file, stdFile)
 		}
 	}
 
@@ -280,4 +278,34 @@ func compileCAndRun(t *testing.T, cSrc, name string) string {
 		t.Fatalf("run failed: %v\n%s", err, out)
 	}
 	return string(out)
+}
+
+// loadTestStdlib loads all .fg files from the stdlib directory into a single ast.File.
+func loadTestStdlib(t *testing.T, dir string) *ast.File {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var combined *ast.File
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".fg") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		src, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		file, err := parser.ParseFile(string(src), path)
+		if err != nil {
+			continue
+		}
+		if combined == nil {
+			combined = file
+		} else {
+			combined.Blocks = append(combined.Blocks, file.Blocks...)
+		}
+	}
+	return combined
 }

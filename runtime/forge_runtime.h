@@ -2,10 +2,15 @@
  *
  * Provides macros for:
  *   - Dynamic slices (FORGE_SLICE_DEF, forge_push, forge_pop, forge_slice_lit)
+ *   - Length-prefixed strings (forge_string = [u8], FORGE_STR, helpers)
  *   - Optionals (FORGE_OPT_DEF, forge_some, forge_none, forge_isnull)
  *   - Error results (FORGE_RESULT_DEF, forge_ok, forge_err)
- *   - String helpers (forge_contains, forge_index_of, forge_replace, forge_join, etc.)
  *   - Formatting (forge_sprintf)
+ *
+ * Strings: forge_string is a length-prefixed byte slice (ForgeSlice_uint8_t).
+ * Embedded \0 is legal. All string operations are length-aware.
+ * Heap-allocated strings carry a hidden trailing \0 past .len for C interop
+ * convenience, but .len never includes it.
  */
 
 #ifndef FORGE_RUNTIME_H
@@ -16,6 +21,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdarg.h>
 #include <ctype.h>
 #include <unistd.h>
 
@@ -80,6 +86,230 @@
 })
 
 /* -------------------------------------------------------------------------
+ * Strings  —  length-prefixed byte slice
+ * -------------------------------------------------------------------------
+ * forge_string = ForgeSlice_uint8_t = { uint8_t* data; int32_t len, cap; }
+ * Embedded \0 is legal. All operations are length-aware.
+ *
+ * Usage:
+ *   forge_string s = FORGE_STR("hello");  // from literal
+ *   forge_string t = forge_str_from_cstr(cstr);  // from C string
+ *   if (forge_str_eq(s, t)) { ... }
+ *   forge_string sub = forge_subslice(s, 1, 3, forge_string);  // "el"
+ */
+
+FORGE_SLICE_DEF(uint8_t, ForgeSlice_uint8_t)
+typedef ForgeSlice_uint8_t forge_string;
+
+/* Create a string from a C string literal (compile-time length via sizeof) */
+#define FORGE_STR(lit) ((forge_string){ \
+    .data = (uint8_t*)(lit), \
+    .len = (int32_t)(sizeof(lit) - 1), \
+    .cap = (int32_t)(sizeof(lit) - 1) \
+})
+
+#define FORGE_STR_EMPTY ((forge_string){.data = NULL, .len = 0, .cap = 0})
+
+/* Create from null-terminated C string (heap-copies) */
+static inline forge_string forge_str_from_cstr(const char* s) {
+    if (!s) return (forge_string){.data = NULL, .len = 0, .cap = 0};
+    int32_t n = (int32_t)strlen(s);
+    uint8_t* buf = (uint8_t*)malloc(n + 1);
+    memcpy(buf, s, n + 1); /* trailing \0 for C interop */
+    return (forge_string){.data = buf, .len = n, .cap = n};
+}
+
+/* Create from raw bytes (heap-copies, adds hidden trailing \0) */
+static inline forge_string forge_str_from_bytes(const void* data, int32_t len) {
+    uint8_t* buf = (uint8_t*)malloc(len + 1);
+    memcpy(buf, data, len);
+    buf[len] = '\0';
+    return (forge_string){.data = buf, .len = len, .cap = len};
+}
+
+/* Equality (length-aware, handles embedded \0) */
+static inline bool forge_str_eq(forge_string a, forge_string b) {
+    if (a.len != b.len) return false;
+    if (a.len == 0) return true;
+    return memcmp(a.data, b.data, a.len) == 0;
+}
+
+/* Lexicographic comparison */
+static inline int forge_str_cmp(forge_string a, forge_string b) {
+    int32_t min = a.len < b.len ? a.len : b.len;
+    int r = min > 0 ? memcmp(a.data, b.data, min) : 0;
+    if (r != 0) return r;
+    return (a.len > b.len) - (a.len < b.len);
+}
+
+/* Concatenate two strings (heap-allocates) */
+static inline forge_string forge_str_concat(forge_string a, forge_string b) {
+    int32_t total = a.len + b.len;
+    uint8_t* buf = (uint8_t*)malloc(total + 1);
+    if (a.len > 0) memcpy(buf, a.data, a.len);
+    if (b.len > 0) memcpy(buf + a.len, b.data, b.len);
+    buf[total] = '\0';
+    return (forge_string){.data = buf, .len = total, .cap = total};
+}
+
+/* Length-aware memmem (find needle in haystack) */
+static inline const uint8_t* forge_memmem(const uint8_t* h, int32_t hlen,
+                                            const uint8_t* n, int32_t nlen) {
+    if (nlen == 0) return h;
+    if (nlen > hlen) return NULL;
+    for (int32_t i = 0; i <= hlen - nlen; i++) {
+        if (memcmp(h + i, n, nlen) == 0) return h + i;
+    }
+    return NULL;
+}
+
+/* Contains */
+static inline bool forge_str_contains(forge_string s, forge_string sub) {
+    return forge_memmem(s.data, s.len, sub.data, sub.len) != NULL;
+}
+
+/* Index of substring (-1 if not found) */
+static inline int32_t forge_str_index_of(forge_string s, forge_string sub) {
+    const uint8_t* p = forge_memmem(s.data, s.len, sub.data, sub.len);
+    if (!p) return -1;
+    return (int32_t)(p - s.data);
+}
+
+/* Has prefix */
+static inline bool forge_str_has_prefix(forge_string s, forge_string prefix) {
+    if (prefix.len > s.len) return false;
+    return memcmp(s.data, prefix.data, prefix.len) == 0;
+}
+
+/* Has suffix */
+static inline bool forge_str_has_suffix(forge_string s, forge_string suffix) {
+    if (suffix.len > s.len) return false;
+    return memcmp(s.data + s.len - suffix.len, suffix.data, suffix.len) == 0;
+}
+
+/* FNV-1a hash (length-aware) */
+static inline uint64_t forge_hash_string(forge_string s) {
+    uint64_t h = 14695981039346656037ULL;
+    for (int32_t i = 0; i < s.len; i++) {
+        h ^= (uint64_t)s.data[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+/* Replace all occurrences of old with new_s */
+static inline forge_string forge_str_replace(forge_string s, forge_string old, forge_string new_s) {
+    if (old.len == 0) return forge_str_from_bytes(s.data, s.len);
+    /* Count occurrences */
+    int count = 0;
+    const uint8_t* p = s.data;
+    int32_t remaining = s.len;
+    while (remaining >= old.len) {
+        const uint8_t* found = forge_memmem(p, remaining, old.data, old.len);
+        if (!found) break;
+        count++;
+        int32_t skip = (int32_t)(found - p) + old.len;
+        p += skip;
+        remaining -= skip;
+    }
+    if (count == 0) return forge_str_from_bytes(s.data, s.len);
+    int32_t total = s.len + count * (new_s.len - old.len);
+    uint8_t* buf = (uint8_t*)malloc(total + 1);
+    uint8_t* dst = buf;
+    p = s.data;
+    remaining = s.len;
+    while (remaining >= old.len) {
+        const uint8_t* found = forge_memmem(p, remaining, old.data, old.len);
+        if (!found) break;
+        int32_t prefix_len = (int32_t)(found - p);
+        memcpy(dst, p, prefix_len);
+        dst += prefix_len;
+        memcpy(dst, new_s.data, new_s.len);
+        dst += new_s.len;
+        p = found + old.len;
+        remaining -= prefix_len + old.len;
+    }
+    memcpy(dst, p, remaining);
+    dst += remaining;
+    buf[total] = '\0';
+    return (forge_string){.data = buf, .len = total, .cap = total};
+}
+
+/* Repeat string n times */
+static inline forge_string forge_str_repeat(forge_string s, int32_t n) {
+    if (n <= 0 || s.len == 0) return FORGE_STR_EMPTY;
+    int32_t total = s.len * n;
+    uint8_t* buf = (uint8_t*)malloc(total + 1);
+    for (int32_t i = 0; i < n; i++) {
+        memcpy(buf + i * s.len, s.data, s.len);
+    }
+    buf[total] = '\0';
+    return (forge_string){.data = buf, .len = total, .cap = total};
+}
+
+/* Join an array of strings with separator */
+static inline forge_string forge_str_join(forge_string sep, forge_string* parts, int32_t count) {
+    if (count == 0) return FORGE_STR_EMPTY;
+    int32_t total = 0;
+    for (int32_t i = 0; i < count; i++) {
+        total += parts[i].len;
+        if (i > 0) total += sep.len;
+    }
+    uint8_t* buf = (uint8_t*)malloc(total + 1);
+    uint8_t* dst = buf;
+    for (int32_t i = 0; i < count; i++) {
+        if (i > 0 && sep.len > 0) { memcpy(dst, sep.data, sep.len); dst += sep.len; }
+        if (parts[i].len > 0) { memcpy(dst, parts[i].data, parts[i].len); dst += parts[i].len; }
+    }
+    buf[total] = '\0';
+    return (forge_string){.data = buf, .len = total, .cap = total};
+}
+
+/* forge_sprintf — heap-allocated formatted string.
+ * NOTE: This uses C's printf family, which doesn't handle embedded \0.
+ * Use only for format strings without embedded nulls. */
+static inline forge_string forge_sprintf(const char* fmt, ...) {
+    va_list args, args2;
+    va_start(args, fmt);
+    va_copy(args2, args);
+    int n = vsnprintf(NULL, 0, fmt, args);
+    va_end(args);
+    uint8_t* buf = (uint8_t*)malloc(n + 1);
+    vsnprintf((char*)buf, n + 1, fmt, args2);
+    va_end(args2);
+    return (forge_string){.data = buf, .len = (int32_t)n, .cap = (int32_t)n};
+}
+
+/* Bool to string for printf */
+static inline const char* forge_bool_str(bool b) {
+    return b ? "true" : "false";
+}
+
+/* String case conversion */
+static inline forge_string forge_toupper(forge_string s) {
+    uint8_t* buf = (uint8_t*)malloc(s.len + 1);
+    for (int32_t i = 0; i < s.len; i++) buf[i] = (uint8_t)toupper(s.data[i]);
+    buf[s.len] = '\0';
+    return (forge_string){.data = buf, .len = s.len, .cap = s.len};
+}
+
+static inline forge_string forge_tolower(forge_string s) {
+    uint8_t* buf = (uint8_t*)malloc(s.len + 1);
+    for (int32_t i = 0; i < s.len; i++) buf[i] = (uint8_t)tolower(s.data[i]);
+    buf[s.len] = '\0';
+    return (forge_string){.data = buf, .len = s.len, .cap = s.len};
+}
+
+/* Trim whitespace from both ends */
+static inline forge_string forge_str_trim(forge_string s) {
+    int32_t start = 0, end = s.len;
+    while (start < end && isspace(s.data[start])) start++;
+    while (end > start && isspace(s.data[end - 1])) end--;
+    if (start == 0 && end == s.len) return s; /* no trim needed, return view */
+    return forge_str_from_bytes(s.data + start, end - start);
+}
+
+/* -------------------------------------------------------------------------
  * Optionals  —  {bool has; T val}
  * -------------------------------------------------------------------------
  * Usage:
@@ -100,10 +330,8 @@
 /* -------------------------------------------------------------------------
  * Error Results  —  {bool is_err; T value; const char* error}
  * -------------------------------------------------------------------------
- * Usage:
- *   FORGE_RESULT_DEF(int32_t, ForgeResult_int32_t)
- *   ForgeResult_int32_t r = forge_ok(42, ForgeResult_int32_t);
- *   ForgeResult_int32_t e = forge_err("failed", ForgeResult_int32_t);
+ * Error messages remain const char* (C string literals).
+ * This is intentional — error messages come from forge_err("msg") literals.
  */
 
 #define FORGE_RESULT_DEF(ElemType, ResultName) \
@@ -114,143 +342,13 @@
 #define forge_is_err(r) ((r).is_err)
 
 /* -------------------------------------------------------------------------
- * String helpers
- * -------------------------------------------------------------------------
- * These return heap-allocated strings where needed. The Forge C runtime
- * does not yet have a GC — these leak. That's fine for now.
- */
-
-static inline bool forge_str_contains(const char* s, const char* sub) {
-    return strstr(s, sub) != NULL;
-}
-
-static inline int32_t forge_str_index_of(const char* s, const char* sub) {
-    const char* p = strstr(s, sub);
-    if (p == NULL) return -1;
-    return (int32_t)(p - s);
-}
-
-static inline bool forge_str_has_prefix(const char* s, const char* prefix) {
-    return strncmp(s, prefix, strlen(prefix)) == 0;
-}
-
-static inline bool forge_str_has_suffix(const char* s, const char* suffix) {
-    size_t slen = strlen(s), suflen = strlen(suffix);
-    if (slen < suflen) return false;
-    return strcmp(s + slen - suflen, suffix) == 0;
-}
-
-// FNV-1a hash for strings
-static inline uint64_t forge_hash_string(const char* s) {
-    uint64_t h = 14695981039346656037ULL;
-    for (const char* p = s; *p; p++) {
-        h ^= (uint64_t)(unsigned char)*p;
-        h *= 1099511628211ULL;
-    }
-    return h;
-}
-
-static inline const char* forge_str_replace(const char* s, const char* old, const char* new_s) {
-    const char* pos = strstr(s, old);
-    if (!pos) {
-        char* dup = malloc(strlen(s) + 1);
-        strcpy(dup, s);
-        return dup;
-    }
-    size_t oldlen = strlen(old), newlen = strlen(new_s), slen = strlen(s);
-    /* Count occurrences */
-    int count = 0;
-    const char* p = s;
-    while ((p = strstr(p, old)) != NULL) { count++; p += oldlen; }
-    char* result = malloc(slen + count * (newlen - oldlen) + 1);
-    char* dst = result;
-    p = s;
-    while ((pos = strstr(p, old)) != NULL) {
-        memcpy(dst, p, pos - p);
-        dst += pos - p;
-        memcpy(dst, new_s, newlen);
-        dst += newlen;
-        p = pos + oldlen;
-    }
-    strcpy(dst, p);
-    return result;
-}
-
-static inline const char* forge_str_repeat(const char* s, int32_t n) {
-    size_t slen = strlen(s);
-    char* result = malloc(slen * n + 1);
-    result[0] = '\0';
-    for (int32_t i = 0; i < n; i++) {
-        strcat(result, s);
-    }
-    return result;
-}
-
-static inline const char* forge_str_join(const char* sep, const char** parts, int32_t count) {
-    if (count == 0) {
-        char* r = malloc(1);
-        r[0] = '\0';
-        return r;
-    }
-    size_t total = 0, seplen = strlen(sep);
-    for (int32_t i = 0; i < count; i++) {
-        total += strlen(parts[i]);
-        if (i > 0) total += seplen;
-    }
-    char* result = malloc(total + 1);
-    result[0] = '\0';
-    for (int32_t i = 0; i < count; i++) {
-        if (i > 0) strcat(result, sep);
-        strcat(result, parts[i]);
-    }
-    return result;
-}
-
-/* forge_sprintf — heap-allocated formatted string */
-static inline const char* forge_sprintf(const char* fmt, ...) {
-    va_list args, args2;
-    va_start(args, fmt);
-    va_copy(args2, args);
-    int n = vsnprintf(NULL, 0, fmt, args);
-    va_end(args);
-    char* buf = malloc(n + 1);
-    vsnprintf(buf, n + 1, fmt, args2);
-    va_end(args2);
-    return buf;
-}
-
-/* Bool to string for printf */
-static inline const char* forge_bool_str(bool b) {
-    return b ? "true" : "false";
-}
-
-/* String case conversion — heap-allocated result */
-static inline const char* forge_toupper(const char* s) {
-    size_t len = strlen(s);
-    char* r = (char*)malloc(len + 1);
-    for (size_t i = 0; i < len; i++) r[i] = (char)toupper((unsigned char)s[i]);
-    r[len] = '\0';
-    return r;
-}
-
-static inline const char* forge_tolower(const char* s) {
-    size_t len = strlen(s);
-    char* r = (char*)malloc(len + 1);
-    for (size_t i = 0; i < len; i++) r[i] = (char)tolower((unsigned char)s[i]);
-    r[len] = '\0';
-    return r;
-}
-
-/* -------------------------------------------------------------------------
  * Channels (pthreads-based, buffered and unbuffered)
  * -------------------------------------------------------------------------
  * Usage:
  *   FORGE_CHAN_DEF(int32_t, ForgeChan_int32_t)
- *   ForgeChan_int32_t* ch = forge_chan_make_int32_t(10);  // buffered
+ *   ForgeChan_int32_t* ch = forge_chan_make_int32_t(10);
  *   forge_chan_send_int32_t(ch, 42);
  *   int32_t val = forge_chan_recv_int32_t(ch);
- *   forge_chan_close_int32_t(ch);
- *   forge_chan_free_int32_t(ch);
  */
 #include <pthread.h>
 
@@ -330,7 +428,6 @@ static inline void forge_spawn(void* (*func)(void*), void* arg) {
 /* -------------------------------------------------------------------------
  * Tagged Unions (for ad-hoc union types like string | i32 | bool)
  * -------------------------------------------------------------------------
- * Tag constants identify which member is active.
  */
 #define FORGE_UNION_TAG_I32    0
 #define FORGE_UNION_TAG_I64    1
@@ -348,7 +445,7 @@ typedef struct {
         float    as_f32;
         double   as_f64;
         bool     as_bool;
-        const char* as_string;
+        forge_string as_string;
         void*    as_ptr;
     } data;
 } ForgeUnion;
@@ -358,88 +455,144 @@ static inline ForgeUnion forge_union_i64(int64_t v)       { return (ForgeUnion){
 static inline ForgeUnion forge_union_f32(float v)         { return (ForgeUnion){FORGE_UNION_TAG_F32, {.as_f32 = v}}; }
 static inline ForgeUnion forge_union_f64(double v)        { return (ForgeUnion){FORGE_UNION_TAG_F64, {.as_f64 = v}}; }
 static inline ForgeUnion forge_union_bool(bool v)         { return (ForgeUnion){FORGE_UNION_TAG_BOOL, {.as_bool = v}}; }
-static inline ForgeUnion forge_union_string(const char* v){ return (ForgeUnion){FORGE_UNION_TAG_STRING, {.as_string = v}}; }
+static inline ForgeUnion forge_union_string(forge_string v){ return (ForgeUnion){FORGE_UNION_TAG_STRING, {.as_string = v}}; }
 static inline ForgeUnion forge_union_ptr(void* v)         { return (ForgeUnion){FORGE_UNION_TAG_PTR, {.as_ptr = v}}; }
 
-// --- File I/O ---
-// Uses typedef to ensure consistent struct type across the header
+/* -------------------------------------------------------------------------
+ * File I/O
+ * -------------------------------------------------------------------------
+ */
 
-typedef struct { const char* _0; bool _1; } forge_str_bool_t;
+typedef struct { forge_string _0; bool _1; } forge_str_bool_t;
 
-static inline forge_str_bool_t forge_read_file(const char* path) {
-    FILE* f = fopen(path, "rb");
-    if (!f) { forge_str_bool_t r = {"", false}; return r; }
+static inline forge_str_bool_t forge_read_file(forge_string path) {
+    /* Need null-terminated path for fopen */
+    char* cpath = (char*)malloc(path.len + 1);
+    memcpy(cpath, path.data, path.len);
+    cpath[path.len] = '\0';
+    FILE* f = fopen(cpath, "rb");
+    free(cpath);
+    if (!f) { forge_str_bool_t r = {FORGE_STR_EMPTY, false}; return r; }
     fseek(f, 0, SEEK_END);
     long n = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* buf = (char*)malloc(n + 1);
+    uint8_t* buf = (uint8_t*)malloc(n + 1);
     fread(buf, 1, n, f);
     fclose(f);
     buf[n] = '\0';
-    forge_str_bool_t r = {buf, true};
+    forge_str_bool_t r = {{.data = buf, .len = (int32_t)n, .cap = (int32_t)n}, true};
     return r;
 }
 
-static inline bool forge_write_file(const char* path, const char* data) {
-    FILE* f = fopen(path, "wb");
+static inline bool forge_write_file(forge_string path, forge_string data) {
+    char* cpath = (char*)malloc(path.len + 1);
+    memcpy(cpath, path.data, path.len);
+    cpath[path.len] = '\0';
+    FILE* f = fopen(cpath, "wb");
+    free(cpath);
     if (!f) return false;
-    size_t n = strlen(data);
-    size_t written = fwrite(data, 1, n, f);
+    size_t written = fwrite(data.data, 1, data.len, f);
     fclose(f);
-    return written == n;
+    return (int32_t)written == data.len;
 }
 
-// --- OS ---
+/* -------------------------------------------------------------------------
+ * OS
+ * -------------------------------------------------------------------------
+ */
 
-static inline const char* forge_getwd(void) {
+static inline forge_string forge_getwd(void) {
     static char buf[4096];
-    if (getcwd(buf, sizeof(buf))) return buf;
-    return "";
+    if (getcwd(buf, sizeof(buf))) return forge_str_from_cstr(buf);
+    return FORGE_STR_EMPTY;
 }
 
-// --- Path manipulation ---
+/* -------------------------------------------------------------------------
+ * Path manipulation
+ * -------------------------------------------------------------------------
+ */
 
-static inline const char* forge_path_dir(const char* path) {
-    char* copy = strdup(path);
-    char* last = strrchr(copy, '/');
-    if (!last) { free(copy); return "."; }
-    *last = '\0';
-    return copy; // leaked, but simple
+static inline forge_string forge_path_dir(forge_string path) {
+    /* Find last '/' */
+    for (int32_t i = path.len - 1; i >= 0; i--) {
+        if (path.data[i] == '/') {
+            return forge_str_from_bytes(path.data, i);
+        }
+    }
+    return FORGE_STR(".");
 }
 
-static inline const char* forge_path_base(const char* path) {
-    const char* last = strrchr(path, '/');
-    return last ? last + 1 : path;
+static inline forge_string forge_path_base(forge_string path) {
+    for (int32_t i = path.len - 1; i >= 0; i--) {
+        if (path.data[i] == '/') {
+            return forge_str_from_bytes(path.data + i + 1, path.len - i - 1);
+        }
+    }
+    return forge_str_from_bytes(path.data, path.len);
 }
 
-static inline const char* forge_path_ext(const char* path) {
-    const char* base = forge_path_base(path);
-    const char* dot = strrchr(base, '.');
-    return dot ? dot : "";
+static inline forge_string forge_path_ext(forge_string path) {
+    /* Find last '.' after last '/' */
+    int32_t start = 0;
+    for (int32_t i = path.len - 1; i >= 0; i--) {
+        if (path.data[i] == '/') { start = i + 1; break; }
+    }
+    for (int32_t i = path.len - 1; i >= start; i--) {
+        if (path.data[i] == '.') {
+            return forge_str_from_bytes(path.data + i, path.len - i);
+        }
+    }
+    return FORGE_STR_EMPTY;
 }
 
-// --- String conversion ---
+/* -------------------------------------------------------------------------
+ * String conversion
+ * -------------------------------------------------------------------------
+ */
 
-static inline const char* forge_itoa(int64_t n) {
-    static char buf[32];
-    snprintf(buf, sizeof(buf), "%lld", (long long)n);
-    return strdup(buf);
+static inline forge_string forge_itoa(int64_t n) {
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "%lld", (long long)n);
+    return forge_str_from_bytes(buf, len);
 }
 
-typedef struct { int64_t val; bool ok; } forge_atoi_result;
+typedef struct { int64_t _0; bool _1; } forge_atoi_result;
 
-static inline forge_atoi_result forge_atoi(const char* s) {
+static inline forge_atoi_result forge_atoi(forge_string s) {
+    /* Need null-terminated for strtoll */
+    char* cstr = (char*)malloc(s.len + 1);
+    memcpy(cstr, s.data, s.len);
+    cstr[s.len] = '\0';
     char* end;
-    long long v = strtoll(s, &end, 10);
-    return (forge_atoi_result){ .val = (int64_t)v, .ok = (*end == '\0' && end != s) };
+    long long v = strtoll(cstr, &end, 10);
+    bool ok = (*end == '\0' && end != cstr);
+    free(cstr);
+    return (forge_atoi_result){ ._0 = (int64_t)v, ._1 = ok };
 }
 
-static inline const char* forge_char_to_string(uint8_t c) {
-    char* s = malloc(2);
-    s[0] = (char)c;
-    s[1] = '\0';
-    return s;
+typedef struct { double _0; bool _1; } forge_parse_float_result;
+
+static inline forge_parse_float_result forge_parse_float(forge_string s) {
+    char* cstr = (char*)malloc(s.len + 1);
+    memcpy(cstr, s.data, s.len);
+    cstr[s.len] = '\0';
+    char* end;
+    double v = strtod(cstr, &end);
+    bool ok = (*end == '\0' && end != cstr);
+    free(cstr);
+    return (forge_parse_float_result){ ._0 = v, ._1 = ok };
+}
+
+static inline forge_string forge_char_to_string(uint8_t c) {
+    uint8_t* buf = (uint8_t*)malloc(2);
+    buf[0] = c;
+    buf[1] = '\0';
+    return (forge_string){.data = buf, .len = 1, .cap = 1};
+}
+
+/* Print a forge_string to a FILE* (length-aware, handles embedded \0) */
+static inline void forge_fprint_str(FILE* f, forge_string s) {
+    if (s.len > 0) fwrite(s.data, 1, s.len, f);
 }
 
 #endif /* FORGE_RUNTIME_H */
-

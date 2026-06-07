@@ -66,6 +66,34 @@ forge string_utils {
 
   // --- Splitting ---
 
+  // Split string by separator, returning at most n parts.
+  // If n <= 0, returns all parts (same as str_split).
+  // If n == 1, returns [s] unchanged.
+  // Otherwise, splits into at most n parts: the last part contains the remainder.
+  pub func str_split_n(s: string, sep: string, n: i32) -> [string] {
+    if n == 1 {
+      return [s]
+    }
+    let mut result: [string] = []
+    let mut start: i32 = 0
+    let mut count: i32 = 1
+    while start <= len(s) {
+      if n > 0 && count >= n {
+        result = append(result, s[start:len(s)])
+        return result
+      }
+      let idx = str_index_of(s[start:len(s)], sep)
+      if idx < 0 {
+        result = append(result, s[start:len(s)])
+        return result
+      }
+      result = append(result, s[start:start + idx])
+      start = start + idx + len(sep)
+      count = count + 1
+    }
+    return result
+  }
+
   // Split string by separator. Returns a slice of strings.
   pub func str_split(s: string, sep: string) -> [string] {
     let mut result: [string] = []

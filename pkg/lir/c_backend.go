@@ -164,10 +164,30 @@ func (g *cGen) generate() string {
 	}
 
 	// Emit slice type typedefs (only need forward declarations — uses ElemType*)
+	// Skip ForgeSlice_uint8_t — already defined in runtime as forge_string's underlying type
 	for elemType, name := range g.sliceTypes {
+		if name == "ForgeSlice_uint8_t" {
+			continue
+		}
 		g.linef("FORGE_SLICE_DEF(%s, %s)", elemType, name)
 	}
 	if len(g.sliceTypes) > 0 {
+		g.line("")
+	}
+
+	// Emit optional/result/channel type typedefs BEFORE struct/class definitions
+	// because fields may reference these types (e.g., string? field → ForgeOpt_forge_string)
+	for elemType, name := range g.optTypes {
+		g.linef("FORGE_OPT_DEF(%s, %s)", elemType, name)
+	}
+	for elemType, name := range g.resultTypes {
+		g.linef("FORGE_RESULT_DEF(%s, %s)", elemType, name)
+	}
+	for cElemType, suffix := range g.chanTypes {
+		chanName := fmt.Sprintf("ForgeChan_%s", suffix)
+		g.linef("FORGE_CHAN_DEF(%s, %s)", cElemType, chanName)
+	}
+	if len(g.optTypes)+len(g.resultTypes)+len(g.chanTypes) > 0 {
 		g.line("")
 	}
 
@@ -184,21 +204,6 @@ func (g *cGen) generate() string {
 	// Emit class definitions (heap-allocated structs)
 	for _, c := range g.prog.Classes {
 		g.emitClassDecl(&c)
-	}
-
-	// Emit optional/result/channel type typedefs (need complete types — uses ElemType val)
-	for elemType, name := range g.optTypes {
-		g.linef("FORGE_OPT_DEF(%s, %s)", elemType, name)
-	}
-	for elemType, name := range g.resultTypes {
-		g.linef("FORGE_RESULT_DEF(%s, %s)", elemType, name)
-	}
-	for cElemType, suffix := range g.chanTypes {
-		chanName := fmt.Sprintf("ForgeChan_%s", suffix)
-		g.linef("FORGE_CHAN_DEF(%s, %s)", cElemType, chanName)
-	}
-	if len(g.optTypes)+len(g.resultTypes)+len(g.chanTypes) > 0 {
-		g.line("")
 	}
 
 	// Emit generator state struct typedefs
@@ -385,6 +390,10 @@ func (g *cGen) cTupleType(t *LType) string {
 			t.Fields[1].Type != nil && t.Fields[1].Type.Kind == LTyBool {
 			return "forge_atoi_result"
 		}
+		if t.Fields[0].Type != nil && t.Fields[0].Type.Kind == LTyF64 &&
+			t.Fields[1].Type != nil && t.Fields[1].Type.Kind == LTyBool {
+			return "forge_parse_float_result"
+		}
 	}
 	return g.cType(t)
 }
@@ -399,10 +408,10 @@ func (g *cGen) emitOsHelpers() {
 		g.linef("static inline %s _forge_os_args(int argc, char** argv) {", sliceType)
 		g.indent++
 		g.linef("%s result = {0};", sliceType)
-		g.line("result.data = (const char**)malloc(sizeof(const char*) * argc);")
+		g.linef("result.data = (forge_string*)malloc(sizeof(forge_string) * argc);")
 		g.line("result.len = (int32_t)argc;")
 		g.line("result.cap = (int32_t)argc;")
-		g.line("for (int i = 0; i < argc; i++) result.data[i] = argv[i];")
+		g.line("for (int i = 0; i < argc; i++) result.data[i] = forge_str_from_cstr(argv[i]);")
 		g.line("return result;")
 		g.indent--
 		g.line("}")
@@ -410,29 +419,29 @@ func (g *cGen) emitOsHelpers() {
 	}
 
 	if g.needsExecCmd {
-		g.linef("static inline forge_str_bool_t _forge_exec_command(const char* program, %s args) {", sliceType)
+		g.linef("static inline forge_str_bool_t _forge_exec_command(forge_string program, %s args) {", sliceType)
 		g.indent++
-		g.line("size_t total = strlen(program) + 1;")
-		g.line("for (int i = 0; i < args.len; i++) total += strlen(args.data[i]) + 3;")
+		g.line("size_t total = program.len + 1;")
+		g.line("for (int i = 0; i < args.len; i++) total += args.data[i].len + 3;")
 		g.line("char* cmd = (char*)malloc(total + 16);")
-		g.line("strcpy(cmd, program);")
-		g.line(`for (int i = 0; i < args.len; i++) { strcat(cmd, " "); strcat(cmd, args.data[i]); }`)
+		g.line("memcpy(cmd, program.data, program.len); cmd[program.len] = '\\0';")
+		g.line(`for (int i = 0; i < args.len; i++) { strcat(cmd, " "); strncat(cmd, (const char*)args.data[i].data, args.data[i].len); }`)
 		g.line(`strcat(cmd, " 2>&1");`)
 		g.line(`FILE* fp = popen(cmd, "r");`)
 		g.line("free(cmd);")
-		g.line(`if (!fp) { forge_str_bool_t r = {"", false}; return r; }`)
+		g.line(`if (!fp) { forge_str_bool_t r = {FORGE_STR_EMPTY, false}; return r; }`)
 		g.line("size_t cap = 4096, len = 0;")
-		g.line("char* out = (char*)malloc(cap);")
+		g.line("uint8_t* out = (uint8_t*)malloc(cap);")
 		g.line("size_t n;")
 		g.line("while ((n = fread(out + len, 1, cap - len - 1, fp)) > 0) {")
 		g.indent++
 		g.line("len += n;")
-		g.line("if (len + 1 >= cap) { cap *= 2; out = (char*)realloc(out, cap); }")
+		g.line("if (len + 1 >= cap) { cap *= 2; out = (uint8_t*)realloc(out, cap); }")
 		g.indent--
 		g.line("}")
 		g.line("out[len] = '\\0';")
 		g.line("int status = pclose(fp);")
-		g.line("forge_str_bool_t r = {out, status == 0};")
+		g.line("forge_str_bool_t r = {{.data = out, .len = (int32_t)len, .cap = (int32_t)len}, status == 0};")
 		g.line("return r;")
 		g.indent--
 		g.line("}")
@@ -440,15 +449,22 @@ func (g *cGen) emitOsHelpers() {
 	}
 
 	if g.needsPathJoin {
-		g.linef("static inline const char* _forge_path_join(%s parts) {", sliceType)
+		g.linef("static inline forge_string _forge_path_join(%s parts) {", sliceType)
 		g.indent++
-		g.line(`if (parts.len == 0) return "";`)
-		g.line("size_t total = 0;")
-		g.line("for (int i = 0; i < parts.len; i++) total += strlen(parts.data[i]) + 1;")
-		g.line("char* out = (char*)malloc(total);")
-		g.line("out[0] = '\\0';")
-		g.line(`for (int i = 0; i < parts.len; i++) { if (i > 0) strcat(out, "/"); strcat(out, parts.data[i]); }`)
-		g.line("return out;")
+		g.line(`if (parts.len == 0) return FORGE_STR_EMPTY;`)
+		g.line("int32_t total = 0;")
+		g.line("for (int i = 0; i < parts.len; i++) total += parts.data[i].len + 1;")
+		g.line("uint8_t* out = (uint8_t*)malloc(total + 1);")
+		g.line("int32_t pos = 0;")
+		g.line("for (int i = 0; i < parts.len; i++) {")
+		g.indent++
+		g.line(`if (i > 0) { out[pos++] = '/'; }`)
+		g.line("memcpy(out + pos, parts.data[i].data, parts.data[i].len);")
+		g.line("pos += parts.data[i].len;")
+		g.indent--
+		g.line("}")
+		g.line("out[pos] = '\\0';")
+		g.line("return (forge_string){.data = out, .len = pos, .cap = pos};")
 		g.indent--
 		g.line("}")
 		g.line("")
@@ -998,13 +1014,12 @@ func (g *cGen) emitStmt(s *LStmt) {
 		} else if len(d.Values) == 2 && g.currentFunc != nil && g.currentFunc.ReturnType != nil && g.currentFunc.ReturnType.Kind == LTyErrorResult {
 			// (value, error) pair return
 			resultName := g.resultTypeName(g.currentFunc.ReturnType.Elem)
-			errVal := g.emitValue(&d.Values[1])
 			valStr := g.emitValue(&d.Values[0])
 			// If error is not nil/null, it's an error return
 			if d.Values[1].Kind == LValLitNull || d.Values[1].Kind == LValLitString && d.Values[1].StrVal == "" {
 				g.linef("return forge_ok(%s, %s);", valStr, resultName)
 			} else {
-				g.linef("return forge_err(%s, %s);", errVal, resultName)
+				g.linef("return forge_err(%s, %s);", g.emitValueAsCStr(&d.Values[1]), resultName)
 			}
 		} else {
 			g.linef("return %s;", g.emitValue(&d.Values[0]))
@@ -1454,9 +1469,11 @@ func (g *cGen) emitMultiAssign(d *LMultiAssign) {
 		if d.Names[0] != "_" {
 			valType := g.cType(elemType)
 			g.linef("%s %s = %s.value;", valType, d.Names[0], tmpName)
+			g.varTypes[d.Names[0]] = elemType
 		}
 		if d.Names[1] != "_" {
 			g.linef("const char* %s = %s.error;", d.Names[1], tmpName)
+			g.varTypes[d.Names[1]] = &LType{Kind: LTyError}
 		}
 	} else if len(d.Names) == 2 && d.Expr.Type != nil && d.Expr.Type.Kind == LTyTuple {
 		tmpName := fmt.Sprintf("_multi_%d", g.nextTemp())
@@ -1502,7 +1519,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		}
 		if name == "fmt.Errorf" || name == "errors.New" {
 			if len(d.Args) > 0 {
-				return g.emitValue(&d.Args[0])
+				return g.emitValueAsCStr(&d.Args[0])
 			}
 			return `"error"`
 		}
@@ -1513,7 +1530,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		if name == "strconv.Atoi" && len(d.Args) > 0 {
 			resultType := g.resultTypeName(&LType{Kind: LTyI32})
 			return fmt.Sprintf("({ int _v = atoi(%s); %s _r = forge_ok(_v, %s); _r; })",
-				g.emitValue(&d.Args[0]), resultType, resultType)
+				g.emitValueAsCStr(&d.Args[0]), resultType, resultType)
 		}
 		// strings stdlib
 		if name == "strings.ToUpper" && len(d.Args) > 0 {
@@ -1602,9 +1619,28 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 	case LExprClassAlloc:
 		d := e.Data.(*LClassAllocData)
 		name := g.structName(d.Class, false)
+		// Look up class fields for optional wrapping
+		var classFields []LField
+		for _, c := range g.prog.Classes {
+			if c.Name == d.Class {
+				classFields = c.Fields
+				break
+			}
+		}
 		var fieldInits []string
 		for _, f := range d.Fields {
-			fieldInits = append(fieldInits, fmt.Sprintf(".%s = %s", lcFirst(f.Name), g.emitValue(&f.Value)))
+			val := g.emitValue(&f.Value)
+			// Auto-wrap non-null values for optional fields
+			if fieldType := g.findClassField(classFields, f.Name); fieldType != nil && fieldType.Kind == LTyOptional {
+				if f.Value.Kind == LValLitNull {
+					optName := g.optTypeName(fieldType.Elem)
+					val = fmt.Sprintf("forge_none(%s)", optName)
+				} else if f.Value.Type == nil || f.Value.Type.Kind != LTyOptional {
+					optName := g.optTypeName(fieldType.Elem)
+					val = fmt.Sprintf("forge_some(%s, %s)", val, optName)
+				}
+			}
+			fieldInits = append(fieldInits, fmt.Sprintf(".%s = %s", lcFirst(f.Name), val))
 		}
 		return fmt.Sprintf("({ %s* _p = malloc(sizeof(%s)); *_p = (%s){%s}; _p; })",
 			name, name, name, strings.Join(fieldInits, ", "))
@@ -1656,13 +1692,13 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		// String equality
 		if d.Left.Type != nil && d.Left.Type.Kind == LTyString {
 			if d.Op == LBinEq {
-				return fmt.Sprintf("(strcmp(%s, %s) == 0)", left, right)
+				return fmt.Sprintf("forge_str_eq(%s, %s)", left, right)
 			}
 			if d.Op == LBinNe {
-				return fmt.Sprintf("(strcmp(%s, %s) != 0)", left, right)
+				return fmt.Sprintf("(!forge_str_eq(%s, %s))", left, right)
 			}
 			if d.Op == LBinAdd {
-				return fmt.Sprintf("forge_sprintf(\"%%s%%s\", %s, %s)", left, right)
+				return fmt.Sprintf("forge_str_concat(%s, %s)", left, right)
 			}
 		}
 		return fmt.Sprintf("(%s %s %s)", left, cBinOp(d.Op), right)
@@ -1705,9 +1741,9 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		d := e.Data.(*LIndexGetData)
 		coll := g.emitValue(&d.Collection)
 		idx := g.emitValue(&d.Index)
-		// String indexing returns a char
+		// String indexing returns a byte — strings are [u8] slices
 		if d.Collection.Type != nil && d.Collection.Type.Kind == LTyString {
-			return fmt.Sprintf("%s[%s]", coll, idx)
+			return fmt.Sprintf("%s.data[%s]", coll, idx)
 		}
 		return fmt.Sprintf("%s.data[%s]", coll, idx)
 
@@ -1824,7 +1860,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		if d.Err.Kind == LValLitNull || (d.Err.Kind == LValLitString && d.Err.StrVal == "") {
 			return fmt.Sprintf("forge_ok(%s, %s)", g.emitValue(&d.Value), resultName)
 		}
-		return fmt.Sprintf("forge_err(%s, %s)", g.emitValue(&d.Err), resultName)
+		return fmt.Sprintf("forge_err(%s, %s)", g.emitValueAsCStr(&d.Err), resultName)
 
 	case LExprMakeSlice:
 		sliceType := g.sliceTypeNameFromType(e.Type)
@@ -1923,7 +1959,7 @@ func (g *cGen) emitValue(v *LValue) string {
 	case LValLitFloat:
 		return fmt.Sprintf("%g", v.FloatVal)
 	case LValLitString:
-		return fmt.Sprintf("%q", v.StrVal)
+		return fmt.Sprintf("FORGE_STR(%q)", v.StrVal)
 	case LValLitBool:
 		if v.BoolVal {
 			return "true"
@@ -1936,6 +1972,32 @@ func (g *cGen) emitValue(v *LValue) string {
 	}
 }
 
+// emitValueAsCStr emits a value as a const char* (for C interop like error messages).
+// For string literals, emits the raw C string without FORGE_STR wrapping.
+// For forge_string values, extracts .data with a cast.
+func (g *cGen) emitValueAsCStr(v *LValue) string {
+	if v.Kind == LValLitString {
+		return fmt.Sprintf("%q", v.StrVal)
+	}
+	// If the value is already a const char* (e.g., error type), use it directly
+	if v.Kind == LValTemp {
+		if ty, ok := g.tempTypes[v.TempID]; ok && ty != nil && ty.Kind == LTyError {
+			return g.emitValue(v)
+		}
+		// Also check varTypes — multi-return destructuring creates VarDecls with _tN names
+		varName := fmt.Sprintf("_t%d", v.TempID)
+		if ty, ok := g.varTypes[varName]; ok && ty != nil && ty.Kind == LTyError {
+			return g.emitValue(v)
+		}
+	}
+	if v.Kind == LValVar {
+		if ty, ok := g.varTypes[v.Name]; ok && ty != nil && ty.Kind == LTyError {
+			return g.emitValue(v)
+		}
+	}
+	return fmt.Sprintf("(const char*)%s.data", g.emitValue(v))
+}
+
 // ---------------------------------------------------------------------------
 // Builtins
 // ---------------------------------------------------------------------------
@@ -1944,7 +2006,7 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 	switch d.Name {
 	case "len", "string_len":
 		if len(d.Args) > 0 && d.Args[0].Type != nil && d.Args[0].Type.Kind == LTyString {
-			return fmt.Sprintf("((int32_t)strlen(%s))", g.emitValue(&d.Args[0]))
+			return fmt.Sprintf("%s.len", g.emitValue(&d.Args[0]))
 		}
 		return fmt.Sprintf("%s.len", g.emitValue(&d.Args[0]))
 
@@ -2026,18 +2088,18 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 		}
 	case "string_to_upper":
 		if len(d.Args) > 0 {
-			return g.emitValue(&d.Args[0]) + " /* string_to_upper not implemented */"
+			return fmt.Sprintf("forge_toupper(%s)", g.emitValue(&d.Args[0]))
 		}
 	case "string_to_lower":
 		if len(d.Args) > 0 {
-			return g.emitValue(&d.Args[0]) + " /* string_to_lower not implemented */"
+			return fmt.Sprintf("forge_tolower(%s)", g.emitValue(&d.Args[0]))
 		}
 	case "string_split":
 		sliceType := g.sliceTypeName(&LType{Kind: LTyString})
 		return fmt.Sprintf("forge_slice_empty(%s) /* string_split not implemented */", sliceType)
 	case "string_trim":
 		if len(d.Args) > 0 {
-			return g.emitValue(&d.Args[0]) + " /* string_trim not implemented */"
+			return fmt.Sprintf("forge_str_trim(%s)", g.emitValue(&d.Args[0]))
 		}
 	case "map_len":
 		return "0 /* map_len: maps not supported */"
@@ -2151,6 +2213,10 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 		if len(d.Args) > 0 {
 			return fmt.Sprintf("forge_atoi(%s)", g.emitValue(&d.Args[0]))
 		}
+	case "parse_float":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_parse_float(%s)", g.emitValue(&d.Args[0]))
+		}
 	case "char_to_string":
 		if len(d.Args) > 0 {
 			return fmt.Sprintf("forge_char_to_string(%s)", g.emitValue(&d.Args[0]))
@@ -2203,24 +2269,26 @@ func (g *cGen) emitPrintf(args []LValue) string {
 	if len(args) == 0 {
 		return `printf("")`
 	}
+	// Format string is forge_string — extract .data for C's printf
+	fmtArg := fmt.Sprintf("(const char*)%s.data", g.emitValue(&args[0]))
 	rest := make([]string, 0, len(args)-1)
 	for _, a := range args[1:] {
 		rest = append(rest, g.emitValue(&a))
 	}
 	if len(rest) == 0 {
-		return fmt.Sprintf("printf(%s)", g.emitValue(&args[0]))
+		return fmt.Sprintf("printf(%s)", fmtArg)
 	}
-	return fmt.Sprintf("printf(%s, %s)", g.emitValue(&args[0]), strings.Join(rest, ", "))
+	return fmt.Sprintf("printf(%s, %s)", fmtArg, strings.Join(rest, ", "))
 }
 
 func (g *cGen) emitSprintf(args []LValue) string {
 	if len(args) == 0 {
-		return `""`
+		return `FORGE_STR_EMPTY`
 	}
-	// First arg is format string
-	fmtStr := g.emitValue(&args[0])
+	// First arg is format string (forge_string — extract .data for C's printf family)
+	fmtStr := fmt.Sprintf("(const char*)%s.data", g.emitValue(&args[0]))
 	if len(args) == 1 {
-		return fmtStr
+		return g.emitValue(&args[0])
 	}
 	rest := make([]string, 0, len(args)-1)
 	for _, a := range args[1:] {
@@ -2245,7 +2313,7 @@ func (g *cGen) emitFormat(d *LFormatData) string {
 	}
 	fmtStr := strings.Join(fmtParts, "")
 	if len(argParts) == 0 {
-		return fmt.Sprintf(`"%s"`, fmtStr)
+		return fmt.Sprintf(`FORGE_STR("%s")`, fmtStr)
 	}
 	return fmt.Sprintf(`forge_sprintf("%s", %s)`,
 		fmtStr, strings.Join(argParts, ", "))
@@ -2259,6 +2327,12 @@ func (g *cGen) printfSpecAndArg(v *LValue) (string, string) {
 	if v.Kind == LValTemp {
 		if resolved, ok := g.tempTypes[v.TempID]; ok && resolved != nil {
 			t = resolved
+		} else {
+			// Multi-return destructuring creates VarDecls with _tN names
+			varName := fmt.Sprintf("_t%d", v.TempID)
+			if resolved, ok := g.varTypes[varName]; ok && resolved != nil {
+				t = resolved
+			}
 		}
 	} else if v.Kind == LValVar {
 		if resolved, ok := g.varTypes[v.Name]; ok && resolved != nil {
@@ -2282,6 +2356,8 @@ func (g *cGen) printfSpecAndArg(v *LValue) (string, string) {
 	case LTyBool:
 		return "%s", fmt.Sprintf("forge_bool_str(%s)", g.emitValue(v))
 	case LTyString:
+		return "%.*s", fmt.Sprintf("(int)%s.len, (const char*)%s.data", g.emitValue(v), g.emitValue(v))
+	case LTyError:
 		return "%s", g.emitValue(v)
 	default:
 		return "%d", g.emitValue(v)
@@ -2379,7 +2455,7 @@ func (g *cGen) cType(t *LType) string {
 	case LTyBool:
 		return "bool"
 	case LTyString:
-		return "const char*"
+		return "forge_string"
 	case LTyPlatformInt:
 		return "int"
 	case LTyPlatformUint:
@@ -2764,7 +2840,7 @@ func (g *cGen) zeroValue(t *LType) string {
 	case LTyBool:
 		return "false"
 	case LTyString:
-		return `""`
+		return "FORGE_STR_EMPTY"
 	case LTyClassHandle:
 		return "NULL"
 	case LTyOptional:
@@ -2856,6 +2932,8 @@ func (g *cGen) inferExprType(e *LExpr) *LType {
 		switch d.Func {
 		case "strings.ToUpper", "strings.ToLower", "strconv.Itoa":
 			return &LType{Kind: LTyString}
+		case "fmt.Errorf", "errors.New":
+			return &LType{Kind: LTyError}
 		}
 		for _, fn := range g.prog.Functions {
 			if fn.Name == d.Func || (fn.IsExported && fn.Name == cSafeName(d.Func)) {
@@ -3002,6 +3080,20 @@ func (g *cGen) inferExprType(e *LExpr) *LType {
 			if len(d.Args) > 0 && d.Args[0].Type != nil && d.Args[0].Type.Kind == LTyMap {
 				return &LType{Kind: LTySlice, Elem: d.Args[0].Type.Elem}
 			}
+		case "itoa", "char_to_string":
+			return &LType{Kind: LTyString}
+		case "hash_string":
+			return &LType{Kind: LTyU64, Bits: 64}
+		case "atoi":
+			return &LType{Kind: LTyTuple, Fields: []LField{
+				{Name: "val", Type: &LType{Kind: LTyI64, Bits: 64}},
+				{Name: "ok", Type: &LType{Kind: LTyBool}},
+			}}
+		case "parse_float":
+			return &LType{Kind: LTyTuple, Fields: []LField{
+				{Name: "val", Type: &LType{Kind: LTyF64, Bits: 64}},
+				{Name: "ok", Type: &LType{Kind: LTyBool}},
+			}}
 		case "string_split":
 			return &LType{Kind: LTySlice, Elem: &LType{Kind: LTyString}}
 		}
@@ -3033,6 +3125,17 @@ func cSafeName(name string) string {
 }
 
 // lcFirst lowercases the first character of a string (for C struct field names)
+
+// findClassField looks up a field type by name in a class's field list.
+func (g *cGen) findClassField(fields []LField, name string) *LType {
+	lcName := lcFirst(name)
+	for _, f := range fields {
+		if f.Name == name || f.Name == lcName {
+			return f.Type
+		}
+	}
+	return nil
+}
 func lcFirst(s string) string {
 	if s == "" {
 		return s

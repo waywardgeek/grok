@@ -195,12 +195,10 @@ func cmdCompile(args []string) error {
 	// Merge stdlib interfaces into all files before desugaring
 	stdlibDir := ast.FindStdlibDir()
 	if stdlibDir != "" {
-		stdPath := filepath.Join(stdlibDir, "std.fg")
-		if stdSrc, err := os.ReadFile(stdPath); err == nil {
-			if stdFile, err := parser.ParseFile(string(stdSrc), stdPath); err == nil {
-				for _, pf := range files {
-					ast.MergeStdlib(pf.file, stdFile)
-				}
+		stdFile := loadStdlib(stdlibDir)
+		if stdFile != nil {
+			for _, pf := range files {
+				ast.MergeStdlib(pf.file, stdFile)
 			}
 		}
 	}
@@ -250,4 +248,36 @@ func cmdCompile(args []string) error {
 	}
 	fmt.Printf("wrote %s\n", out)
 	return nil
+}
+
+
+// loadStdlib loads and parses all .fg files from the stdlib directory,
+// merging them into a single ast.File for use with MergeStdlib.
+func loadStdlib(dir string) *ast.File {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var combined *ast.File
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".fg") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		src, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		file, err := parser.ParseFile(string(src), path)
+		if err != nil {
+			continue
+		}
+		if combined == nil {
+			combined = file
+		} else {
+			// Merge blocks from this file into the combined file
+			combined.Blocks = append(combined.Blocks, file.Blocks...)
+		}
+	}
+	return combined
 }
