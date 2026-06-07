@@ -1,148 +1,121 @@
-// bootstrap.forge — Understanding-Driven Development for the Forge bootstrap compiler
-// This is the self-hosting Forge compiler written in Forge, compiled via C backend.
-
-forge bootstrap {
-  why: "Self-hosting compiler: Forge source → C → native binary. Proves the language can express its own toolchain. Seven files: ast.fg (types), lexer.fg (tokenization), parser.fg (PEG/Pratt parsing), expr_parser.fg (expressions/statements/patterns), desugar.fg (AST transforms), checker.fg (type checking)."
+// bootstrap.forge — understanding doc for the bootstrap compiler files
+//
+// Covers: ast.fg, lexer.fg, parser.fg, expr_parser.fg, desugar.fg,
+//         checker.fg, lir.fg, lowerer.fg
+forge Bootstrap {
+  why: "Self-hosting bootstrap of the Forge compiler. Ports the Go compiler (parser → checker → lowerer → LIR) into Forge itself, targeting the C backend via monomorphization. The bootstrap is also the primary design feedback loop — every friction point drives language improvement."
 
   doc "Architecture": """
-    The bootstrap compiler is a port of the Go compiler (pkg/parser/, pkg/ast/)
-    into Forge itself. It targets the C backend exclusively — the Go backend was
-    deleted. The four files form a single `forge` compilation unit merged by
-    MergeFiles before lowering.
+    Eight .fg files form a complete frontend pipeline:
 
-    Data flow: source string → Lexer → Token stream → Parser → AST (File)
+    Source → Lexer → Parser/ExprParser → AST → Desugar → Checker → Lowerer → LIR
 
-    Key design choices:
-    - ast.fg defines ALL types: the parser imports nothing, just uses them
-    - lexer.fg and parser.fg are separate forge blocks but share the same
-      compilation unit (both `forge lexer` and `forge parser` blocks)
-    - expr_parser.fg is a second `forge parser` block — Forge merges blocks
-      with the same name, so all Parser methods are available across both files
+    All files compile together: forge compile --c bootstrap/*.fg
+    Output: a single C file (~16K lines) linked against forge_runtime.h.
 
-    Compilation command:
-      forge compile --c bootstrap/ast.fg bootstrap/lexer.fg \
-        bootstrap/parser.fg bootstrap/expr_parser.fg bootstrap/desugar.fg \
-        bootstrap/checker.fg
-      gcc -std=gnu11 -o forge-bootstrap ast.c -Iruntime/ -lpthread
+    The bootstrap does NOT yet include: optimizer, monomorphizer, C backend.
+    Those are the remaining passes needed for full self-hosting.
   """
 
-  doc "Invariants": """
-    1. Sym for identifiers, string for raw text. All AST name fields (FuncDecl.name,
-       ClassDecl.name, Param.name, etc.) are Sym?. Token.text is string (raw lexed
-       text). Sym is created via sym() at parse time when the text becomes a semantic
-       identifier. String stays string only for: source text, literal values, file
-       paths, doc content, error messages.
+  doc "Invariants — Data Variant Dispatch": """
+    The Go compiler uses `any`-typed Data fields + Kind enum for tagged unions
+    (Expr, Stmt, LExpr, LStmt). The bootstrap CANNOT use this pattern because:
+    1. Forge `any` maps to `void*` in C — no type recovery without casts
+    2. C has no type assertions or runtime type info
 
-    2. ArrayList relations for parent→child ownership. Every parent→[child] is
-       modeled as `relation ArrayList Parent:label owns [Child:label]`. Never use
-       bare `[Child]` fields on classes for owned collections — use relations so
-       destructors cascade correctly.
+    Solution: nullable fields per variant on class types. LExpr has one nullable
+    field per LExprKind (bin_op: LBinOpData?, call: LCallData?, etc.). Only the
+    field matching `kind` is non-null. This is more verbose but fully type-safe
+    in C.
 
-    3. Classes for identity types, structs for value types. AST nodes are classes
-       (heap-allocated, passed by reference). Pos, Span, RelationSide,
-       StructLitField, LexerState, ArgListResult are structs (stack-allocated,
-       copied by value).
-
-    4. Error model: (T?, error) tuples with ? operator. All fallible parse methods
-       return (T?, error). The ? operator extracts and early-returns on error.
-       Error is the stdlib concrete error class.
-
-    5. Two forge blocks merge into one. parser.fg declares `forge parser` and
-       expr_parser.fg also declares `forge parser`. The compiler's MergeFiles
-       combines them. All Parser methods, helper functions, and constants from
-       both files are available to each other.
-
-    6. Keyword lookup uses Dict<TokenKind> on the Lexer. The dicts are
-       initialized in new_lexer() via init_keywords() and init_annot_keywords().
-       O(1) hash lookup via Sym keys. No global mutable state — each Lexer
-       instance owns its keyword tables.
-
-    7. Token.text preserves original source text. Even for keywords, text contains
-       the matched string ("func", "class", etc.). The parser converts to Sym via
-       sym(tok.text) when storing in AST nodes.
-
-    8. `from` is a reserved keyword in Forge. Cannot be used as a parameter name.
-       Use `src` or similar alternatives. Other reserved keywords that commonly
-       conflict: `type`, `match`, `in`, `select`, `spawn`, `lock`.
-
-    9. Tuple field access `.0`, `.1` is NOT supported in Forge syntax. Use
-       tuple destructuring (`let a, b = expr`) or manual if-else for small
-       index ranges. The parser cannot distinguish `.0` (field access) from
-       a float literal.
-
-    10. `resolved_type: Type?` on Expr creates cross-block C type ordering issues.
-        Type is defined in checker.fg but Expr is in ast.fg. Since the C backend
-        emits structs in declaration order, ForgeOpt_Type may not exist when Expr
-        is defined. For bootstrap, the checker stores types externally rather than
-        annotating Expr directly.
+    This applies to: Expr (ast.fg), Stmt (ast.fg), LExpr (lir.fg), LStmt (lir.fg).
   """
 
-  doc "Coding Conventions": """
-    - Use sym(tok.text) when storing identifier text into AST Sym? fields
-    - Use new_string_builder() for string building, not concatenation
-    - Use array_append<P, C>(parent, child) for relation-managed collections
-    - Use append(slice, elem) only for non-relation slices (implements, args, etc.)
-    - External methods: `func T.method(self)` not methods inside class body
-      (except for simple getters in stdlib classes)
-    - Match expressions for dispatch, if-else for simple boolean checks
-    - Positional struct literals for small structs (Pos, Span), named fields for
-      larger ones (FuncDecl, ClassDecl)
-    - TODOs are acceptable for unimplemented features; never use wrong patterns
-      as shortcuts
+  doc "Invariants — No If-Expressions": """
+    Forge does not support if-as-expression: `let x = if cond { a } else { b }`.
+    All conditional assignment must use the pattern:
+      let mut x = default_value
+      if cond {
+        x = desired_value
+      }
+
+    This is tracked in TODO as a language improvement item.
   """
 
-  doc "Known TODOs": """
-    - Module/import system: currently all files merge into one flat namespace.
-      Post-bootstrap priority — design in Forge after self-hosting, not in Go.
-      Will need: import syntax, directory-based modules, cross-module name
-      resolution, pub visibility across boundaries, auto file discovery.
-    - Type params not stored on StructDecl, EnumDecl, InterfaceDecl, ClassDecl,
-      FuncDecl parse_type_params results (parsed but discarded)
-    - Annotations not parsed (concurrent, requires, ensures, etc.)
-    - source/fake keywords consumed but not stored
-    - why annotations inside struct/enum/class parsed but not stored
-    - Type args not stored on generic struct literals (TypeName<T> { ... })
-    - forge fmt can't handle bootstrap files (keywords in string literals)
+  doc "Invariants — No Line Continuation": """
+    Forge's parser does not support line continuation for binary operators.
+    Multi-condition `if` statements like:
+      if a == "x" || a == "y" || a == "z" { ... }
+    must be on ONE line or extracted into a helper function.
+
+    Preferred pattern: extract to a helper (e.g., is_builtin_name()).
+    This is tracked in TODO as a language improvement item.
+  """
+
+  doc "Invariants — For Loops": """
+    Idiomatic Forge uses `for item in collection` and `for item, idx in collection`
+    instead of C-style while loops. The stdlib provides `range(start, end)`
+    as a generator for index-based iteration: `for i in range(0, len(items))`.
+
+    Do NOT write:
+      let mut i: i32 = 0
+      while i < len(items) { ...; i = i + 1 }
+
+    Write instead:
+      for item in items { ... }
+      for item, idx in items { ... }
+  """
+
+  doc "Invariants — Dict and Sym Usage": """
+    The bootstrap lowerer uses Dict<V> (string-keyed hash table) for all
+    registries: structs, classes, enums, interfaces, type_aliases, func_sigs,
+    scope, class_fields. Keys are Sym (interned symbols via sym("name")).
+
+    API: dict_get(d, sym(name)) -> V?, dict_set(d, sym(name), value).
+    Dict<V> comes from stdlib (std.fg) via MergeStdlib.
+  """
+
+  doc "Invariants — Lowerer Two-Phase Architecture": """
+    The lowerer uses two phases, matching the Go implementation:
+    1. register_block: collect all struct/class/enum/interface/function
+       declarations into Dict registries (no code generation)
+    2. lower_file: walk all blocks, lower declarations to LIR
+
+    This ensures forward references resolve correctly — a function can
+    reference a class declared later in the same file.
+  """
+
+  doc "Invariants — Type Lowering Fallback": """
+    lower_type() resolves AST TypeExpr to LType. For identifier types, it
+    checks (in order): primitives → structs → classes → enums → type aliases.
+    If nothing matches, it assumes LTyTypeVar (generic type parameter).
+
+    This means typos in type names silently become type variables rather than
+    errors. The checker should catch these, but during bootstrap the checker's
+    cross-file resolution has gaps (produces non-fatal warnings).
   """
 
   doc "File Map": """
-    ast.fg          — 391 lines. AST type definitions. forge ast { } block.
-                      Structs: Pos, Span, RelationSide, StructLitField.
-                      Enums: TypeExprKind, ExprKind, StmtKind, PatternKind,
-                             UnaryOp, BinaryOp, ImplMappingKind, RelationKind.
-                      ~25 classes, ~15 ArrayList relations.
-
-    lexer.fg        — 641 lines. Lexer + Token. forge lexer { } block.
-                      TokenKind enum (~80 variants), Lexer class with
-                      save/restore state, character helpers, literal scanners
-                      (string, char, number, fstring, triple-string),
-                      keyword lookup via if-else chains.
-
-    parser.fg       — 1120 lines. Top-level + declaration parsing. forge parser { }.
-                      Parses: forge blocks, structs, enums, interfaces, classes,
-                      functions, relations, impl blocks, imports, type aliases,
-                      type expressions, where clauses.
-
-    expr_parser.fg  — 1118 lines. Expressions + statements. forge parser { }.
-                      Pratt parser with 12 precedence levels. Parses: all
-                      expression kinds, all statement kinds, patterns, match
-                      arms, blocks, struct/map/list/tuple literals, lambdas,
-                      casts, f-string interpolation.
-
-    desugar.fg      — ~760 lines. AST desugaring passes. forge desugar { }.
-                      5 passes (must run in order): InterfaceEmbeds,
-                      InterfaceFields, Relations, Destructors, DefaultImpls.
-                      Helper functions for type param substitution, deep copy,
-                      field type rewriting. Entry point: desugar_all(file).
-
-    checker.fg      — ~1760 lines. Type checker. forge checker { } block.
-                      Two-phase: register_forge_block (types/signatures) then
-                      check_forge_block_bodies (function bodies). TypeKind enum
-                      with 20+ kinds. Scope chain with parent pointers, Dict<Type>
-                      for variable lookups. Numeric widening, pattern binding for
-                      match arms, enum variant destructuring.
-                      Entry point: check_file(file: File) -> Checker.
+    ast.fg         — AST node classes (File, ForgeBlock, Expr, Stmt, TypeExpr, etc.)
+    lexer.fg       — Tokenizer with TokenKind enum, keyword tables via Dict
+    parser.fg      — Statement parser, top-level declarations
+    expr_parser.fg — Expression parser (Pratt precedence climbing)
+    desugar.fg     — 5-pass desugaring (embeds, fields, relations, destructors, defaults)
+    checker.fg     — Two-phase type checker (register then check), scope chain
+    lir.fg         — LIR type system (LType, LValue, LExpr, LStmt, LProgram)
+    lowerer.fg     — AST → LIR translation (flatten exprs, resolve sugar)
   """
 
-  source: ["bootstrap/ast.fg", "bootstrap/lexer.fg", "bootstrap/parser.fg", "bootstrap/expr_parser.fg", "bootstrap/desugar.fg", "bootstrap/checker.fg"]
+  doc "Remaining Work": """
+    To reach self-hosting, the bootstrap needs:
+    1. optimizer.fg — side-effect elimination, multi-return destructuring
+    2. monomorphizer.fg — generic specialization (required for C)
+    3. c_backend.fg — C code emission from LIR
+    4. main.fg — CLI entry point
+
+    Alternative milestone: compile the existing 8 files into a working parser
+    binary that can parse .fg files and print AST.
+  """
+
+  source: ["ast.fg", "lexer.fg", "parser.fg", "expr_parser.fg", "desugar.fg", "checker.fg", "lir.fg", "lowerer.fg"]
 }
