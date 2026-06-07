@@ -239,6 +239,19 @@ func (g *cGen) generate() string {
 		g.line("")
 	}
 
+	// Emit global constants/variables
+	for _, gv := range g.prog.Globals {
+		cType := g.cType(gv.Type)
+		if gv.Init != nil {
+			g.linef("static %s %s = %s;", cType, cSafeName(gv.Name), g.emitValue(gv.Init))
+		} else {
+			g.linef("static %s %s;", cType, cSafeName(gv.Name))
+		}
+	}
+	if len(g.prog.Globals) > 0 {
+		g.line("")
+	}
+
 	// Emit vtable definitions (after forward decls so method names are known)
 	for _, c := range g.prog.Classes {
 		className := g.structName(c.Name, c.IsExported)

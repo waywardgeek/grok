@@ -335,9 +335,19 @@ type ForgeBlock struct {
 	Relations   []RelationDecl
 	ImplBlocks  []ImplBlock
 	TypeAliases []TypeAliasDecl
+	Constants   []ConstDecl
 	Source      []string
 	Fake        string
 	Span        Span
+}
+
+// ConstDecl represents a top-level constant: let NAME: Type = value
+type ConstDecl struct {
+	Name     string
+	Type     *TypeExpr // nil if inferred
+	Value    Expr
+	IsPublic bool
+	Span     Span
 }
 
 // Comment represents a line comment in the source.

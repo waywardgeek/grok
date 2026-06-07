@@ -29,7 +29,8 @@ func (e *ParseError) Error() string {
 type Parser struct {
 	lex       *Lexer
 	errors    []error
-	exprDepth int // tracks nesting inside () and [] where { can't start a block
+	exprDepth int    // tracks nesting inside () and [] where { can't start a block
+	pushed    *Token // pushed-back token (for >> splitting)
 }
 
 // ParseFile parses a .forge or .fg file into an AST.
@@ -44,8 +45,23 @@ func ParseString(source string) (*ast.File, error) {
 	return ParseFile(source, "<string>")
 }
 
-func (p *Parser) peek() Token  { return p.lex.Peek() }
-func (p *Parser) next() Token  { return p.lex.Next() }
+func (p *Parser) peek() Token {
+	if p.pushed != nil {
+		return *p.pushed
+	}
+	return p.lex.Peek()
+}
+func (p *Parser) next() Token {
+	if p.pushed != nil {
+		t := *p.pushed
+		p.pushed = nil
+		return t
+	}
+	return p.lex.Next()
+}
+func (p *Parser) pushBack(t Token) {
+	p.pushed = &t
+}
 
 func (p *Parser) skipNewlines() {
 	for p.peek().Kind == TNewline {
@@ -332,6 +348,13 @@ func (p *Parser) parseForgeItem(block *ast.ForgeBlock) error {
 			return err
 		}
 		block.Fake = fake
+	case TLet:
+		c, err := p.parseConstDecl()
+		if err != nil {
+			return err
+		}
+		c.IsPublic = isPub
+		block.Constants = append(block.Constants, *c)
 
 	default:
 		return &ParseError{
@@ -1614,7 +1637,7 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 		var args []ast.TypeExpr
 		if p.peek().Kind == TLt {
 			p.next()
-			for p.peek().Kind != TGt && p.peek().Kind != TEOF {
+			for p.peek().Kind != TGt && p.peek().Kind != TShr && p.peek().Kind != TEOF {
 				arg, err := p.parseTypeExpr()
 				if err != nil {
 					return nil, err
@@ -1624,7 +1647,14 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 					p.next()
 				}
 			}
-			if _, err := p.expect(TGt); err != nil {
+			if p.peek().Kind == TShr {
+				// >> is two > tokens — consume one, push back the other
+				tok := p.next()
+				p.pushBack(Token{Kind: TGt, Text: ">", Span: ast.Span{
+					Start: ast.Pos{File: tok.Span.Start.File, Line: tok.Span.Start.Line, Column: tok.Span.Start.Column + 1},
+					End:   tok.Span.End,
+				}})
+			} else if _, err := p.expect(TGt); err != nil {
 				return nil, err
 			}
 		}
@@ -1740,6 +1770,20 @@ func (p *Parser) parseRelation() (*ast.RelationDecl, error) {
 
 func (p *Parser) parseRelationSideFrom(nameTok Token) ast.RelationSide {
 	side := ast.RelationSide{TypeName: nameTok.Text}
+	// Consume optional type parameters: <V>, <K, V>, etc.
+	if p.peek().Kind == TLt {
+		p.next() // consume '<'
+		depth := 1
+		for depth > 0 && p.peek().Kind != TEOF {
+			switch p.peek().Kind {
+			case TLt:
+				depth++
+			case TGt:
+				depth--
+			}
+			p.next()
+		}
+	}
 	// Check for :label — label can be an ident or a contextual keyword used as name
 	if p.peek().Kind == TColon {
 		p.next()
@@ -1790,4 +1834,40 @@ func (p *Parser) parseFake() (string, error) {
 		return "", err
 	}
 	return tok.Text, nil
+}
+
+// parseConstDecl parses a top-level constant: let NAME: Type = value
+func (p *Parser) parseConstDecl() (*ast.ConstDecl, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'let'
+
+	name, err := p.expectIdentLike()
+	if err != nil {
+		return nil, err
+	}
+
+	decl := &ast.ConstDecl{Name: name.Text}
+
+	// Optional type annotation
+	if p.peek().Kind == TColon {
+		p.next()
+		typ, err := p.parseTypeExpr()
+		if err != nil {
+			return nil, err
+		}
+		decl.Type = typ
+	}
+
+	// Required initializer
+	if _, err := p.expect(TAssign); err != nil {
+		return nil, err
+	}
+	val, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	decl.Value = *val
+	decl.Span = ast.Span{Start: start, End: p.peek().Span.Start}
+
+	return decl, nil
 }

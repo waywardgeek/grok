@@ -160,6 +160,30 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 		}
 
 		// Lower functions (including class methods)
+		for _, con := range block.Constants {
+			var typ *LType
+			if con.Type != nil {
+				typ = l.lowerTypeExpr(con.Type)
+			}
+			g := LVarDecl{
+				Name:    con.Name,
+				Mutable: false,
+			}
+			if con.Value.Kind != 0 {
+				val := l.lowerExpr(&con.Value)
+				g.Init = &val
+				if typ == nil {
+					typ = val.Type
+				}
+			}
+			if typ == nil {
+				typ = &LType{Kind: LTyI32, Bits: 32}
+			}
+			g.Type = typ
+			prog.Globals = append(prog.Globals, g)
+			l.exported[con.Name] = con.IsPublic
+		}
+
 		for _, fn := range block.Functions {
 			prog.Functions = append(prog.Functions, l.lowerFuncDecl(&fn, ""))
 		}

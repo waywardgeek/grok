@@ -2268,6 +2268,18 @@ func (c *Checker) checkForgeBlock(block *ast.ForgeBlock) {
 		c.scope.Define(ta.Name, resolved)
 	}
 
+	// Register top-level constants
+	for i := range block.Constants {
+		con := &block.Constants[i]
+		var typ *Type
+		if con.Type != nil {
+			typ = c.resolveTypeExpr(con.Type)
+		} else {
+			typ = c.checkExpr(&con.Value)
+		}
+		c.scope.Define(con.Name, typ)
+	}
+
 	// Register functions in scope
 	for i := range block.Functions {
 		c.registerFunc(&block.Functions[i])

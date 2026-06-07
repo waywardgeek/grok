@@ -129,6 +129,14 @@ func collectUsedTypeNames(file *File) map[string]bool {
 			for _, f := range cls.Fields {
 				collectTypeNames(&f.Type, names)
 			}
+			for _, m := range cls.Methods {
+				for _, p := range m.Params {
+					collectTypeNames(&p.Type, names)
+				}
+				if m.ReturnType != nil {
+					collectTypeNames(m.ReturnType, names)
+				}
+			}
 		}
 		for _, fn := range block.Functions {
 			for _, p := range fn.Params {
@@ -191,6 +199,13 @@ func collectUsedFuncNames(file *File) map[string]bool {
 		for _, fn := range block.Functions {
 			if fn.Body != nil {
 				collectFuncCallNames(fn.Body.Stmts, names)
+			}
+		}
+		for _, cls := range block.Classes {
+			for _, m := range cls.Methods {
+				if m.Body != nil {
+					collectFuncCallNames(m.Body.Stmts, names)
+				}
 			}
 		}
 	}
@@ -283,6 +298,28 @@ func collectFuncCallNamesExpr(expr *Expr, names map[string]bool) {
 			}
 		}
 	}
+}
+
+// MergeFiles merges multiple parsed AST files into a single file.
+// All blocks from subsequent files are appended to the first file's blocks.
+// This enables multi-file compilation where cross-file references resolve correctly.
+func MergeFiles(files []*File) *File {
+	if len(files) == 0 {
+		return &File{}
+	}
+	if len(files) == 1 {
+		return files[0]
+	}
+	merged := &File{
+		Filename: files[0].Filename,
+		Blocks:   make([]ForgeBlock, 0),
+		Span:     files[0].Span,
+	}
+	for _, f := range files {
+		merged.Blocks = append(merged.Blocks, f.Blocks...)
+		merged.Comments = append(merged.Comments, f.Comments...)
+	}
+	return merged
 }
 
 // FindStdlibDir locates the stdlib directory.

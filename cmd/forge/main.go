@@ -234,27 +234,40 @@ func cmdCompile(args []string) error {
 		}
 	}
 
+	// Merge all files into one for unified lowering (cross-file references)
+	var allFiles []*ast.File
 	for _, pf := range files {
-		out := pf.output
-		lowerer := lir.NewLowerer()
-		prog := lowerer.Lower(pf.file)
-		prog.Package = pkg
-		lir.Optimize(prog)
-		if useMono {
-			lir.Monomorphize(prog)
-		}
-		lir.RewriteImplRenames(prog)
-		var src string
-		if useC {
-			src = lir.EmitC(prog)
-		} else {
-			src = lir.EmitGo(prog)
-		}
-
-		if err := os.WriteFile(out, []byte(src), 0644); err != nil {
-			return fmt.Errorf("writing %s: %w", out, err)
-		}
-		fmt.Printf("wrote %s\n", out)
+		allFiles = append(allFiles, pf.file)
 	}
+	merged := ast.MergeFiles(allFiles)
+
+	out := output
+	if out == "" {
+		ext := ".go"
+		if useC {
+			ext = ".c"
+		}
+		out = strings.TrimSuffix(filepath.Base(inputs[0]), filepath.Ext(inputs[0])) + ext
+	}
+
+	lowerer := lir.NewLowerer()
+	prog := lowerer.Lower(merged)
+	prog.Package = pkg
+	lir.Optimize(prog)
+	if useMono {
+		lir.Monomorphize(prog)
+	}
+	lir.RewriteImplRenames(prog)
+	var src string
+	if useC {
+		src = lir.EmitC(prog)
+	} else {
+		src = lir.EmitGo(prog)
+	}
+
+	if err := os.WriteFile(out, []byte(src), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", out, err)
+	}
+	fmt.Printf("wrote %s\n", out)
 	return nil
 }

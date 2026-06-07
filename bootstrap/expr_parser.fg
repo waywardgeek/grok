@@ -19,7 +19,7 @@ forge parser {
   let PREC_UNARY: i32      = 11  // - !
   let PREC_POSTFIX: i32    = 12  // . () []
 
-  func binary_prec(TokenKind) -> i32 {
+  func binary_prec(kind: TokenKind) -> i32 {
     return match kind {
       OPipePipe => { PREC_OR }
       OAmpAmp   => { PREC_AND }
@@ -43,7 +43,7 @@ forge parser {
     }
   }
 
-  func token_to_binary_op(TokenKind) -> BinaryOp {
+  func token_to_binary_op(kind: TokenKind) -> BinaryOp {
     return match kind {
       OPlus     => { Add }
       OMinus    => { Sub }
@@ -64,6 +64,13 @@ forge parser {
       OShl      => { Shl }
       OShr      => { Shr }
       _         => { Add }
+    }
+  }
+
+  func is_ident_kind(kind: ExprKind) -> bool {
+    return match kind {
+      Ident(_) => { true }
+      _ => { false }
     }
   }
 
@@ -132,7 +139,7 @@ forge parser {
               self.next()
               let args = self.parse_arg_list()?
               expr = Expr {
-                kind: MethodCall(expr!, sym(name!.text), type_args: [], args: args!.elems),
+                kind: MethodCall(expr!, sym(name!.text), [], args!.elems),
                 span: Span { start: expr!.span.start, end: args!.end_pos }
               }
             }
@@ -144,7 +151,7 @@ forge parser {
                 self.next()
                 let args = self.parse_arg_list()?
                 expr = Expr {
-                  kind: MethodCall(expr!, sym(name!.text), type_args: type_args!, args: args!.elems),
+                  kind: MethodCall(expr!, sym(name!.text), type_args!, args!.elems),
                   span: Span { start: expr!.span.start, end: args!.end_pos }
                 }
               } else {
@@ -157,7 +164,7 @@ forge parser {
             }
             PLBrace => {
               // Qualified struct literal: pkg.Type{} — only if expr is ident
-              if expr!.kind is Ident && self.is_struct_lit_ahead() {
+              if is_ident_kind(expr!.kind) && self.is_struct_lit_ahead() {
                 let ident_name = match expr!.kind { Ident(n) => { n } _ => { sym("") } }
                 let qual_name = sym(ident_name.get_name() + "." + name!.text)
                 expr = self.parse_struct_lit(qual_name, expr!.span.start)?
@@ -187,7 +194,7 @@ forge parser {
               kind: Call(expr!, type_args!, args!.elems),
               span: Span { start: expr!.span.start, end: args!.end_pos }
             }
-          } else if type_args != null && self.peek().kind == PLBrace && expr!.kind is Ident && self.is_struct_lit_ahead() {
+          } else if type_args != null && self.peek().kind == PLBrace && is_ident_kind(expr!.kind) && self.is_struct_lit_ahead() {
             // Generic struct literal: TypeName<T> { ... }
             let ident_name = match expr!.kind { Ident(n) => { n } _ => { sym("") } }
             expr = self.parse_struct_lit(ident_name, expr!.span.start)?
@@ -302,7 +309,7 @@ forge parser {
         if tok.text.length > 0 {
           val = <i32>tok.text[0]
         }
-        return (Expr { IntLit(itoa(val), type_hint: sym("u8")), span: tok.span }, null)
+        return (Expr { IntLit(itoa(val), sym("u8")), span: tok.span }, null)
       }
       LFloatLit => {
         self.next()
@@ -488,7 +495,7 @@ forge parser {
         }
       }
       params = append(params, Param {
-        sym(name_tok!.text),
+        name: sym(name_tok!.text),
         type_expr: final_type,
         is_mut: false,
         is_self: false,
@@ -586,7 +593,7 @@ forge parser {
       self.expect(OAssign)?
       let val = self.parse_expr()?
       return (Stmt {
-        VarDecl(sym(""), names: names, type_expr: null, is_mut: is_mut, value: val),
+        VarDecl(sym(""), names, null, is_mut, val),
         span: Span { start: start, end: self.peek().span.start }
       }, null)
     }
@@ -608,7 +615,7 @@ forge parser {
     }
 
     return (Stmt {
-      VarDecl(sym(name!.text), names: [], type_expr: type_ann, is_mut: is_mut, value: val),
+      VarDecl(sym(name!.text), [], type_ann, is_mut, val),
       span: Span { start: start, end: self.peek().span.start }
     }, null)
   }
@@ -691,7 +698,7 @@ forge parser {
       let collection = self.parse_expr()?
       let body = self.parse_block()?
       return (Stmt {
-        For(sym(actual_var!.text), index_var: index_var, collection: collection!, body: body!),
+        For(sym(actual_var!.text), index_var, collection!, body!),
         span: Span { start: start, end: body!.span.end }
       }, null)
     }
@@ -700,7 +707,7 @@ forge parser {
     let collection = self.parse_expr()?
     let body = self.parse_block()?
     return (Stmt {
-      For(sym(var_name!.text), index_var: null, collection: collection!, body: body!),
+      For(sym(var_name!.text), null, collection!, body!),
       span: Span { start: start, end: body!.span.end }
     }, null)
   }
@@ -774,7 +781,7 @@ forge parser {
           }
           self.expect(PRParen)?
           return (Pattern {
-            Variant(sym(tok.text), bindings: bindings),
+            Variant(sym(tok.text), bindings),
             span: Span { start: tok.span.start, end: self.peek().span.end }
           }, null)
         }
@@ -790,7 +797,7 @@ forge parser {
         self.next()
         let mut val: i32 = 0
         if tok.text.length > 0 { val = <i32>tok.text[0] }
-        let expr = Expr { kind: IntLit(itoa(val), type_hint: sym("u8")), span: tok.span }
+        let expr = Expr { kind: IntLit(itoa(val), sym("u8")), span: tok.span }
         return (Pattern { Literal(expr), span: tok.span }, null)
       }
       LStringLit => {

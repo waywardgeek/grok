@@ -1502,7 +1502,7 @@ func (p *Parser) parseFString(tok Token) (*ast.Expr, error) {
 func (p *Parser) tryParseTypeArgs() ([]ast.TypeExpr, bool) {
 	p.next() // consume '<'
 	var typeArgs []ast.TypeExpr
-	for p.peek().Kind != TGt && p.peek().Kind != TEOF {
+	for p.peek().Kind != TGt && p.peek().Kind != TShr && p.peek().Kind != TEOF {
 		te, err := p.parseTypeExpr()
 		if err != nil {
 			return nil, false
@@ -1511,6 +1511,15 @@ func (p *Parser) tryParseTypeArgs() ([]ast.TypeExpr, bool) {
 		if p.peek().Kind == TComma {
 			p.next()
 		}
+	}
+	if p.peek().Kind == TShr {
+		// >> is actually two > tokens — consume one and push back a >
+		tok := p.next()
+		p.pushBack(Token{Kind: TGt, Text: ">", Span: ast.Span{
+			Start: ast.Pos{File: tok.Span.Start.File, Line: tok.Span.Start.Line, Column: tok.Span.Start.Column + 1},
+			End:   tok.Span.End,
+		}})
+		return typeArgs, true
 	}
 	if p.peek().Kind != TGt {
 		return nil, false
