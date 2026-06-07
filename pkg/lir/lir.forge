@@ -115,7 +115,7 @@ forge Lir {
     tempTypes/varTypes maps on cGen for cross-reference resolution.
     spawnCaptures map on cGen redirects variable access in spawn bodies.
 
-    Status: 36/36 .fg files compile, 6/6 run tests pass. All features working:
+    Status: 43/45 .fg files compile+link, all Go tests pass. Features working:
     vtables, channels, spawn with capture-by-reference, generators, generics
     (via monomorphization), mutex/lock.
     Dict<V> and HashedList<P,C> compile and run (test_dict.fg, hashed_list.fg).
@@ -133,7 +133,42 @@ forge Lir {
     This was the root cause of all Dict<V> C backend errors (2026-06-07).
   """
 
-  doc "Invariants — Lowerer and Checker Contract": """
+  doc "Invariants — Multi-Return Destructuring and TempTypes": """
+    The optimizer's multi-return destructuring converts TempDefs into VarDecls
+    with _tN_val/_tN_err naming. When subsequent code references these values
+    via LValTemp{TempID:N}, the C backend emits _tN but the type is stored in
+    varTypes["_tN"] NOT tempTypes[N].
+
+    CRITICAL: Any code that looks up a temp's type MUST check varTypes as
+    fallback: varName = fmt.Sprintf("_t%d", v.TempID); g.varTypes[varName].
+    This affects emitValueAsCStr, printfSpecAndArg, and any future type
+    resolution from LValTemp references.
+
+    emitMultiAssign must populate varTypes for ALL created variables,
+    including error vars (varTypes[name] = &LType{Kind: LTyError}).
+  """
+
+  doc "Invariants — Type Emission Ordering": """
+    collectCompositeTypes() pre-scans all types to register slices, optionals,
+    results, and channels. These FORGE_*_DEF macros MUST be emitted BEFORE
+    struct/class definitions because fields may reference optional types
+    (e.g., string? → ForgeOpt_forge_string). Emission order:
+    1. Forward declarations (typedef struct...)
+    2. FORGE_SLICE_DEF, FORGE_OPT_DEF, FORGE_RESULT_DEF, FORGE_CHAN_DEF
+    3. Enum definitions
+    4. Struct definitions
+    5. Class definitions
+  """
+
+  doc "Invariants — Error Type in Lowerer": """
+    The checker does NOT annotate cross-package calls (e.g., errors.New,
+    fmt.Errorf). exprType() returns LTyAny for these. The lowerer's
+    knownPackageReturnType() overrides LTyAny with correct types for known
+    functions. Both lowerCall and lowerMethodCall check this for
+    package-qualified calls.
+  """
+
+
     The lowerer reads checker annotations (ResolvedType) from AST Expr nodes.
     exprType(expr *Expr) extracts ResolvedType, casts to *checker.Type, and
     converts to *LType via lowerCheckerType. If ResolvedType is nil, returns
