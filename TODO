@@ -1,3 +1,5 @@
 * Generics for structs
 * More builtin types, i128, i256, u128, u256, f128
 * Identical funcion merging
+* Line continuation: allow `||` and `&&` at end of line to continue expression on next line (discovered during bootstrap — multi-condition `if` is unreadable on one line)
+* If-expressions / ternary: `let x = if cond { a } else { b }` (discovered during bootstrap — `let mut` + if/else is verbose boilerplate for simple conditional assignment)
