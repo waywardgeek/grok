@@ -114,6 +114,19 @@ forge Lir {
     Status: 36/36 .fg files compile, 6/6 run tests pass. All features working:
     vtables, channels, spawn with capture-by-reference, generators, generics
     (via monomorphization), mutex/lock.
+    Dict<V> and HashedList<P,C> compile and run (test_dict.fg, hashed_list.fg).
+  """
+
+  doc "Invariants — C Backend ClassRenames": """
+    After monomorphization, LIR expressions (ClassGet, MethodCall, etc.) still
+    carry the ORIGINAL generic class names (e.g., 'DictEntry', 'Dict'). The
+    program's class list contains only MONOMORPHIZED names ('DictEntry_i32',
+    'Dict_i32'). ClassRenames maps original→monomorphized names.
+
+    CRITICAL: ANY function that looks up class/struct fields by name MUST check
+    ClassRenames first. resolveFieldType, cType, emitMethodCall all need this.
+    Without it, field lookups fail silently and types fall back to void*/LTyAny.
+    This was the root cause of all Dict<V> C backend errors (2026-06-07).
   """
 
   doc "Invariants — Lowerer and Checker Contract": """
