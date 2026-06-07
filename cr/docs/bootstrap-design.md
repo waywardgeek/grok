@@ -1,7 +1,21 @@
 # Forge Bootstrap Design
 
-## Goal
-Rewrite the Forge compiler in Forge, compile via C backend, produce a self-hosting compiler.
+## Goals
+
+1. **Prove Forge is at least as good as Go for writing compilers.** The Go compiler
+   is the gold standard for compiler ergonomics — fast builds, clean code, readable
+   error messages. The bootstrap compiler must demonstrate that Forge matches or
+   exceeds that bar. Relations, Sym, match expressions, and the error model should
+   make compiler code *cleaner* than the Go equivalent, not just equivalent.
+
+2. **Jank-free language, jank-free compiler.** Every rough edge discovered while
+   writing the bootstrap compiler is a language design bug that must be fixed.
+   The bootstrap is the ultimate dogfooding exercise — if something is awkward to
+   express in Forge, it's awkward for every Forge user. No workarounds, no "good
+   enough for now." Fix the language.
+
+3. **Self-hosting.** Compile the Forge compiler with itself via C backend. This is
+   the mechanical proof that goals 1 and 2 were achieved.
 
 ## Architecture
 
@@ -28,7 +42,7 @@ No `map[K]V` primitive. Instead:
 
 1. **HashedList<P, C>** — stdlib interface implementing a swiss hash table as a relation. Parent owns a hash table of children, keyed by a field on the child. Similar to ArrayList but with O(1) lookup by key.
 
-2. **Dict<K, V>** — ref-counted convenience class wrapping HashedList for simple key→value storage. Used where the compiler currently uses `map[string]T`.
+2. **Dict<V>** — generic string-keyed hash table wrapping HashedList. Used where the compiler currently uses `map[string]T`.
 
 The compiler's maps are all `string → something`, so HashedList with string keys covers all cases.
 
@@ -53,11 +67,11 @@ These can be provided as `.fg` wrappers around Go functions via `extern` or `for
 - Tests (port later)
 
 ### Port Order (bottom-up)
-1. **AST types** — structs, enums, type definitions
-2. **Lexer** — character-by-character scanner (no regexp needed)
-3. **Parser** — recursive descent, produces AST
+1. ~~**AST types**~~ ✅ — structs, enums, type definitions (bootstrap/ast.fg)
+2. ~~**Lexer**~~ ✅ — character-by-character scanner, Dict keyword tables (bootstrap/lexer.fg)
+3. ~~**Parser**~~ ✅ — recursive descent + Pratt expr parser (bootstrap/parser.fg, expr_parser.fg)
 4. **Desugar passes** — interface embeds, fields, relations, destructors, default impls
-5. **Checker** — type checking
+5. **Checker** — type checking, inference, constraint satisfaction
 6. **LIR** — lowering AST → LIR
 7. **Monomorphizer** — specializes generics for C backend
 8. **C backend** — LIR → C source
