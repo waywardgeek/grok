@@ -27,8 +27,9 @@ func (e *ParseError) Error() string {
 
 // Parser is a PEG parser for .forge files.
 type Parser struct {
-	lex    *Lexer
-	errors []error
+	lex       *Lexer
+	errors    []error
+	exprDepth int // tracks nesting inside () and [] where { can't start a block
 }
 
 // ParseFile parses a .forge or .fg file into an AST.

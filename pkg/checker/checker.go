@@ -312,6 +312,7 @@ type VariantInfo struct {
 type TypeInfo struct {
 	Type          *Type
 	Fields        map[string]*Type        // struct/class fields
+	FieldOrder    []string                // field names in declaration order (for positional struct literals)
 	Methods       map[string]*Type        // method signatures (as TyFunc)
 	Variants      map[string]*VariantInfo // enum variants (variant name → info)
 	GuardedFields map[string]string       // field name → lock name (guarded_by annotations)
@@ -2309,6 +2310,7 @@ func (c *Checker) registerStruct(s *ast.StructDecl) {
 	}
 	for _, f := range s.Fields {
 		info.Fields[f.Name] = c.resolveTypeExpr(&f.Type)
+		info.FieldOrder = append(info.FieldOrder, f.Name)
 		if f.GuardedBy != "" {
 			info.GuardedFields[f.Name] = f.GuardedBy
 		}
@@ -2330,6 +2332,7 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 	}
 	for _, f := range cls.Fields {
 		info.Fields[f.Name] = c.resolveTypeExpr(&f.Type)
+		info.FieldOrder = append(info.FieldOrder, f.Name)
 		if f.GuardedBy != "" {
 			info.GuardedFields[f.Name] = f.GuardedBy
 		}
@@ -2801,6 +2804,22 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 	if info.Type.Kind != TyStruct && info.Type.Kind != TyClass {
 		c.error(expr.Span, "%q is not a struct or class type", sl.TypeName)
 		return TypeError
+	}
+	// Resolve positional fields to named fields using FieldOrder
+	posIdx := 0
+	for i, f := range sl.Fields {
+		if f.Name == "" {
+			if posIdx < len(info.FieldOrder) {
+				sl.Fields[i].Name = info.FieldOrder[posIdx]
+				posIdx++
+			} else {
+				c.error(expr.Span, "too many positional fields for struct %s", sl.TypeName)
+				break
+			}
+		} else {
+			// Named field encountered; stop positional tracking
+			posIdx = len(info.FieldOrder) // prevent further positional
+		}
 	}
 	for _, f := range sl.Fields {
 		valType := c.checkExpr(&f.Value)

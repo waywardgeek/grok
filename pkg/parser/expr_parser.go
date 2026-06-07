@@ -350,6 +350,8 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 }
 
 func (p *Parser) parseArgList() ([]ast.Expr, ast.Pos, error) {
+	p.exprDepth++
+	defer func() { p.exprDepth-- }()
 	var args []ast.Expr
 	for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
 		p.skipNewlines()
@@ -440,8 +442,10 @@ func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {
 			return p.parseMapLit(tok)
 		}
 		// Check for struct literal: TypeName{Field: value, ...}
-		// Disambiguate from block by checking for Ident: pattern inside braces
-		if p.peek().Kind == TLBrace && p.isStructLitAhead() {
+		// Named fields: always detected via isStructLitAhead (Ident: pattern)
+		// Positional fields: only allowed when inside () or [] (exprDepth > 0)
+		// where { can't start a block, avoiding ambiguity with for/while/if bodies
+		if p.peek().Kind == TLBrace && (p.isStructLitAhead() || p.exprDepth > 0) {
 			return p.parseStructLit(tok)
 		}
 		return &ast.Expr{
@@ -452,6 +456,8 @@ func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {
 	case TLParen:
 		// Parenthesized expr or tuple literal
 		p.next()
+		p.exprDepth++
+		defer func() { p.exprDepth-- }()
 		if p.peek().Kind == TRParen {
 			// Empty tuple / unit
 			end := p.next()
@@ -497,6 +503,8 @@ func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {
 	case TLBracket:
 		// List literal: [1, 2, 3]
 		p.next()
+		p.exprDepth++
+		defer func() { p.exprDepth-- }()
 		var elems []ast.Expr
 		for p.peek().Kind != TRBracket && p.peek().Kind != TEOF {
 			p.skipNewlines()
@@ -1357,6 +1365,7 @@ func (p *Parser) parseExprOrAssign() (*ast.Stmt, error) {
 func (p *Parser) isStructLitAhead() bool {
 	// Save lexer state for lookahead
 	saved := *p.lex
+	savedErrors := len(p.errors)
 	p.next() // consume {
 	p.skipNewlines()
 	result := false
@@ -1371,6 +1380,7 @@ func (p *Parser) isStructLitAhead() bool {
 		}
 	}
 	*p.lex = saved // restore
+	p.errors = p.errors[:savedErrors]
 	return result
 }
 
@@ -1379,19 +1389,34 @@ func (p *Parser) parseStructLit(nameTok Token) (*ast.Expr, error) {
 	var fields []ast.StructLitField
 	p.skipNewlines()
 	for p.peek().Kind != TRBrace && p.peek().Kind != TEOF {
-		fieldName := p.peek()
-		if fieldName.Kind != TIdent {
-			return nil, fmt.Errorf("%v: expected field name in struct literal, got %s", fieldName.Span.Start, fieldName.Text)
+		// Try named field: ident ':'
+		if p.peek().Kind == TIdent {
+			saved := *p.lex
+			savedErrors := len(p.errors)
+			fieldName := p.next()
+			if p.peek().Kind == TColon {
+				p.next() // consume :
+				val, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				fields = append(fields, ast.StructLitField{Name: fieldName.Text, Value: *val})
+				if p.peek().Kind == TComma {
+					p.next()
+				}
+				p.skipNewlines()
+				continue
+			}
+			// Not a named field — restore and parse as positional
+			*p.lex = saved
+			p.errors = p.errors[:savedErrors]
 		}
-		p.next()
-		if _, err := p.expect(TColon); err != nil {
-			return nil, err
-		}
+		// Positional field
 		val, err := p.parseExpr()
 		if err != nil {
 			return nil, err
 		}
-		fields = append(fields, ast.StructLitField{Name: fieldName.Text, Value: *val})
+		fields = append(fields, ast.StructLitField{Name: "", Value: *val})
 		if p.peek().Kind == TComma {
 			p.next()
 		}

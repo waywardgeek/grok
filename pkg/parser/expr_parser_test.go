@@ -432,6 +432,52 @@ func TestEmptyStructLiteral(t *testing.T) {
 	}
 }
 
+func TestPositionalStructLiteralInTuple(t *testing.T) {
+	fn := parseFuncBody(t, `func test() -> (Point, i32) {
+		return (Point { 3.0, 4.0 }, 0)
+	}`)
+	if fn.Body == nil || len(fn.Body.Stmts) < 1 {
+		t.Fatal("expected at least 1 statement")
+	}
+	ret := fn.Body.Stmts[0].Data.(*ast.ReturnStmt)
+	if ret.Value.Kind != ast.ExprTupleLit {
+		t.Fatalf("expected tuple, got %v", ret.Value.Kind)
+	}
+	tup := ret.Value.Data.(*ast.TupleLitExpr)
+	if len(tup.Elems) != 2 {
+		t.Fatalf("expected 2 tuple elems, got %d", len(tup.Elems))
+	}
+	if tup.Elems[0].Kind != ast.ExprStructLit {
+		t.Fatalf("expected struct lit, got %v", tup.Elems[0].Kind)
+	}
+	sl := tup.Elems[0].Data.(*ast.StructLitExpr)
+	if sl.TypeName != "Point" {
+		t.Errorf("expected Point, got %s", sl.TypeName)
+	}
+	if len(sl.Fields) != 2 {
+		t.Fatalf("expected 2 fields, got %d", len(sl.Fields))
+	}
+	// Positional fields have empty names
+	if sl.Fields[0].Name != "" || sl.Fields[1].Name != "" {
+		t.Errorf("expected empty names for positional fields, got %q and %q", sl.Fields[0].Name, sl.Fields[1].Name)
+	}
+}
+
+func TestMixedStructLiteralInTuple(t *testing.T) {
+	fn := parseFuncBody(t, `func test() -> (Point, i32) {
+		return (Point { 3.0, y: 4.0 }, 0)
+	}`)
+	ret := fn.Body.Stmts[0].Data.(*ast.ReturnStmt)
+	tup := ret.Value.Data.(*ast.TupleLitExpr)
+	sl := tup.Elems[0].Data.(*ast.StructLitExpr)
+	if sl.Fields[0].Name != "" {
+		t.Errorf("expected positional first field, got %q", sl.Fields[0].Name)
+	}
+	if sl.Fields[1].Name != "y" {
+		t.Errorf("expected named second field 'y', got %q", sl.Fields[1].Name)
+	}
+}
+
 func TestLambdaExpr(t *testing.T) {
 	fn := parseFuncBody(t, `func test() {
 		let double = |x: i32| -> i32 { x * 2 }
