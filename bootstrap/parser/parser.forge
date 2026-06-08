@@ -1,0 +1,19 @@
+// parser.forge — understanding doc for the bootstrap parser package
+forge parser {
+  why: "Statement and expression parsing. Two files: parser.fg (statements, declarations) and expr_parser.fg (Pratt precedence climbing for expressions)."
+
+  doc "Invariants — For Loops": """
+    Idiomatic Forge uses `for item in collection` and `for item, idx in collection`.
+    The stdlib provides `range(start, end)` as a generator for index iteration.
+    Do NOT use C-style while loops for iteration.
+  """
+
+  doc "Invariants — Parser/ExprParser Split": """
+    parser.fg and expr_parser.fg share the Parser class (same forge block name).
+    parser.fg handles top-level declarations and statements.
+    expr_parser.fg handles expression parsing via Pratt precedence climbing.
+    Both files are in the same package and compiled together.
+  """
+
+  source: ["parser.fg", "expr_parser.fg"]
+}

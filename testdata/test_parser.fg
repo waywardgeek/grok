@@ -1,6 +1,6 @@
 // test_parser.fg — Unit tests for the bootstrap parser
 //
-// Run: forge test testdata/test_parser.fg bootstrap/parser.fg bootstrap/expr_parser.fg bootstrap/lexer.fg bootstrap/ast.fg
+// Run: forge test testdata/test_parser.fg bootstrap/parser/parser.fg bootstrap/parser/expr_parser.fg bootstrap/lexer/lexer.fg bootstrap/ast/ast.fg
 
 forge parser_tests {
 

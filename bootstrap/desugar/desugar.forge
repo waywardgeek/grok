@@ -1,0 +1,17 @@
+// desugar.forge — understanding doc for the bootstrap desugar package
+forge desugar {
+  why: "Five-pass AST desugaring: embeds → interface fields → relations → destructors → default impls. Each pass creates AST consumed by the next."
+
+  doc "Invariants — Pass Order": """
+    The desugar passes MUST run in this order:
+    1. DesugarInterfaceEmbeds — copies fields/destructors from embedded interfaces
+    2. DesugarInterfaceFields — generates getter/setter methods from field declarations
+    3. DesugarRelations — injects ownership fields and back-pointers
+    4. DesugarDestructors — copies interface destructor bodies to implementing classes
+    5. DesugarDefaultImpls — copies default method implementations
+
+    Each pass wraps generated code in StmtBlock for variable name isolation.
+  """
+
+  source: ["desugar.fg"]
+}

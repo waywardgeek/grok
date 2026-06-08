@@ -1,0 +1,24 @@
+// ast.forge — understanding doc for the bootstrap AST package
+forge ast {
+  why: "Defines all AST node types for the Forge language. Leaf package — no dependencies on other bootstrap packages."
+
+  doc "Invariants — Nullable Variant Fields": """
+    Forge uses nullable fields per variant on class types instead of Go's
+    any-typed Data fields + Kind enum. Expr has one nullable field per
+    ExprKind (call: CallData?, bin_op: BinOpData?, etc.). Only the field
+    matching `kind` is non-null.
+
+    This is required because Forge `any` maps to `void*` in C — no type
+    recovery without casts. The nullable field pattern is verbose but
+    fully type-safe in C.
+
+    Applies to: Expr, Stmt, TypeExpr, Pattern.
+  """
+
+  doc "Invariants — No If-Expressions": """
+    Forge does not support if-as-expression. All conditional assignment
+    must use: let mut x = default; if cond { x = value }
+  """
+
+  source: ["ast.fg"]
+}

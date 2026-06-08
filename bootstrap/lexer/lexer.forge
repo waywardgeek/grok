@@ -1,0 +1,20 @@
+// lexer.forge — understanding doc for the bootstrap lexer package
+forge lexer {
+  why: "Tokenizer for Forge source. Produces Token stream with TokenKind enum, keyword lookup via Dict."
+
+  doc "Invariants — Keyword Lookup": """
+    The lexer uses if-else chains for keyword lookup (not Dict) because the
+    C backend needs simple control flow. Keywords are checked after scanning
+    an identifier token.
+
+    LexerState (save_state/restore_state) enables parser backtracking for
+    ambiguous constructs like struct literals vs blocks.
+  """
+
+  doc "Invariants — No Line Continuation": """
+    Forge's lexer does not support line continuation for binary operators.
+    Multi-condition expressions must be on ONE line or extracted into helpers.
+  """
+
+  source: ["lexer.fg"]
+}

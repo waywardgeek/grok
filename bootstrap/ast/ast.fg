@@ -1,0 +1,391 @@
+// ast.fg — AST type definitions for the Forge bootstrap compiler
+// Ported from pkg/ast/ast.go and pkg/ast/expr.go
+//
+// Design:
+//   - Structs for small value types only (Pos, Span, RelationSide, StructLitField)
+//   - Classes for all AST nodes (identity, heap-allocated)
+//   - ArrayList relations for parent→child ownership
+//   - Enums with associated data for tagged unions (ExprKind, StmtKind, etc.)
+//   - Sym for all identifiers/names; string only for raw text (literals, file content)
+
+forge ast {
+
+  // ---- Value types (structs) ----
+
+  struct Pos {
+    file: Sym?
+    line: i32
+    column: i32
+  }
+
+  struct Span {
+    start: Pos
+    end: Pos
+  }
+
+  // ---- Type expressions ----
+
+  enum TypeExprKind {
+    Named(name: Sym, args: [TypeExpr])
+    Optional(inner: TypeExpr)
+    Union(variants: [TypeExpr])
+    Sequence(elem: TypeExpr)
+    Map(key: TypeExpr, value: TypeExpr)
+    Tuple(fields: [TupleField])
+    Func(params: [TypeExpr], ret: TypeExpr)
+    Channel(elem: TypeExpr)
+    Generator(elem: TypeExpr)
+    Lock
+    Unit
+  }
+
+  class TypeExpr {
+    kind: TypeExprKind
+    span: Span
+  }
+
+  class TupleField {
+    name: Sym?
+    type_expr: TypeExpr?
+  }
+
+  // ---- Type parameters and constraints ----
+
+  class TypeParam {
+    name: Sym?
+    constraint: Sym?
+    span: Span
+  }
+
+  class WhereClause {
+    variable: Sym?
+    constraint: Sym?
+    span: Span
+  }
+  relation ArrayList WhereClause:wc_arg owns [TypeExpr:wc_arg]
+
+  // ---- Functions ----
+
+  class Param {
+    name: Sym?
+    type_expr: TypeExpr?
+    is_mut: bool
+    is_self: bool
+    span: Span
+  }
+
+  class Annotations {
+    concurrent: bool
+    requires_lock: [Sym]
+    excludes_lock: [Sym]
+    raises: [Sym]
+    requires: [string]
+    ensures: [string]
+    spawns: bool
+    pure: bool
+  }
+
+  class FuncDecl {
+    name: Sym?
+    is_public: bool
+    receiver_type: Sym?
+    return_type: TypeExpr?
+    annotations: Annotations?
+    body: Block?
+    span: Span
+  }
+  relation ArrayList FuncDecl:fp owns [TypeParam:fp]
+  relation ArrayList FuncDecl:param owns [Param:param]
+  relation ArrayList FuncDecl:where owns [WhereClause:where]
+
+  // ---- Fields ----
+
+  class Field {
+    name: Sym?
+    is_public: bool
+    type_expr: TypeExpr?
+    default_value: Expr?
+    guarded_by: Sym?
+    span: Span
+  }
+
+  // ---- Declarations ----
+
+  class ClassDecl {
+    name: Sym?
+    is_public: bool
+    implements: [Sym]
+    span: Span
+  }
+  relation ArrayList ClassDecl:ctp owns [TypeParam:ctp]
+  relation ArrayList ClassDecl:cf owns [Field:cf]
+  relation ArrayList ClassDecl:cm owns [FuncDecl:cm]
+
+  class StructDecl {
+    name: Sym?
+    is_public: bool
+    span: Span
+  }
+  relation ArrayList StructDecl:stp owns [TypeParam:stp]
+  relation ArrayList StructDecl:sf owns [Field:sf]
+
+  class EnumVariant {
+    name: Sym?
+    span: Span
+  }
+  relation ArrayList EnumVariant:evf owns [TupleField:evf]
+
+  class EnumDecl {
+    name: Sym?
+    is_public: bool
+    span: Span
+  }
+  relation ArrayList EnumDecl:etp owns [TypeParam:etp]
+  relation ArrayList EnumDecl:ev owns [EnumVariant:ev]
+
+  // ---- Interfaces ----
+
+  class InterfaceFieldDecl {
+    type_param: Sym?
+    name: Sym?
+    type_expr: TypeExpr?
+    span: Span
+  }
+
+  class InterfaceEmbed {
+    name: Sym?
+    span: Span
+  }
+  relation ArrayList InterfaceEmbed:ie_arg owns [TypeExpr:ie_arg]
+
+  class DestructorBlock {
+    type_param: Sym?
+    body: Block?
+    span: Span
+  }
+
+  class InterfaceDecl {
+    name: Sym?
+    is_public: bool
+    implements: [Sym]
+    span: Span
+  }
+  relation ArrayList InterfaceDecl:itp owns [TypeParam:itp]
+  relation ArrayList InterfaceDecl:ie owns [InterfaceEmbed:ie]
+  relation ArrayList InterfaceDecl:im owns [FuncDecl:im]
+  relation ArrayList InterfaceDecl:ifd owns [InterfaceFieldDecl:ifd]
+  relation ArrayList InterfaceDecl:idb owns [DestructorBlock:idb]
+
+  // ---- Impl blocks ----
+
+  enum ImplMappingKind { Alias FieldBind Inline }
+
+  class ImplMapping {
+    type_param: Sym?
+    method_name: Sym?
+    kind: ImplMappingKind
+    target_class: Sym?
+    target_member: Sym?
+    inline_func: FuncDecl?
+    span: Span
+  }
+
+  class ImplBlock {
+    interface_name: Sym?
+    label: Sym?
+    span: Span
+  }
+  relation ArrayList ImplBlock:ib_arg owns [TypeExpr:ib_arg]
+  relation ArrayList ImplBlock:ibm owns [ImplMapping:ibm]
+
+  // ---- Relations ----
+
+  enum RelationKind { Owns Refs }
+
+  struct RelationSide {
+    type_name: Sym?
+    label: Sym?
+  }
+
+  class RelationDecl {
+    hint: Sym?
+    parent: RelationSide
+    kind: RelationKind
+    child: RelationSide
+    is_many: bool
+    span: Span
+  }
+
+  // ---- Other top-level declarations ----
+
+  class DocBlock {
+    section: string
+    content: string
+    span: Span
+  }
+
+  class InvariantDecl {
+    claim: string
+    verified_at: string
+    span: Span
+  }
+
+  class ImportDecl {
+    alias: Sym?
+    path: string
+    span: Span
+  }
+
+  class TypeAliasDecl {
+    name: Sym?
+    is_public: bool
+    type_expr: TypeExpr?
+    span: Span
+  }
+
+  class Comment {
+    text: string
+    pos: Pos
+  }
+
+  // ---- Expressions ----
+
+  enum UnaryOp { Neg Not }
+
+  enum BinaryOp {
+    Add Sub Mul Div Mod
+    Eq Neq Lt Le Gt Ge
+    And Or
+    BitAnd BitOr BitXor Shl Shr
+  }
+
+  struct StructLitField {
+    name: Sym?
+    value: Expr?
+  }
+
+  enum ExprKind {
+    Ident(name: Sym)
+    IntLit(value: string, type_hint: Sym?)
+    FloatLit(value: string)
+    StringLit(value: string)
+    StringInterp(parts: [Expr])
+    BoolLit(value: bool)
+    Nil
+    Call(func_expr: Expr, type_args: [TypeExpr], args: [Expr])
+    MethodCall(receiver: Expr, method: Sym, type_args: [TypeExpr], args: [Expr])
+    FieldAccess(receiver: Expr, field_name: Sym)
+    Index(receiver: Expr, index: Expr)
+    Slice(receiver: Expr, low: Expr?, high: Expr?)
+    Unary(op: UnaryOp, operand: Expr)
+    Binary(left: Expr, op: BinaryOp, right: Expr)
+    TupleLit(elems: [Expr])
+    ListLit(elems: [Expr])
+    MapLit(keys: [Expr], values: [Expr])
+    StructLit(type_name: Sym, type_args: [TypeExpr], fields: [StructLitField])
+    Lambda(params: [Param], return_type: TypeExpr?, body: Block)
+    Match(value: Expr, arms: [MatchArm])
+    Cast(target_type: TypeExpr, operand: Expr)
+    Unwrap(operand: Expr)
+    Try(operand: Expr)
+  }
+
+  class Expr {
+    kind: ExprKind
+    span: Span
+    resolved_type: any  // Set by checker — used by lowerer to determine expression types
+  }
+
+  // ---- Patterns ----
+
+  enum PatternKind {
+    Ident(name: Sym)
+    Literal(expr: Expr)
+    Variant(name: Sym, bindings: [Pattern])
+    Wildcard
+    Tuple(elems: [Pattern])
+  }
+
+  class Pattern {
+    kind: PatternKind
+    span: Span
+  }
+
+  class MatchArm {
+    pattern: Pattern?
+    guard: Expr?
+    body: Block?
+    span: Span
+  }
+
+  // ---- Statements ----
+
+  enum StmtKind {
+    VarDecl(name: Sym, names: [Sym], type_expr: TypeExpr?, is_mut: bool, value: Expr?)
+    Assign(target: Expr, value: Expr)
+    Return(value: Expr?)
+    ExprStmt(expr: Expr)
+    If(condition: Expr, then_block: Block, else_ifs: [ElseIf], else_block: Block?)
+    For(var_name: Sym, index_var: Sym?, collection: Expr, body: Block)
+    While(condition: Expr, body: Block)
+    Match(value: Expr, arms: [MatchArm])
+    BlockStmt(block: Block)
+    Cascade(body: Block)
+    Break
+    Continue
+    Spawn(body: Block)
+    Select(cases: [SelectCase])
+    Yield(value: Expr?)
+    Lock(mutex: Expr, body: Block)
+  }
+
+  class Stmt {
+    kind: StmtKind
+    span: Span
+  }
+
+  class ElseIf {
+    condition: Expr?
+    body: Block?
+    span: Span
+  }
+
+  class SelectCase {
+    is_default: bool
+    bind_var: Sym?
+    expr: Expr?
+    body: Block?
+    span: Span
+  }
+
+  class Block {
+    span: Span
+  }
+  relation ArrayList Block:bs owns [Stmt:bs]
+
+  // ---- Top-level ----
+
+  class ForgeBlock {
+    name: Sym?
+    span: Span
+  }
+  relation ArrayList ForgeBlock:imp owns [ImportDecl:imp]
+  relation ArrayList ForgeBlock:doc owns [DocBlock:doc]
+  relation ArrayList ForgeBlock:inv owns [InvariantDecl:inv]
+  relation ArrayList ForgeBlock:sd owns [StructDecl:sd]
+  relation ArrayList ForgeBlock:ed owns [EnumDecl:ed]
+  relation ArrayList ForgeBlock:id owns [InterfaceDecl:id]
+  relation ArrayList ForgeBlock:cd owns [ClassDecl:cd]
+  relation ArrayList ForgeBlock:fd owns [FuncDecl:fd]
+  relation ArrayList ForgeBlock:rd owns [RelationDecl:rd]
+  relation ArrayList ForgeBlock:ib owns [ImplBlock:ib]
+  relation ArrayList ForgeBlock:ta owns [TypeAliasDecl:ta]
+
+  class File {
+    filename: string
+    span: Span
+  }
+  relation ArrayList File:fb owns [ForgeBlock:fb]
+  relation ArrayList File:fc owns [Comment:fc]
+
+}

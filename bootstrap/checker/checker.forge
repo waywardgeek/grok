@@ -1,0 +1,22 @@
+// checker.forge — understanding doc for the bootstrap checker package
+forge checker {
+  why: "Two-phase type checker: Phase 1 registers all type/function declarations, Phase 2 checks function bodies. Scope chain for lexical scoping."
+
+  doc "Invariants — Two-Phase Checking": """
+    The checker MUST run in two phases:
+    1. register_block: register all struct/class/enum/interface/function
+       signatures into Dict registries (no body checking)
+    2. check_block: walk function bodies, resolve types, check expressions
+
+    This ensures forward references resolve correctly — a function can
+    reference a class declared later in the same file.
+  """
+
+  doc "Invariants — Dict and Sym Usage": """
+    All registries use Dict<V> (string-keyed hash table) with Sym keys:
+    structs, classes, enums, interfaces, type_aliases, func_sigs, scope,
+    class_fields. API: dict_get(d, sym(name)) -> V?
+  """
+
+  source: ["checker.fg"]
+}

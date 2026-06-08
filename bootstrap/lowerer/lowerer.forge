@@ -1,0 +1,24 @@
+// lowerer.forge — understanding doc for the bootstrap lowerer package
+forge lowerer {
+  why: "AST → LIR translation. Flattens expressions into SSA-like temp definitions, resolves type sugar, handles error results."
+
+  doc "Invariants — Two-Phase Architecture": """
+    The lowerer uses two phases, matching the Go implementation:
+    1. register_block: collect all struct/class/enum/interface/function
+       declarations into Dict registries (no code generation)
+    2. lower_file: walk all blocks, lower declarations to LIR
+
+    This ensures forward references resolve correctly.
+  """
+
+  doc "Invariants — Type Lowering Fallback": """
+    lower_type() resolves AST TypeExpr to LType. For identifier types, it
+    checks: primitives → structs → classes → enums → type aliases.
+    If nothing matches, it assumes LTyTypeVar (generic type parameter).
+
+    Typos in type names silently become type variables — the checker should
+    catch these but has gaps during bootstrap.
+  """
+
+  source: ["lowerer.fg"]
+}

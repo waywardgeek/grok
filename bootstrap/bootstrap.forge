@@ -1,109 +1,40 @@
-// bootstrap.forge — understanding doc for the bootstrap compiler files
+// bootstrap.forge — top-level understanding doc for the bootstrap compiler
 //
-// Covers: ast.fg, lexer.fg, parser.fg, expr_parser.fg, desugar.fg,
-//         checker.fg, lir.fg, lowerer.fg
+// Package structure:
+//   bootstrap/ast/       — AST node types (leaf, no deps)
+//   bootstrap/lexer/     — Tokenizer
+//   bootstrap/parser/    — Statement + expression parsing
+//   bootstrap/desugar/   — 5-pass AST desugaring
+//   bootstrap/checker/   — Two-phase type checker
+//   bootstrap/lir/       — Low-level IR types
+//   bootstrap/lowerer/   — AST → LIR translation
+//
+// Each package has its own .forge file with package-specific invariants.
 forge Bootstrap {
-  why: "Self-hosting bootstrap of the Forge compiler. Ports the Go compiler (parser → checker → lowerer → LIR) into Forge itself, targeting the C backend via monomorphization. The bootstrap is also the primary design feedback loop — every friction point drives language improvement."
+  why: "Self-hosting bootstrap of the Forge compiler. Ports the Go compiler (parser → checker → lowerer → LIR) into Forge itself, targeting the C backend via monomorphization."
 
   doc "Architecture": """
-    Eight .fg files form a complete frontend pipeline:
+    Seven packages form a complete frontend pipeline:
 
-    Source → Lexer → Parser/ExprParser → AST → Desugar → Checker → Lowerer → LIR
+    Source → lexer/ → parser/ → ast/ → desugar/ → checker/ → lowerer/ → lir/
 
-    All files compile together: forge compile --c bootstrap/*.fg
+    Compile all packages together:
+      forge compile --c bootstrap/ast/ast.fg bootstrap/lexer/lexer.fg \
+        bootstrap/parser/parser.fg bootstrap/parser/expr_parser.fg \
+        bootstrap/desugar/desugar.fg bootstrap/checker/checker.fg \
+        bootstrap/lir/lir.fg bootstrap/lowerer/lowerer.fg
+
     Output: a single C file (~16K lines) linked against forge_runtime.h.
-
-    The bootstrap does NOT yet include: optimizer, monomorphizer, C backend.
-    Those are the remaining passes needed for full self-hosting.
   """
 
-  doc "Invariants — Data Variant Dispatch": """
-    The Go compiler uses `any`-typed Data fields + Kind enum for tagged unions
-    (Expr, Stmt, LExpr, LStmt). The bootstrap CANNOT use this pattern because:
-    1. Forge `any` maps to `void*` in C — no type recovery without casts
-    2. C has no type assertions or runtime type info
-
-    Solution: nullable fields per variant on class types. LExpr has one nullable
-    field per LExprKind (bin_op: LBinOpData?, call: LCallData?, etc.). Only the
-    field matching `kind` is non-null. This is more verbose but fully type-safe
-    in C.
-
-    This applies to: Expr (ast.fg), Stmt (ast.fg), LExpr (lir.fg), LStmt (lir.fg).
-  """
-
-  doc "Invariants — No If-Expressions": """
-    Forge does not support if-as-expression: `let x = if cond { a } else { b }`.
-    All conditional assignment must use the pattern:
-      let mut x = default_value
-      if cond {
-        x = desired_value
-      }
-
-    This is tracked in TODO as a language improvement item.
-  """
-
-  doc "Invariants — No Line Continuation": """
-    Forge's parser does not support line continuation for binary operators.
-    Multi-condition `if` statements like:
-      if a == "x" || a == "y" || a == "z" { ... }
-    must be on ONE line or extracted into a helper function.
-
-    Preferred pattern: extract to a helper (e.g., is_builtin_name()).
-    This is tracked in TODO as a language improvement item.
-  """
-
-  doc "Invariants — For Loops": """
-    Idiomatic Forge uses `for item in collection` and `for item, idx in collection`
-    instead of C-style while loops. The stdlib provides `range(start, end)`
-    as a generator for index-based iteration: `for i in range(0, len(items))`.
-
-    Do NOT write:
-      let mut i: i32 = 0
-      while i < len(items) { ...; i = i + 1 }
-
-    Write instead:
-      for item in items { ... }
-      for item, idx in items { ... }
-  """
-
-  doc "Invariants — Dict and Sym Usage": """
-    The bootstrap lowerer uses Dict<V> (string-keyed hash table) for all
-    registries: structs, classes, enums, interfaces, type_aliases, func_sigs,
-    scope, class_fields. Keys are Sym (interned symbols via sym("name")).
-
-    API: dict_get(d, sym(name)) -> V?, dict_set(d, sym(name), value).
-    Dict<V> comes from stdlib (std.fg) via MergeStdlib.
-  """
-
-  doc "Invariants — Lowerer Two-Phase Architecture": """
-    The lowerer uses two phases, matching the Go implementation:
-    1. register_block: collect all struct/class/enum/interface/function
-       declarations into Dict registries (no code generation)
-    2. lower_file: walk all blocks, lower declarations to LIR
-
-    This ensures forward references resolve correctly — a function can
-    reference a class declared later in the same file.
-  """
-
-  doc "Invariants — Type Lowering Fallback": """
-    lower_type() resolves AST TypeExpr to LType. For identifier types, it
-    checks (in order): primitives → structs → classes → enums → type aliases.
-    If nothing matches, it assumes LTyTypeVar (generic type parameter).
-
-    This means typos in type names silently become type variables rather than
-    errors. The checker should catch these, but during bootstrap the checker's
-    cross-file resolution has gaps (produces non-fatal warnings).
-  """
-
-  doc "File Map": """
-    ast.fg         — AST node classes (File, ForgeBlock, Expr, Stmt, TypeExpr, etc.)
-    lexer.fg       — Tokenizer with TokenKind enum, keyword tables via Dict
-    parser.fg      — Statement parser, top-level declarations
-    expr_parser.fg — Expression parser (Pratt precedence climbing)
-    desugar.fg     — 5-pass desugaring (embeds, fields, relations, destructors, defaults)
-    checker.fg     — Two-phase type checker (register then check), scope chain
-    lir.fg         — LIR type system (LType, LValue, LExpr, LStmt, LProgram)
-    lowerer.fg     — AST → LIR translation (flatten exprs, resolve sugar)
+  doc "Dependency Graph": """
+    ast      — leaf (no deps)
+    lexer    — uses ast (Token, Span, Pos)
+    parser   — uses ast + lexer
+    desugar  — uses ast
+    checker  — uses ast
+    lir      — uses ast
+    lowerer  — uses ast + lir + checker
   """
 
   doc "Remaining Work": """
@@ -112,10 +43,5 @@ forge Bootstrap {
     2. monomorphizer.fg — generic specialization (required for C)
     3. c_backend.fg — C code emission from LIR
     4. main.fg — CLI entry point
-
-    Alternative milestone: compile the existing 8 files into a working parser
-    binary that can parse .fg files and print AST.
   """
-
-  source: ["ast.fg", "lexer.fg", "parser.fg", "expr_parser.fg", "desugar.fg", "checker.fg", "lir.fg", "lowerer.fg"]
 }

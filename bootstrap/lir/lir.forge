@@ -1,0 +1,13 @@
+// lir.forge — understanding doc for the bootstrap LIR package
+forge lir {
+  why: "Low-level Intermediate Representation types. Defines LType, LValue, LExpr, LStmt, LProgram — the target of lowering from AST."
+
+  doc "Invariants — Nullable Variant Fields": """
+    Like AST Expr/Stmt, LIR uses nullable fields per variant:
+    LExpr has bin_op: LBinOpData?, call: LCallData?, etc.
+    LStmt has temp_def: LTempDef?, assign: LAssignData?, etc.
+    Same rationale: void* has no type recovery in C.
+  """
+
+  source: ["lir.fg"]
+}
