@@ -35,5 +35,13 @@ forge desugar {
     all type references in a block's statements and expressions.
   """
 
+  doc "Invariants — Impl Block Merging": """
+    When a relation generates an impl block and a matching user-written
+    impl block already exists (same interface name and type args),
+    the generated mappings are merged into the existing impl block
+    rather than creating a duplicate. This allows user code to provide
+    explicit mappings while relation-generated mappings fill in the rest.
+  """
+
   source: ["desugar.fg"]
 }
