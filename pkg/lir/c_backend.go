@@ -1149,7 +1149,14 @@ func (g *cGen) emitStmt(s *LStmt) {
 			if g.currentFunc != nil && g.currentFunc.ReturnType != nil && g.currentFunc.ReturnType.Kind == LTyErrorResult {
 				resultName := g.resultTypeName(g.currentFunc.ReturnType.Elem)
 				// If the value is already a result (from MakeResult expr), don't double-wrap
-				if d.Values[0].Type != nil && d.Values[0].Type.Kind == LTyErrorResult {
+				valType := d.Values[0].Type
+				if valType == nil && d.Values[0].Kind == LValTemp {
+					valType = g.tempTypes[d.Values[0].TempID]
+				}
+				if valType == nil && d.Values[0].Kind == LValVar {
+					valType = g.varTypes[d.Values[0].Name]
+				}
+				if valType != nil && valType.Kind == LTyErrorResult {
 					g.linef("return %s;", val)
 				} else {
 					g.linef("return forge_ok(%s, %s);", val, resultName)

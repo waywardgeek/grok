@@ -380,6 +380,15 @@ func (l *Lowerer) lowerTypeExpr(te *ast.TypeExpr) *LType {
 		if len(fields) == 2 && fields[1].Type.Kind == LTyError {
 			return &LType{Kind: LTyErrorResult, Elem: fields[0].Type}
 		}
+		// Also check by AST type name — "error" interface resolves to LTyAny
+		if len(fields) == 2 && len(tt.Fields) >= 2 {
+			if tt.Fields[1].Type.Kind == ast.TypeNamed {
+				nt := dataAs[ast.NamedType](tt.Fields[1].Type.Data)
+				if nt.Name == "error" {
+					return &LType{Kind: LTyErrorResult, Elem: fields[0].Type}
+				}
+			}
+		}
 		return &LType{Kind: LTyTuple, Fields: fields}
 	case ast.TypeFunc:
 		ft := dataAs[ast.FuncType](te.Data)
@@ -537,6 +546,11 @@ func (l *Lowerer) lowerCheckerType(ct *checker.Type) *LType {
 			fields = append(fields, LField{Name: name, Type: l.lowerCheckerType(f.Type)})
 		}
 		if len(fields) == 2 && fields[1].Type.Kind == LTyError {
+			return &LType{Kind: LTyErrorResult, Elem: fields[0].Type}
+		}
+		// Also check if second field was an error interface (maps to LTyAny)
+		if len(fields) == 2 && len(ct.Fields) == 2 && ct.Fields[1].Type != nil &&
+			ct.Fields[1].Type.Kind == checker.TyInterface && ct.Fields[1].Type.Name == "error" {
 			return &LType{Kind: LTyErrorResult, Elem: fields[0].Type}
 		}
 		return &LType{Kind: LTyTuple, Fields: fields}
