@@ -2287,6 +2287,11 @@ func (l *Lowerer) lowerIdent(expr *ast.Expr) LValue {
 
 	// Check if it's a unit variant
 	if enumName, ok := l.unitVariants[ie.Name]; ok {
+		// Use checker's resolved type to disambiguate collisions
+		resultType := l.exprType(expr)
+		if resultType != nil && resultType.Kind == LTyTaggedUnion && resultType.Name != "" {
+			enumName = resultType.Name
+		}
 		tag := l.findVariantTag(enumName, ie.Name)
 		return l.emitTemp(LExpr{
 			Kind: LExprVariantConstruct,
@@ -2577,15 +2582,25 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 
 	// Check if it's a variant constructor
 	if info, ok := l.variantCtors[funcName]; ok {
+		// Use checker's resolved type to disambiguate when multiple enums
+		// share variant names (e.g., Tuple in TypeExprKind AND PatternKind)
+		enumName := info.enumName
+		tag := info.tag
+		resultType := l.exprType(expr)
+		if resultType != nil && resultType.Kind == LTyTaggedUnion && resultType.Name != "" && resultType.Name != enumName {
+			// Checker resolved to a different enum — use that instead
+			enumName = resultType.Name
+			tag = l.findVariantTag(enumName, funcName)
+		}
 		var fieldVals []LValue
 		fieldVals = append(fieldVals, args...)
 		return l.emitTemp(LExpr{
 			Kind: LExprVariantConstruct,
-			Type: &LType{Kind: LTyTaggedUnion, Name: info.enumName, IsExported: l.exported[info.enumName]},
+			Type: &LType{Kind: LTyTaggedUnion, Name: enumName, IsExported: l.exported[enumName]},
 			Data: &LVariantConstructData{
-				Enum:    info.enumName,
+				Enum:    enumName,
 				Variant: funcName,
-				Tag:     info.tag,
+				Tag:     tag,
 				Fields:  fieldVals,
 			},
 		})
