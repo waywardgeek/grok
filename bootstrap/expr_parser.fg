@@ -460,7 +460,7 @@ forge parser {
     let arms = self.parse_match_arms()?
     let end = self.peek().span.end
     return (Expr {
-      Match(value!, arms!),
+      Match(value!, arms),
       span: Span { start: start, end: end }
     }, null)
   }
@@ -739,7 +739,7 @@ forge parser {
     self.skip_newlines()
     let arms = self.parse_match_arms()?
     return (Stmt {
-      Match(value!, arms!),
+      Match(value!, arms),
       span: Span { start: start, end: self.peek().span.start }
     }, null)
   }

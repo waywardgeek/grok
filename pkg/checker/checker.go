@@ -3025,14 +3025,47 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 		}
 	}
 	for i := range sl.Fields {
-		valType := c.checkExpr(&sl.Fields[i].Value)
-		// Try both the literal field name and lowercase version (Forge uses lowercase,
-		// struct literals may use Go-exported names)
+		// Look up expected field type for enum variant disambiguation
 		fieldType, ok := info.Fields[sl.Fields[i].Name]
 		if !ok {
 			lower := strings.ToLower(sl.Fields[i].Name[:1]) + sl.Fields[i].Name[1:]
 			fieldType, ok = info.Fields[lower]
 		}
+
+		// If the expected field type is an enum, temporarily shadow variant constructors
+		// in scope so that ambiguous variant names (e.g., "Tuple" in both TypeExprKind
+		// and PatternKind) resolve to the correct enum.
+		scopePushed := false
+		if ok && fieldType.Kind == TyEnum && fieldType.Name != "" {
+			enumInfo := c.registry.Lookup(fieldType.Name)
+			if enumInfo != nil && len(enumInfo.Variants) > 0 {
+				c.scope = NewScope(c.scope)
+				scopePushed = true
+				for vName, vi := range enumInfo.Variants {
+					if len(vi.Fields) == 0 {
+						c.scope.Define(vName, fieldType)
+					} else {
+						paramTypes := make([]*Type, len(vi.Fields))
+						for j, f := range vi.Fields {
+							paramTypes[j] = f.Type
+						}
+						c.scope.Define(vName, &Type{
+							Kind:   TyFunc,
+							Name:   vName,
+							Params: paramTypes,
+							Return: fieldType,
+						})
+					}
+				}
+			}
+		}
+
+		valType := c.checkExpr(&sl.Fields[i].Value)
+
+		if scopePushed {
+			c.scope = c.scope.parent
+		}
+
 		if ok {
 			if !c.assignableTo(valType, fieldType) && valType.Kind != TyUnknown && fieldType.Kind != TyUnknown {
 				c.error(expr.Span, "field %s: expected %s, got %s", sl.Fields[i].Name, fieldType, valType)

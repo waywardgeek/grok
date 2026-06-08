@@ -2163,18 +2163,34 @@ func (g *cGen) emitValueAsCStr(v *LValue) string {
 	}
 	// If the value is already a const char* (e.g., error type), use it directly
 	if v.Kind == LValTemp {
-		if ty, ok := g.tempTypes[v.TempID]; ok && ty != nil && ty.Kind == LTyError {
-			return g.emitValue(v)
+		if ty, ok := g.tempTypes[v.TempID]; ok && ty != nil {
+			if ty.Kind == LTyError {
+				return g.emitValue(v)
+			}
+			// Error class handle: extract msg field (Error has msg: string)
+			if ty.Kind == LTyClassHandle {
+				return fmt.Sprintf("(const char*)%s->msg.data", g.emitValue(v))
+			}
 		}
 		// Also check varTypes — multi-return destructuring creates VarDecls with _tN names
 		varName := fmt.Sprintf("_t%d", v.TempID)
-		if ty, ok := g.varTypes[varName]; ok && ty != nil && ty.Kind == LTyError {
-			return g.emitValue(v)
+		if ty, ok := g.varTypes[varName]; ok && ty != nil {
+			if ty.Kind == LTyError {
+				return g.emitValue(v)
+			}
+			if ty.Kind == LTyClassHandle {
+				return fmt.Sprintf("(const char*)%s->msg.data", g.emitValue(v))
+			}
 		}
 	}
 	if v.Kind == LValVar {
-		if ty, ok := g.varTypes[v.Name]; ok && ty != nil && ty.Kind == LTyError {
-			return g.emitValue(v)
+		if ty, ok := g.varTypes[v.Name]; ok && ty != nil {
+			if ty.Kind == LTyError {
+				return g.emitValue(v)
+			}
+			if ty.Kind == LTyClassHandle {
+				return fmt.Sprintf("(const char*)%s->msg.data", g.emitValue(v))
+			}
 		}
 	}
 	return fmt.Sprintf("(const char*)%s.data", g.emitValue(v))

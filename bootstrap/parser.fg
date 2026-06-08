@@ -364,7 +364,7 @@ forge parser {
       self.lex!.restore_state(saved)
     }
     let typ = self.parse_type_expr()?
-    return (TupleField { typ }, null)
+    return (TupleField { type_expr: typ }, null)
   }
 
   // ---- Type params ----
