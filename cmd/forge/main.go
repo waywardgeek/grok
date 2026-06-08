@@ -179,12 +179,8 @@ func cmdCompile(args []string) error {
 		return fmt.Errorf("usage: forge compile <file.fg> [...] [-o output.go] [-pkg name] [-mod modpath]")
 	}
 
-	type parsedFile struct {
-		file   *ast.File
-		input  string
-		output string
-	}
-	var files []parsedFile
+	// Parse all input files
+	var allFiles []*ast.File
 	for _, input := range inputs {
 		src, err := os.ReadFile(input)
 		if err != nil {
@@ -194,64 +190,45 @@ func cmdCompile(args []string) error {
 		if err != nil {
 			return err
 		}
-		out := output
-		if out == "" {
-			out = strings.TrimSuffix(filepath.Base(input), filepath.Ext(input)) + ".c"
-		}
-		files = append(files, parsedFile{file: file, input: input, output: out})
+		allFiles = append(allFiles, file)
 	}
 
-	// Merge stdlib interfaces into all files before desugaring
+	// Merge all files into one before any processing (cross-file references)
+	merged := ast.MergeFiles(allFiles)
+
+	// Merge stdlib interfaces ONCE into merged file
 	stdlibDir := ast.FindStdlibDir()
 	if stdlibDir != "" {
 		stdFile := loadStdlib(stdlibDir)
 		if stdFile != nil {
-			for _, pf := range files {
-				ast.MergeStdlib(pf.file, stdFile)
-			}
+			ast.MergeStdlib(merged, stdFile)
 		}
 	}
 
-	// Desugar: embeds → flatten, interface fields → getters/setters, relations → field injection + impl blocks,
-	// destructors → destroy methods on owned classes, default impls → generic functions
-	for _, pf := range files {
-		ast.DesugarInterfaceEmbeds(pf.file)
-		ast.DesugarInterfaceFields(pf.file)
-		ast.DesugarRelations(pf.file)
-		ast.DesugarDestructors(pf.file)
-		ast.DesugarDefaultImpls(pf.file)
-	}
+	// Desugar (all five passes on merged file)
+	ast.DesugarInterfaceEmbeds(merged)
+	ast.DesugarInterfaceFields(merged)
+	ast.DesugarRelations(merged)
+	ast.DesugarDestructors(merged)
+	ast.DesugarDefaultImpls(merged)
 
 	// Post-desugar invariant checks
 	if checkInvariants {
-		for _, pf := range files {
-			violations := ast.ValidatePostDesugar(pf.file)
-			for _, v := range violations {
-				fmt.Fprintf(os.Stderr, "INVARIANT %s: %s\n", pf.input, v)
-			}
+		violations := ast.ValidatePostDesugar(merged)
+		for _, v := range violations {
+			fmt.Fprintf(os.Stderr, "INVARIANT: %s\n", v)
 		}
 	}
 
+	// Check (two-phase on merged file)
 	ch := checker.New()
-	// Use CheckFiles for cross-file method resolution: registers all types
-	// and functions across ALL files before checking any bodies.
-	var astFiles []*ast.File
-	for _, pf := range files {
-		astFiles = append(astFiles, pf.file)
-	}
-	ch.CheckFiles(astFiles)
+	ch.CheckFile(merged)
 	if errs := ch.Errors(); len(errs) > 0 {
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, e)
 		}
 	}
 
-	// Merge all files into one for unified lowering (cross-file references)
-	var allFiles []*ast.File
-	for _, pf := range files {
-		allFiles = append(allFiles, pf.file)
-	}
-	merged := ast.MergeFiles(allFiles)
 
 	out := output
 	if out == "" {

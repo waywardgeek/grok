@@ -1287,7 +1287,11 @@ func (g *cGen) emitStmt(s *LStmt) {
 		d := s.Data.(*LSwitch)
 		g.linef("switch (%s) {", g.emitValue(&d.Tag))
 		for _, c := range d.Cases {
-			g.linef("case %d: {", c.Tag)
+			if c.Tag == -1 {
+				g.line("default: {")
+			} else {
+				g.linef("case %d: {", c.Tag)
+			}
 			g.indent++
 			if c.Binding != "" && d.EnumName != "" {
 				enumName := g.structName(d.EnumName, false)
