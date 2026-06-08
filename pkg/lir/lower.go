@@ -2946,16 +2946,16 @@ func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue {
 func (l *Lowerer) lowerStringInterp(expr *ast.Expr) LValue {
 	si := dataAs[ast.StringInterpExpr](expr.Data)
 	var parts []LFormatPart
-	for i, part := range si.Parts {
+	for i := range si.Parts {
 		if i%2 == 0 {
 			// String literal part
-			if part.Kind == ast.ExprStringLit {
-				sl := dataAs[ast.StringLitExpr](part.Data)
+			if si.Parts[i].Kind == ast.ExprStringLit {
+				sl := dataAs[ast.StringLitExpr](si.Parts[i].Data)
 				parts = append(parts, LFormatPart{IsLiteral: true, Text: sl.Value})
 			}
 		} else {
 			// Expression part
-			val := l.lowerExpr(&part)
+			val := l.lowerExpr(&si.Parts[i])
 			format := "%v"
 			if val.Type != nil {
 				switch val.Type.Kind {
@@ -3053,22 +3053,80 @@ func (l *Lowerer) lowerTry(expr *ast.Expr) LValue {
 // Ensure strings import is used (for strings.Contains etc. in method lowering)
 var _ = strings.Contains
 
-// validateNoAnyTypes checks that no function parameter, return type, or temp
-// definition has type LTyAny after lowering. LTyAny means a checker type
-// annotation was lost (usually from AST Expr value-type copies).
+// lExprKindName returns a human-readable name for an LExpr kind.
+func lExprKindName(kind LExprKind) string {
+	switch kind {
+	case LExprBinOp:
+		return "BinOp"
+	case LExprUnOp:
+		return "UnOp"
+	case LExprCall:
+		return "Call"
+	case LExprMethodCall:
+		return "MethodCall"
+	case LExprBuiltin:
+		return "Builtin"
+	case LExprStructField:
+		return "StructField"
+	case LExprClassGet:
+		return "ClassGet"
+	case LExprIndexGet:
+		return "IndexGet"
+	case LExprSlice:
+		return "Slice"
+	case LExprStructLit:
+		return "StructLit"
+	case LExprClassAlloc:
+		return "ClassAlloc"
+	case LExprVariantConstruct:
+		return "VariantConstruct"
+	case LExprVariantTag:
+		return "VariantTag"
+	case LExprVariantData:
+		return "VariantData"
+	case LExprExtractValue:
+		return "ExtractValue"
+	case LExprExtractError:
+		return "ExtractError"
+	case LExprMakeResult:
+		return "MakeResult"
+	case LExprWrapOptional:
+		return "WrapOptional"
+	case LExprUnwrapOptional:
+		return "UnwrapOptional"
+	case LExprIsNull:
+		return "IsNull"
+	case LExprCast:
+		return "Cast"
+	case LExprFormat:
+		return "Format"
+	case LExprFuncLit:
+		return "FuncLit"
+	case LExprMakeChannel:
+		return "MakeChannel"
+	case LExprFuncRef:
+		return "FuncRef"
+	default:
+		return fmt.Sprintf("Unknown(%d)", kind)
+	}
+}
+
+// validateNoAnyTypes checks that no function parameter, return type, temp,
+// or variable has type LTyAny after lowering. Reports the expression kind
+// to help diagnose the source of the missing type annotation.
 func (l *Lowerer) validateNoAnyTypes() {
 	for _, f := range l.prog.Functions {
 		// Check params
 		for _, p := range f.Params {
 			if p.Type != nil && p.Type.Kind == LTyAny {
-				fmt.Fprintf(os.Stderr, "lowerer: function %s param %q has unresolved type (LTyAny)\n", f.Name, p.Name)
+				fmt.Fprintf(os.Stderr, "lowerer: %s param %q → void* (LTyAny)\n", f.Name, p.Name)
 			}
 		}
 		// Check return type
 		if f.ReturnType != nil && f.ReturnType.Kind == LTyAny {
-			fmt.Fprintf(os.Stderr, "lowerer: function %s has unresolved return type (LTyAny)\n", f.Name)
+			fmt.Fprintf(os.Stderr, "lowerer: %s return → void* (LTyAny)\n", f.Name)
 		}
-		// Check all temps recursively
+		// Check all temps and vars recursively
 		validateStmtsNoAny(f.Name, f.Body)
 	}
 }
@@ -3079,7 +3137,34 @@ func validateStmtsNoAny(funcName string, stmts []LStmt) {
 		case LStmtTempDef:
 			td := stmt.Data.(*LTempDef)
 			if td.Expr.Type != nil && td.Expr.Type.Kind == LTyAny {
-				fmt.Fprintf(os.Stderr, "lowerer: function %s temp _t%d has unresolved type (LTyAny)\n", funcName, td.ID)
+				detail := lExprKindName(td.Expr.Kind)
+				// Add extra context for calls/methods
+				switch td.Expr.Kind {
+				case LExprCall:
+					if d := dataAs[LCallData](td.Expr.Data); d != nil {
+						detail = fmt.Sprintf("Call(%s)", d.Func)
+					}
+				case LExprMethodCall:
+					if d := dataAs[LMethodCallData](td.Expr.Data); d != nil {
+						detail = fmt.Sprintf("MethodCall(.%s)", d.Method)
+					}
+				case LExprStructField:
+					if d := dataAs[LStructFieldData](td.Expr.Data); d != nil {
+						detail = fmt.Sprintf("StructField(.%s)", d.Field)
+					}
+				case LExprClassGet:
+					if d := dataAs[LClassGetData](td.Expr.Data); d != nil {
+						detail = fmt.Sprintf("ClassGet(%s.%s)", d.Class, d.Field)
+					}
+				case LExprIndexGet:
+					detail = "IndexGet"
+				}
+				fmt.Fprintf(os.Stderr, "lowerer: %s _t%d → void* via %s\n", funcName, td.ID, detail)
+			}
+		case LStmtVarDecl:
+			vd := stmt.Data.(*LVarDecl)
+			if vd.Type != nil && vd.Type.Kind == LTyAny {
+				fmt.Fprintf(os.Stderr, "lowerer: %s var %q → void* (LTyAny)\n", funcName, vd.Name)
 			}
 		case LStmtBlock:
 			b := stmt.Data.(*LBlock)
@@ -3096,6 +3181,21 @@ func validateStmtsNoAny(funcName string, stmts []LStmt) {
 		case LStmtFor:
 			forData := stmt.Data.(*LFor)
 			validateStmtsNoAny(funcName, forData.Body)
+		case LStmtWhile:
+			whileData := stmt.Data.(*LWhile)
+			validateStmtsNoAny(funcName, whileData.CondBlock)
+			validateStmtsNoAny(funcName, whileData.Body)
+		case LStmtTypeSwitch:
+			ts := stmt.Data.(*LTypeSwitch)
+			for _, c := range ts.Cases {
+				validateStmtsNoAny(funcName, c.Body)
+			}
+		case LStmtMultiAssign:
+			ma := stmt.Data.(*LMultiAssign)
+			if ma.Expr.Type != nil && ma.Expr.Type.Kind == LTyAny {
+				detail := lExprKindName(ma.Expr.Kind)
+				fmt.Fprintf(os.Stderr, "lowerer: %s multi-assign → void* via %s\n", funcName, detail)
+			}
 		}
 	}
 }

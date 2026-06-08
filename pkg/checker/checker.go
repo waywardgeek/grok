@@ -945,9 +945,9 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 		return TypeString
 	case ast.ExprStringInterp:
 		interp := expr.Data.(*ast.StringInterpExpr)
-		for i, part := range interp.Parts {
+		for i := range interp.Parts {
 			if i%2 != 0 {
-				c.checkExpr(&part)
+				c.checkExpr(&interp.Parts[i])
 			}
 		}
 		return TypeString
