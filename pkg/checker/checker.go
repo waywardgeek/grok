@@ -480,16 +480,55 @@ func (c *Checker) CheckModuleFile(importPath string, fromSpan ast.Span) *ModuleE
 	c.checking[absPath] = true
 	defer delete(c.checking, absPath)
 
-	// Read and parse
-	src, err := os.ReadFile(absPath)
+	// Read and parse — supports both single files and directories
+	var file *ast.File
+	info, err := os.Stat(absPath)
 	if err != nil {
 		c.error(fromSpan, "cannot read module %q: %v", importPath, err)
 		return nil
 	}
-	file, err := parser.ParseFile(string(src), absPath)
-	if err != nil {
-		c.error(fromSpan, "parse error in module %q: %v", importPath, err)
-		return nil
+	if info.IsDir() {
+		// Directory import: read all .fg files, parse each, merge into one
+		entries, err := os.ReadDir(absPath)
+		if err != nil {
+			c.error(fromSpan, "cannot read module directory %q: %v", importPath, err)
+			return nil
+		}
+		var files []*ast.File
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".fg") {
+				continue
+			}
+			fpath := filepath.Join(absPath, entry.Name())
+			src, err := os.ReadFile(fpath)
+			if err != nil {
+				c.error(fromSpan, "cannot read %q: %v", fpath, err)
+				return nil
+			}
+			f, err := parser.ParseFile(string(src), fpath)
+			if err != nil {
+				c.error(fromSpan, "parse error in %q: %v", fpath, err)
+				return nil
+			}
+			files = append(files, f)
+		}
+		if len(files) == 0 {
+			c.error(fromSpan, "module directory %q contains no .fg files", importPath)
+			return nil
+		}
+		file = ast.MergeFiles(files)
+	} else {
+		// Single file import
+		src, err := os.ReadFile(absPath)
+		if err != nil {
+			c.error(fromSpan, "cannot read module %q: %v", importPath, err)
+			return nil
+		}
+		file, err = parser.ParseFile(string(src), absPath)
+		if err != nil {
+			c.error(fromSpan, "parse error in module %q: %v", importPath, err)
+			return nil
+		}
 	}
 
 	// Save and restore checker state for the module

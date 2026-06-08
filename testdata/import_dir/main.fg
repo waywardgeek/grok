@@ -1,0 +1,10 @@
+// main.fg — imports a directory module
+forge main {
+  import lib from "mylib"
+
+  func main() {
+    let p = lib.new_point(1, 2)
+    let sum = lib.add(p.x, p.y)
+    print(sum)
+  }
+}
