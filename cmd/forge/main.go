@@ -146,6 +146,7 @@ func cmdCompile(args []string) error {
 	modPath := ""
 	_ = modPath // reserved for future multi-file module support
 
+	checkInvariants := true // on by default
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-o":
@@ -165,6 +166,10 @@ func cmdCompile(args []string) error {
 			}
 		case "--c":
 			// accepted for backwards compatibility, already the default
+		case "--check-invariants":
+			checkInvariants = true
+		case "--no-check-invariants":
+			checkInvariants = false
 		default:
 			inputs = append(inputs, args[i])
 		}
@@ -217,6 +222,16 @@ func cmdCompile(args []string) error {
 		ast.DesugarDefaultImpls(pf.file)
 	}
 
+	// Post-desugar invariant checks
+	if checkInvariants {
+		for _, pf := range files {
+			violations := ast.ValidatePostDesugar(pf.file)
+			for _, v := range violations {
+				fmt.Fprintf(os.Stderr, "INVARIANT %s: %s\n", pf.input, v)
+			}
+		}
+	}
+
 	ch := checker.New()
 	// Use CheckFiles for cross-file method resolution: registers all types
 	// and functions across ALL files before checking any bodies.
@@ -246,6 +261,18 @@ func cmdCompile(args []string) error {
 	lowerer := lir.NewLowerer()
 	prog := lowerer.Lower(merged)
 	prog.Package = pkg
+
+	// Post-lower invariant checks (before optimization)
+	if checkInvariants {
+		violations := lir.ValidatePostLower(prog)
+		for _, v := range violations {
+			fmt.Fprintf(os.Stderr, "INVARIANT: %s\n", v)
+		}
+		if len(violations) > 0 {
+			fmt.Fprintf(os.Stderr, "  %d void* violations (LTyAny in LIR)\n", len(violations))
+		}
+	}
+
 	lir.Optimize(prog)
 	lir.Monomorphize(prog)
 	lir.RewriteImplRenames(prog)
@@ -297,9 +324,25 @@ func cmdTest(args []string) error {
 		return fmt.Errorf("usage: forge test <file.fg> [...]")
 	}
 
+	checkInvariants := true // on by default
+	var inputs []string
+	for _, a := range args {
+		switch a {
+		case "--check-invariants":
+			checkInvariants = true
+		case "--no-check-invariants":
+			checkInvariants = false
+		default:
+			inputs = append(inputs, a)
+		}
+	}
+	if len(inputs) == 0 {
+		return fmt.Errorf("usage: forge test <file.fg> [...]")
+	}
+
 	// Parse all input files
 	var files []*ast.File
-	for _, input := range args {
+	for _, input := range inputs {
 		src, err := os.ReadFile(input)
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", input, err)
@@ -330,6 +373,14 @@ func cmdTest(args []string) error {
 	ast.DesugarDestructors(merged)
 	ast.DesugarDefaultImpls(merged)
 
+	// Post-desugar invariant checks
+	if checkInvariants {
+		violations := ast.ValidatePostDesugar(merged)
+		for _, v := range violations {
+			fmt.Fprintf(os.Stderr, "INVARIANT: %s\n", v)
+		}
+	}
+
 	// Check
 	ch := checker.New()
 	ch.CheckFile(merged)
@@ -341,6 +392,18 @@ func cmdTest(args []string) error {
 	lowerer := lir.NewLowerer()
 	prog := lowerer.Lower(merged)
 	prog.Package = "test"
+
+	// Post-lower invariant checks
+	if checkInvariants {
+		violations := lir.ValidatePostLower(prog)
+		for _, v := range violations {
+			fmt.Fprintf(os.Stderr, "INVARIANT: %s\n", v)
+		}
+		if len(violations) > 0 {
+			fmt.Fprintf(os.Stderr, "  %d void* violations (LTyAny in LIR)\n", len(violations))
+		}
+	}
+
 	lir.Optimize(prog)
 	lir.Monomorphize(prog)
 	lir.RewriteImplRenames(prog)
