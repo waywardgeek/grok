@@ -2207,6 +2207,68 @@ func (c *Checker) checkBlock(block *ast.Block) {
 
 // --- Top-level checking ---
 
+// CheckFiles type-checks multiple files with cross-file method resolution.
+// Unlike calling CheckFile per-file, this runs Phase 0 and Phase 1 across
+// ALL files before checking ANY bodies (Phase 2), so methods defined in
+// file B are visible when checking bodies in file A.
+func (c *Checker) CheckFiles(files []*ast.File) {
+	// Phase 0: Pre-register all type NAMES across all files
+	for _, file := range files {
+		for i := range file.Blocks {
+			block := &file.Blocks[i]
+			for _, s := range block.Structs {
+				if c.registry.Lookup(s.Name) == nil {
+					c.registry.Register(s.Name, &TypeInfo{
+						Type:   &Type{Kind: TyStruct, Name: s.Name},
+						Fields: make(map[string]*Type),
+					})
+				}
+			}
+			for _, cls := range block.Classes {
+				if c.registry.Lookup(cls.Name) == nil {
+					c.registry.Register(cls.Name, &TypeInfo{
+						Type:    &Type{Kind: TyClass, Name: cls.Name},
+						Fields:  make(map[string]*Type),
+						Methods: make(map[string]*Type),
+					})
+				}
+			}
+			for _, e := range block.Enums {
+				if c.registry.Lookup(e.Name) == nil {
+					c.registry.Register(e.Name, &TypeInfo{
+						Type: &Type{Kind: TyEnum, Name: e.Name},
+					})
+				}
+			}
+			for _, iface := range block.Interfaces {
+				if c.registry.Lookup(iface.Name) == nil {
+					c.registry.Register(iface.Name, &TypeInfo{
+						Type:    &Type{Kind: TyInterface, Name: iface.Name},
+						Fields:  make(map[string]*Type),
+						Methods: make(map[string]*Type),
+					})
+				}
+			}
+		}
+	}
+	// Phase 1: Register all types, functions, constants across ALL files
+	for _, file := range files {
+		for i := range file.Blocks {
+			c.registerForgeBlock(&file.Blocks[i])
+		}
+	}
+	// Phase 2: Check function and method bodies (all names now in scope)
+	for _, file := range files {
+		for i := range file.Blocks {
+			c.checkForgeBlockBodies(&file.Blocks[i])
+		}
+	}
+	// Phase 3: Validate
+	for _, file := range files {
+		c.validateAllTypesResolved(file)
+	}
+}
+
 // CheckFile type-checks an entire AST file.
 func (c *Checker) CheckFile(file *ast.File) {
 	if file.Filename != "" && c.currentFile == "" {

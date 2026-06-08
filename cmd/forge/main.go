@@ -218,9 +218,13 @@ func cmdCompile(args []string) error {
 	}
 
 	ch := checker.New()
+	// Use CheckFiles for cross-file method resolution: registers all types
+	// and functions across ALL files before checking any bodies.
+	var astFiles []*ast.File
 	for _, pf := range files {
-		ch.CheckFile(pf.file)
+		astFiles = append(astFiles, pf.file)
 	}
+	ch.CheckFiles(astFiles)
 	if errs := ch.Errors(); len(errs) > 0 {
 		for _, e := range errs {
 			fmt.Fprintln(os.Stderr, e)
