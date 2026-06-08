@@ -411,7 +411,7 @@ func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {
 			Data: &ast.FloatLitExpr{Value: tok.Text},
 			Span: tok.Span,
 		}, nil
-	case TStringLit:
+	case TStringLit, TTripleStringLit:
 		p.next()
 		return &ast.Expr{
 			Kind: ast.ExprStringLit,
@@ -1122,7 +1122,7 @@ func (p *Parser) parsePattern() (*ast.Pattern, error) {
 			Data: &ast.IdentPattern{Name: tok.Text},
 			Span: tok.Span,
 		}, nil
-	case TIntLit, TCharLit, TStringLit, TTrue, TFalse:
+	case TIntLit, TCharLit, TStringLit, TTripleStringLit, TTrue, TFalse:
 		p.next()
 		expr := ast.Expr{Span: tok.Span}
 		switch tok.Kind {
@@ -1136,7 +1136,7 @@ func (p *Parser) parsePattern() (*ast.Pattern, error) {
 				val = int(tok.Text[0])
 			}
 			expr.Data = &ast.IntLitExpr{Value: fmt.Sprintf("%d", val), TypeHint: "u8"}
-		case TStringLit:
+		case TStringLit, TTripleStringLit:
 			expr.Kind = ast.ExprStringLit
 			expr.Data = &ast.StringLitExpr{Value: tok.Text}
 		case TTrue:

@@ -173,6 +173,29 @@ func Monomorphize(prog *LProgram) {
 		m.rewriteStmts(prog.Functions[i].Body)
 	}
 
+	// Phase 5: Rewrite function signatures, class fields, and struct fields.
+	// substType (Phase 2) replaces type vars with concrete types but preserves
+	// the original generic name (e.g., Dict with TypeArgs=[InterfaceDecl]).
+	// substTypeRemoveVars mangles these into concrete names (Dict_CInterfaceDecl).
+	// Phase 4 only processes statement bodies; signatures and field types need
+	// a separate pass.
+	for i := range prog.Functions {
+		for j := range prog.Functions[i].Params {
+			prog.Functions[i].Params[j].Type = m.substTypeRemoveVars(prog.Functions[i].Params[j].Type)
+		}
+		prog.Functions[i].ReturnType = m.substTypeRemoveVars(prog.Functions[i].ReturnType)
+	}
+	for i := range prog.Classes {
+		for j := range prog.Classes[i].Fields {
+			prog.Classes[i].Fields[j].Type = m.substTypeRemoveVars(prog.Classes[i].Fields[j].Type)
+		}
+	}
+	for i := range prog.Structs {
+		for j := range prog.Structs[i].Fields {
+			prog.Structs[i].Fields[j].Type = m.substTypeRemoveVars(prog.Structs[i].Fields[j].Type)
+		}
+	}
+
 	// Export rename map for C backend
 	prog.ClassRenames = m.classRenames
 }
@@ -620,6 +643,19 @@ func (m *monoPass) rewriteStmt(s *LStmt) {
 		d.Type = m.substTypeRemoveVars(d.Type)
 		if d.Init != nil {
 			d.Init.Type = m.substTypeRemoveVars(d.Init.Type)
+			// Sync VarDecl type from init when init has a more specific mangled type.
+			// This handles cases where the VarDecl type is a generic class name
+			// without TypeArgs (e.g., "DictEntry") but the init has the correctly
+			// mangled type (e.g., "DictEntry_CInterfaceDecl") from the class alloc.
+			if d.Init.Type != nil && d.Type != nil &&
+				d.Init.Type.Kind == d.Type.Kind &&
+				(d.Type.Kind == LTyClassHandle || d.Type.Kind == LTyStruct) &&
+				d.Init.Type.Name != d.Type.Name {
+				// Use the init type if it looks mangled (contains _) while decl type doesn't
+				if d.Type.Name != "" && d.Init.Type.Name != "" {
+					d.Type = d.Init.Type
+				}
+			}
 		}
 	case LStmtAssign:
 		d := s.Data.(*LAssign)
@@ -632,6 +668,10 @@ func (m *monoPass) rewriteStmt(s *LStmt) {
 		d := s.Data.(*LClassSet)
 		d.Handle.Type = m.substTypeRemoveVars(d.Handle.Type)
 		d.Value.Type = m.substTypeRemoveVars(d.Value.Type)
+		// Sync Class string with mangled handle type name
+		if d.Handle.Type != nil && d.Handle.Type.Kind == LTyClassHandle {
+			d.Class = d.Handle.Type.Name
+		}
 	case LStmtIndexSet:
 		d := s.Data.(*LIndexSet)
 		d.Collection.Type = m.substTypeRemoveVars(d.Collection.Type)
@@ -819,6 +859,10 @@ func (m *monoPass) rewriteExpr(e *LExpr) {
 	case LExprClassGet:
 		d := e.Data.(*LClassGetData)
 		d.Handle.Type = m.substTypeRemoveVars(d.Handle.Type)
+		// Sync Class string with mangled handle type name
+		if d.Handle.Type != nil && d.Handle.Type.Kind == LTyClassHandle {
+			d.Class = d.Handle.Type.Name
+		}
 	case LExprIndexGet:
 		d := e.Data.(*LIndexGetData)
 		d.Collection.Type = m.substTypeRemoveVars(d.Collection.Type)
@@ -889,6 +933,12 @@ func substType(t *LType, subst map[string]*LType) *LType {
 	out.Elem = substType(t.Elem, subst)
 	out.Key = substType(t.Key, subst)
 	out.Return = substType(t.Return, subst)
+	if len(t.TypeArgs) > 0 {
+		out.TypeArgs = make([]*LType, len(t.TypeArgs))
+		for i, a := range t.TypeArgs {
+			out.TypeArgs[i] = substType(a, subst)
+		}
+	}
 	if len(t.Fields) > 0 {
 		out.Fields = make([]LField, len(t.Fields))
 		for i, f := range t.Fields {
@@ -919,7 +969,75 @@ func substType(t *LType, subst map[string]*LType) *LType {
 // substTypeRemoveVars is used in the rewrite phase. After monomorphization,
 // any remaining type vars should already be gone. This is a safety net.
 func (m *monoPass) substTypeRemoveVars(t *LType) *LType {
-	return t
+	if t == nil {
+		return nil
+	}
+	// Rewrite generic class/struct handles that have TypeArgs into their mangled names
+	if (t.Kind == LTyClassHandle || t.Kind == LTyStruct) && len(t.TypeArgs) > 0 && !hasTypeVars(t.TypeArgs) {
+		mangledName := mangleName(t.Name, t.TypeArgs)
+		result := &LType{
+			Kind:       t.Kind,
+			Name:       mangledName,
+			Elem:       t.Elem,
+			Key:        t.Key,
+			Fields:     t.Fields,
+			Params:     t.Params,
+			Return:     t.Return,
+			Variants:   t.Variants,
+			Bits:       t.Bits,
+			IsExported: t.IsExported,
+			// TypeArgs cleared — name is now mangled
+		}
+		return result
+	}
+	// Recurse into container types
+	changed := false
+	newElem := m.substTypeRemoveVars(t.Elem)
+	if newElem != t.Elem {
+		changed = true
+	}
+	newKey := m.substTypeRemoveVars(t.Key)
+	if newKey != t.Key {
+		changed = true
+	}
+	newReturn := m.substTypeRemoveVars(t.Return)
+	if newReturn != t.Return {
+		changed = true
+	}
+	var newParams []*LType
+	if len(t.Params) > 0 {
+		newParams = make([]*LType, len(t.Params))
+		for i, p := range t.Params {
+			newParams[i] = m.substTypeRemoveVars(p)
+			if newParams[i] != p {
+				changed = true
+			}
+		}
+	}
+	var newTypeArgs []*LType
+	if len(t.TypeArgs) > 0 {
+		newTypeArgs = make([]*LType, len(t.TypeArgs))
+		for i, a := range t.TypeArgs {
+			newTypeArgs[i] = m.substTypeRemoveVars(a)
+			if newTypeArgs[i] != a {
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return t
+	}
+	result := *t
+	result.Elem = newElem
+	result.Key = newKey
+	result.Return = newReturn
+	if newParams != nil {
+		result.Params = newParams
+	}
+	if newTypeArgs != nil {
+		result.TypeArgs = newTypeArgs
+	}
+	return &result
 }
 
 
@@ -1333,15 +1451,44 @@ func typeToMangle(t *LType) string {
 	case LTyString:
 		return "string"
 	case LTyStruct:
-		return "S" + t.Name
+		name := "S" + t.Name
+		if len(t.TypeArgs) > 0 {
+			for _, ta := range t.TypeArgs {
+				name += "_" + typeToMangle(ta)
+			}
+		}
+		return name
 	case LTyClassHandle:
-		return "C" + t.Name
+		name := "C" + t.Name
+		if len(t.TypeArgs) > 0 {
+			for _, ta := range t.TypeArgs {
+				name += "_" + typeToMangle(ta)
+			}
+		}
+		return name
 	case LTySlice:
 		return "slice_" + typeToMangle(t.Elem)
 	case LTyMap:
 		return "map_" + typeToMangle(t.Key) + "_" + typeToMangle(t.Elem)
 	case LTyOptional:
 		return "opt_" + typeToMangle(t.Elem)
+	case LTyTaggedUnion:
+		return "E" + t.Name
+	case LTyErrorResult:
+		return "res_" + typeToMangle(t.Elem)
+	case LTyAny:
+		if t.Name != "" {
+			return "I" + t.Name
+		}
+		return "any"
+	case LTyTuple:
+		s := "tup"
+		for _, f := range t.Fields {
+			s += "_" + typeToMangle(f.Type)
+		}
+		return s
+	case LTyFuncPtr:
+		return "fn"
 	case LTyPlatformInt:
 		return "int"
 	case LTyPlatformUint:
@@ -1387,6 +1534,11 @@ func typeHasVar(t *LType) bool {
 	}
 	for _, f := range t.Fields {
 		if typeHasVar(f.Type) {
+			return true
+		}
+	}
+	for _, a := range t.TypeArgs {
+		if typeHasVar(a) {
 			return true
 		}
 	}

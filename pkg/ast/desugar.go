@@ -564,10 +564,18 @@ func rewriteFieldType(te TypeExpr, typeParams []TypeParam, rel RelationDecl) Typ
 	case TypeNamed:
 		nt := te.Data.(NamedType)
 		if len(typeParams) >= 1 && nt.Name == typeParams[0].Name {
-			return TypeExpr{Kind: TypeNamed, Data: NamedType{Name: rel.Parent.TypeName}, Span: te.Span}
+			args := make([]TypeExpr, len(rel.Parent.TypeArgs))
+			for i, arg := range rel.Parent.TypeArgs {
+				args[i] = TypeExpr{Kind: TypeNamed, Data: NamedType{Name: arg}, Span: te.Span}
+			}
+			return TypeExpr{Kind: TypeNamed, Data: NamedType{Name: rel.Parent.TypeName, Args: args}, Span: te.Span}
 		}
 		if len(typeParams) >= 2 && nt.Name == typeParams[1].Name {
-			return TypeExpr{Kind: TypeNamed, Data: NamedType{Name: rel.Child.TypeName}, Span: te.Span}
+			args := make([]TypeExpr, len(rel.Child.TypeArgs))
+			for i, arg := range rel.Child.TypeArgs {
+				args[i] = TypeExpr{Kind: TypeNamed, Data: NamedType{Name: arg}, Span: te.Span}
+			}
+			return TypeExpr{Kind: TypeNamed, Data: NamedType{Name: rel.Child.TypeName, Args: args}, Span: te.Span}
 		}
 		return te
 	case TypeOptional:

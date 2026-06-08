@@ -25,6 +25,7 @@ type LType struct {
 	Params     []*LType   // for FuncPtr
 	Return     *LType     // for FuncPtr
 	Variants   []LVariant // for TaggedUnion
+	TypeArgs   []*LType   // for generic class/struct instances (e.g., Dict<ClassDecl>)
 	Bits       int        // for integer/float types (8,16,32,64; -1 for platform int/uint)
 	IsExported bool       // for named types: controls Go visibility (upper/lower case)
 }

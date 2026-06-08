@@ -463,7 +463,11 @@ func (l *Lowerer) lowerNamedType(nt *ast.NamedType) *LType {
 	}
 	// Check if it's a class
 	if _, ok := l.classFields[nt.Name]; ok {
-		return &LType{Kind: LTyClassHandle, Name: nt.Name, IsExported: l.exported[nt.Name]}
+		t := &LType{Kind: LTyClassHandle, Name: nt.Name, IsExported: l.exported[nt.Name]}
+		for i := range nt.Args {
+			t.TypeArgs = append(t.TypeArgs, l.lowerTypeExpr(&nt.Args[i]))
+		}
+		return t
 	}
 	// Check if it's a type parameter in scope
 	if l.typeParamsInScope[nt.Name] {
@@ -482,7 +486,11 @@ func (l *Lowerer) lowerNamedType(nt *ast.NamedType) *LType {
 		return &LType{Kind: LTyAny, Name: nt.Name, IsExported: l.exported[nt.Name]}
 	}
 	// Default to struct
-	return &LType{Kind: LTyStruct, Name: nt.Name, IsExported: l.exported[nt.Name]}
+	t := &LType{Kind: LTyStruct, Name: nt.Name, IsExported: l.exported[nt.Name]}
+	for i := range nt.Args {
+		t.TypeArgs = append(t.TypeArgs, l.lowerTypeExpr(&nt.Args[i]))
+	}
+	return t
 }
 
 // lowerCheckerType converts a checker.Type to an LType.
@@ -523,9 +531,21 @@ func (l *Lowerer) lowerCheckerType(ct *checker.Type) *LType {
 	case checker.TyGenerator:
 		return &LType{Kind: LTyGenerator, Elem: l.lowerCheckerType(ct.Elem)}
 	case checker.TyStruct:
-		return &LType{Kind: LTyStruct, Name: ct.Name, IsExported: l.exported[ct.Name]}
+		t := &LType{Kind: LTyStruct, Name: ct.Name, IsExported: l.exported[ct.Name]}
+		if len(ct.TypeArgs) > 0 {
+			for _, ta := range ct.TypeArgs {
+				t.TypeArgs = append(t.TypeArgs, l.lowerCheckerType(ta))
+			}
+		}
+		return t
 	case checker.TyClass:
-		return &LType{Kind: LTyClassHandle, Name: ct.Name, IsExported: l.exported[ct.Name]}
+		t := &LType{Kind: LTyClassHandle, Name: ct.Name, IsExported: l.exported[ct.Name]}
+		if len(ct.TypeArgs) > 0 {
+			for _, ta := range ct.TypeArgs {
+				t.TypeArgs = append(t.TypeArgs, l.lowerCheckerType(ta))
+			}
+		}
+		return t
 	case checker.TyEnum:
 		return &LType{Kind: LTyTaggedUnion, Name: ct.Name, IsExported: l.exported[ct.Name]}
 	case checker.TyInterface:
@@ -2993,9 +3013,23 @@ func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue {
 		for _, ta := range sl.TypeArgs {
 			typeArgs = append(typeArgs, l.lowerTypeExpr(&ta))
 		}
+		// Use checker's resultType to preserve TypeArgs (e.g., DictEntry<V>)
+		allocType := resultType
+		if allocType.Kind != LTyClassHandle || allocType.Name != sl.TypeName {
+			allocType = &LType{Kind: LTyClassHandle, Name: sl.TypeName, IsExported: l.exported[sl.TypeName]}
+		}
+		// Also ensure TypeArgs from checker are on the alloc type
+		if len(allocType.TypeArgs) == 0 && len(typeArgs) > 0 {
+			allocType = &LType{
+				Kind:       LTyClassHandle,
+				Name:       sl.TypeName,
+				TypeArgs:   typeArgs,
+				IsExported: l.exported[sl.TypeName],
+			}
+		}
 		return l.emitTemp(LExpr{
 			Kind: LExprClassAlloc,
-			Type: &LType{Kind: LTyClassHandle, Name: sl.TypeName, IsExported: l.exported[sl.TypeName]},
+			Type: allocType,
 			Data: &LClassAllocData{Class: sl.TypeName, Fields: fields, TypeArgs: typeArgs},
 		})
 	}

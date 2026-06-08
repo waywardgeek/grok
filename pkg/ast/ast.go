@@ -279,7 +279,8 @@ const (
 // RelationSide is one side of a relation.
 type RelationSide struct {
 	TypeName string
-	Label    string // empty if unlabeled
+	TypeArgs []string // type parameters, e.g. ["V"] from Dict<V>
+	Label    string   // empty if unlabeled
 }
 
 // RelationDecl is a relation declaration.

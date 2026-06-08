@@ -769,6 +769,7 @@ forge AST {
 
   struct RelationSide {
     TypeName: string
+    TypeArgs: [string]  // type parameters, e.g. ["V"] from Dict<V>
     Label: string
   }
 

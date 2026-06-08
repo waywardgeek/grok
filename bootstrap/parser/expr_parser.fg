@@ -326,7 +326,7 @@ forge parser {
         self.next()
         return (Expr { FloatLit(tok.text), span: tok.span }, null)
       }
-      LStringLit => {
+      LStringLit | LTripleString => {
         self.next()
         return (Expr { StringLit(tok.text), span: tok.span }, null)
       }
@@ -882,7 +882,7 @@ forge parser {
         let expr = Expr { kind: IntLit(itoa(val), sym("u8")), span: tok.span }
         return (Pattern { Literal(expr), span: tok.span }, null)
       }
-      LStringLit => {
+      LStringLit | LTripleString => {
         self.next()
         let expr = Expr { kind: StringLit(tok.text), span: tok.span }
         return (Pattern { Literal(expr), span: tok.span }, null)

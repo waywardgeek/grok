@@ -1861,18 +1861,18 @@ func (p *Parser) parseRelation() (*ast.RelationDecl, error) {
 
 func (p *Parser) parseRelationSideFrom(nameTok Token) ast.RelationSide {
 	side := ast.RelationSide{TypeName: nameTok.Text}
-	// Consume optional type parameters: <V>, <K, V>, etc.
+	// Collect optional type parameters: <V>, <K, V>, etc.
 	if p.peek().Kind == TLt {
 		p.next() // consume '<'
-		depth := 1
-		for depth > 0 && p.peek().Kind != TEOF {
-			switch p.peek().Kind {
-			case TLt:
-				depth++
-			case TGt:
-				depth--
+		for p.peek().Kind != TGt && p.peek().Kind != TEOF {
+			tok := p.next()
+			if tok.Kind == TIdent {
+				side.TypeArgs = append(side.TypeArgs, tok.Text)
 			}
-			p.next()
+			// skip commas and other tokens
+		}
+		if p.peek().Kind == TGt {
+			p.next() // consume '>'
 		}
 	}
 	// Check for :label — label can be an ident or a contextual keyword used as name
