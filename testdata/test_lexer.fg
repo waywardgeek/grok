@@ -252,7 +252,7 @@ forge lexer {
   func test_position_second_line() {
     let lex = make_lex("a\nb")
     next_skip_nl(lex)   // a
-    next_skip_nl(lex)   // newline consumed by next_skip_nl
+    // next_skip_nl skips the newline token and returns b
     let tok = next_skip_nl(lex)
     assert_eq(tok.span.start.line, 2, "line 2")
     assert_eq(tok.span.start.column, 1, "col 1")

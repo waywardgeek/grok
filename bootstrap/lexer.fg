@@ -447,12 +447,8 @@ forge lexer {
       return make_token(kw!, text, start, self.current_pos())
     }
 
-    // Check annotation keywords
-    let akw = lookup_annot_keyword(self, text)
-    if !isnull(akw) {
-      return make_token(akw!, text, start, self.current_pos())
-    }
-
+    // Annotation keywords are contextual — always lex as LIdent.
+    // The parser resolves them via peekAnnotation().
     return make_token(LIdent, text, start, self.current_pos())
   }
 

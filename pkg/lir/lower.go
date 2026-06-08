@@ -62,6 +62,9 @@ type Lowerer struct {
 
 	// Interface declarations for impl block resolution
 	ifaceDecls map[string]*LInterfaceDecl // interface name → lowered decl
+
+	// Default field values from AST (class/struct name → field name → default Expr)
+	fieldDefaults map[string]map[string]*ast.Expr
 }
 
 type variantCtorInfo struct {
@@ -83,6 +86,7 @@ func NewLowerer() *Lowerer {
 		classTypeParams: make(map[string][]LTypeParam),
 		varTypes:        make(map[string]*LType),
 		ifaceDecls:      make(map[string]*LInterfaceDecl),
+		fieldDefaults:   make(map[string]map[string]*ast.Expr),
 		typeAliasTypes:  make(map[string]*LType),
 	}
 }
@@ -93,6 +97,19 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 		ImplMethodRenames: map[string]string{},
 	}
 	l.prog = prog
+
+	// Phase 0: Pre-register ALL class names across all blocks so that
+	// field type resolution in registerTypes can distinguish classes from
+	// structs regardless of block ordering (e.g., Comment class in ast.fg
+	// referenced by Lexer's lc_children field in lexer.fg).
+	for i := range file.Blocks {
+		block := &file.Blocks[i]
+		for _, cls := range block.Classes {
+			if _, exists := l.classFields[cls.Name]; !exists {
+				l.classFields[cls.Name] = nil
+			}
+		}
+	}
 
 	// First pass: register ALL types across all blocks before lowering any.
 	// This ensures cross-block references (e.g., test file using enum variants
@@ -131,12 +148,6 @@ func (l *Lowerer) Lower(file *ast.File) *LProgram {
 			})
 		}
 
-		// Pre-register class names for cross-references
-		for _, cls := range block.Classes {
-			if _, ok := l.classFields[cls.Name]; !ok {
-				l.classFields[cls.Name] = nil
-			}
-		}
 	}
 
 	// Second pass: lower all blocks (types already registered in first pass)
@@ -255,13 +266,6 @@ func (l *Lowerer) registerTypes(block *ast.ForgeBlock) {
 		}
 	}
 
-	// Pre-register class names so enum/struct types can reference them
-	for _, cls := range block.Classes {
-		if _, exists := l.classFields[cls.Name]; !exists {
-			l.classFields[cls.Name] = nil
-		}
-	}
-
 	for _, e := range block.Enums {
 		var variants []LVariant
 		for i, v := range e.Variants {
@@ -314,9 +318,16 @@ func (l *Lowerer) registerTypes(block *ast.ForgeBlock) {
 		}
 		var fieldNames []string
 		var fields []LField
-		for _, f := range cls.Fields {
+		for i := range cls.Fields {
+			f := &cls.Fields[i]
 			fieldNames = append(fieldNames, f.Name)
 			fields = append(fields, LField{Name: f.Name, Type: l.lowerTypeExpr(&f.Type)})
+			if f.Default != nil {
+				if l.fieldDefaults[cls.Name] == nil {
+					l.fieldDefaults[cls.Name] = make(map[string]*ast.Expr)
+				}
+				l.fieldDefaults[cls.Name][f.Name] = f.Default
+			}
 		}
 		l.classCtorFields[cls.Name] = fieldNames
 		l.classFields[cls.Name] = fields
@@ -2881,6 +2892,19 @@ func (l *Lowerer) lowerStructLit(expr *ast.Expr) LValue {
 
 	// Check if this is a class (struct-literal construction for classes)
 	if _, isClass := l.classFields[sl.TypeName]; isClass {
+		// Inject default field values for fields not explicitly provided
+		if defaults, hasDefaults := l.fieldDefaults[sl.TypeName]; hasDefaults {
+			provided := make(map[string]bool)
+			for _, f := range fields {
+				provided[f.Name] = true
+			}
+			for name, defaultExpr := range defaults {
+				if !provided[name] {
+					val := l.lowerExpr(defaultExpr)
+					fields = append(fields, LFieldInit{Name: name, Value: val})
+				}
+			}
+		}
 		var typeArgs []*LType
 		for _, ta := range sl.TypeArgs {
 			typeArgs = append(typeArgs, l.lowerTypeExpr(&ta))
