@@ -30,6 +30,7 @@ const (
 	ExprSlice                     // xs[start:end] — slice expression
 	ExprTry                       // expr? — error propagation, early return on error
 	ExprIs                        // expr is Variant — variant type check, returns bool
+	ExprIfElse                    // if cond { a } else { b } — if as expression
 )
 
 // Expr is any expression node.
@@ -195,6 +196,20 @@ type TryExpr struct {
 type IsExpr struct {
 	Operand Expr
 	Variant string // variant name to check against
+}
+
+// IfElseExpr represents if cond { a } else { b } as an expression.
+// Both branches must evaluate to the same type.
+type IfElseExpr struct {
+	Cond     Expr
+	Then     Block // last expression is the value
+	Else     Block // last expression is the value
+	ElseIfs  []ElseIfBranch // optional else-if chains
+}
+
+type ElseIfBranch struct {
+	Cond Expr
+	Body Block
 }
 
 // --- Statements ---

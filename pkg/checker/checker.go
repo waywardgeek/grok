@@ -1148,6 +1148,8 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 		return c.checkTry(expr)
 	case ast.ExprIs:
 		return c.checkIs(expr)
+	case ast.ExprIfElse:
+		return c.checkIfElseExpr(expr)
 	case ast.ExprLambda:
 		return c.checkLambda(expr)
 	default:
@@ -2017,6 +2019,64 @@ func (c *Checker) checkIs(expr *ast.Expr) *Type {
 	}
 
 	return TypeBool
+}
+
+func (c *Checker) checkIfElseExpr(expr *ast.Expr) *Type {
+	ie := expr.Data.(*ast.IfElseExpr)
+
+	// Check condition
+	condType := c.checkExpr(&ie.Cond)
+	if condType != TypeError && condType != TypeBool {
+		c.error(ie.Cond.Span, "if expression condition must be bool, got %s", condType)
+	}
+
+	// Check then branch — type is last expression's type
+	thenType := c.checkBlockExprType(&ie.Then)
+
+	// Check else-if branches
+	for i := range ie.ElseIfs {
+		eifCondType := c.checkExpr(&ie.ElseIfs[i].Cond)
+		if eifCondType != TypeError && eifCondType != TypeBool {
+			c.error(ie.ElseIfs[i].Cond.Span, "else-if condition must be bool, got %s", eifCondType)
+		}
+		eifType := c.checkBlockExprType(&ie.ElseIfs[i].Body)
+		if thenType != TypeError && eifType != TypeError && !c.assignableTo(eifType, thenType) {
+			c.error(ie.ElseIfs[i].Body.Stmts[len(ie.ElseIfs[i].Body.Stmts)-1].Span,
+				"else-if branch type %s doesn't match then branch type %s", eifType, thenType)
+		}
+	}
+
+	// Check else branch
+	elseType := c.checkBlockExprType(&ie.Else)
+	if thenType != TypeError && elseType != TypeError && !c.assignableTo(elseType, thenType) {
+		c.error(ie.Else.Stmts[len(ie.Else.Stmts)-1].Span,
+			"else branch type %s doesn't match then branch type %s", elseType, thenType)
+	}
+
+	if thenType == TypeError {
+		return elseType
+	}
+	return thenType
+}
+
+// checkBlockExprType checks all statements in a block and returns the type of the last expression.
+func (c *Checker) checkBlockExprType(block *ast.Block) *Type {
+	c.pushScope()
+	defer c.popScope()
+	for i := range block.Stmts {
+		c.checkStmt(&block.Stmts[i])
+	}
+	if len(block.Stmts) == 0 {
+		return TypeUnit
+	}
+	last := &block.Stmts[len(block.Stmts)-1]
+	if last.Kind == ast.StmtExpr {
+		d := last.Data.(*ast.ExprStmt)
+		if d.Expr.ResolvedType != nil {
+			return d.Expr.ResolvedType.(*Type)
+		}
+	}
+	return TypeUnit
 }
 
 func (c *Checker) checkLambda(expr *ast.Expr) *Type {
@@ -2920,6 +2980,21 @@ func (c *Checker) walkExpr(expr *ast.Expr, ctx string) {
 	case ast.ExprIs:
 		d := expr.Data.(*ast.IsExpr)
 		c.walkExpr(&d.Operand, ctx)
+	case ast.ExprIfElse:
+		d := expr.Data.(*ast.IfElseExpr)
+		c.walkExpr(&d.Cond, ctx)
+		for i := range d.Then.Stmts {
+			c.walkStmt(&d.Then.Stmts[i], ctx)
+		}
+		for i := range d.ElseIfs {
+			c.walkExpr(&d.ElseIfs[i].Cond, ctx)
+			for j := range d.ElseIfs[i].Body.Stmts {
+				c.walkStmt(&d.ElseIfs[i].Body.Stmts[j], ctx)
+			}
+		}
+		for i := range d.Else.Stmts {
+			c.walkStmt(&d.Else.Stmts[i], ctx)
+		}
 	case ast.ExprMatch:
 		d := expr.Data.(*ast.MatchStmt) // match expressions reuse MatchStmt
 		c.walkExpr(&d.Value, ctx)
@@ -3964,6 +4039,15 @@ func (c *Checker) validateAccessExpr(expr *ast.Expr, ctx string) {
 	case ast.ExprIs:
 		d := expr.Data.(*ast.IsExpr)
 		c.validateAccessExpr(&d.Operand, ctx)
+	case ast.ExprIfElse:
+		d := expr.Data.(*ast.IfElseExpr)
+		c.validateAccessExpr(&d.Cond, ctx)
+		c.validateAccessBlock(&d.Then, ctx)
+		for i := range d.ElseIfs {
+			c.validateAccessExpr(&d.ElseIfs[i].Cond, ctx)
+			c.validateAccessBlock(&d.ElseIfs[i].Body, ctx)
+		}
+		c.validateAccessBlock(&d.Else, ctx)
 	case ast.ExprMatch:
 		d := expr.Data.(*ast.MatchStmt)
 		c.validateAccessExpr(&d.Value, ctx)

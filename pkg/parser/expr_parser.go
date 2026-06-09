@@ -568,6 +568,8 @@ func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {
 		return p.parseMatchExpr()
 	case TPipe:
 		return p.parseLambdaExpr()
+	case TIf:
+		return p.parseIfExpr()
 	default:
 		return nil, &ParseError{
 			Message: fmt.Sprintf("expected expression, got %s (%q)", tokenNames[tok.Kind], tok.Text),
@@ -630,6 +632,70 @@ func (p *Parser) parseMapLit(mapTok Token) (*ast.Expr, error) {
 		Kind: ast.ExprMapLit,
 		Data: &ast.MapLitExpr{Entries: entries},
 		Span: ast.Span{Start: mapTok.Span.Start, End: end.Span.End},
+	}, nil
+}
+
+// parseIfExpr parses if cond { expr } else { expr } as an expression.
+// Requires else branch (must produce a value). Supports else-if chains.
+func (p *Parser) parseIfExpr() (*ast.Expr, error) {
+	start := p.peek().Span.Start
+	p.next() // consume 'if'
+	cond, err := p.parseExprNoStructLit()
+	if err != nil {
+		return nil, err
+	}
+	thenBlock, err := p.parseBlock()
+	if err != nil {
+		return nil, err
+	}
+
+	var elseIfs []ast.ElseIfBranch
+	var elseBlock *ast.Block
+
+	for p.peek().Kind == TElse {
+		p.next() // consume 'else'
+		if p.peek().Kind == TIf {
+			p.next() // consume 'if'
+			eifCond, err := p.parseExprNoStructLit()
+			if err != nil {
+				return nil, err
+			}
+			eifBlock, err := p.parseBlock()
+			if err != nil {
+				return nil, err
+			}
+			elseIfs = append(elseIfs, ast.ElseIfBranch{Cond: *eifCond, Body: *eifBlock})
+		} else {
+			eb, err := p.parseBlock()
+			if err != nil {
+				return nil, err
+			}
+			elseBlock = eb
+			break
+		}
+	}
+
+	if elseBlock == nil {
+		return nil, &ParseError{
+			Message: "if expression requires an else branch",
+			Span:    ast.Span{Start: start},
+		}
+	}
+
+	end := elseBlock.Stmts[len(elseBlock.Stmts)-1].Span.End
+	if len(elseBlock.Stmts) == 0 {
+		end = cond.Span.End
+	}
+
+	return &ast.Expr{
+		Kind: ast.ExprIfElse,
+		Data: &ast.IfElseExpr{
+			Cond:    *cond,
+			Then:    *thenBlock,
+			Else:    *elseBlock,
+			ElseIfs: elseIfs,
+		},
+		Span: ast.Span{Start: start, End: end},
 	}, nil
 }
 

@@ -93,7 +93,7 @@ forge AST {
     bitwise, shift)
     - Access: Call, MethodCall, FieldAccess, Index
     - Composite: ListLit, TupleLit, MapLit, Lambda, Match-as-expression
-    - Type ops: Cast (expr as Type), Unwrap (expr!), Try (expr?), Is (expr is Variant)
+    - Type ops: Cast (expr as Type), Unwrap (expr!), Try (expr?), Is (expr is Variant), IfElse (if cond { a } else { b })
 
     Statements use a tagged union (StmtKind + Stmt.Data):
     - Declarations: VarDecl (let/let mut, optional type + initializer, let-else with pattern)
@@ -385,6 +385,7 @@ forge AST {
     Try
     Slice
     Is
+    IfElse
   }
 
   struct Expr {
@@ -546,6 +547,20 @@ forge AST {
     why: "expr is Variant — checks if an enum value is a specific variant. Returns bool."
     Operand: Expr
     Variant: string
+  }
+
+  struct IfElseExpr {
+    why: "if cond { a } else { b } as expression. Both branches must evaluate to same type. Supports else-if chains."
+    Cond: Expr
+    Then: Block
+    Else: Block
+    ElseIfs: [ElseIfBranch]
+  }
+
+  struct ElseIfBranch {
+    why: "An else-if branch in an if-expression chain."
+    Cond: Expr
+    Body: Block
   }
 
   // ---- Statements (.fg) ----

@@ -2466,6 +2466,8 @@ func (l *Lowerer) lowerExpr(expr *ast.Expr) LValue {
 		return l.lowerTry(expr)
 	case ast.ExprIs:
 		return l.lowerIs(expr)
+	case ast.ExprIfElse:
+		return l.lowerIfElseExpr(expr)
 	case ast.ExprLambda:
 		return l.lowerLambda(expr)
 	case ast.ExprMatch:
@@ -3372,6 +3374,100 @@ func (l *Lowerer) lowerTry(expr *ast.Expr) LValue {
 
 // Ensure strings import is used (for strings.Contains etc. in method lowering)
 var _ = strings.Contains
+
+func (l *Lowerer) lowerIfElseExpr(expr *ast.Expr) LValue {
+	ie := dataAs[ast.IfElseExpr](expr.Data)
+	resultType := l.exprType(expr)
+
+	// Declare result variable
+	resultName := fmt.Sprintf("_ifResult%d", l.nextTemp)
+	l.nextTemp++
+	l.emit(LStmt{Kind: LStmtVarDecl, Data: &LVarDecl{
+		Name: resultName,
+		Type: resultType,
+	}})
+
+	// Lower condition
+	cond := l.lowerExpr(&ie.Cond)
+
+	// Lower then branch — all stmts, last expr assigned to result
+	thenStmts := l.lowerBlockAsExpr(&ie.Then, resultName, resultType)
+
+	// Lower else-if + else as nested if-else
+	var elseStmts []LStmt
+	if len(ie.ElseIfs) > 0 {
+		saved := l.stmts
+		l.stmts = nil
+		l.lowerElseIfChain(ie.ElseIfs, &ie.Else, resultName, resultType)
+		elseStmts = l.stmts
+		l.stmts = saved
+	} else {
+		elseStmts = l.lowerBlockAsExpr(&ie.Else, resultName, resultType)
+	}
+
+	l.emit(LStmt{Kind: LStmtIf, Data: &LIf{
+		Cond: cond,
+		Then: thenStmts,
+		Else: elseStmts,
+	}})
+
+	return LValue{Kind: LValVar, Name: resultName, Type: resultType}
+}
+
+// lowerBlockAsExpr lowers a block where the last expression's value is assigned to resultName.
+func (l *Lowerer) lowerBlockAsExpr(block *ast.Block, resultName string, resultType *LType) []LStmt {
+	saved := l.stmts
+	l.stmts = nil
+
+	if len(block.Stmts) > 0 {
+		// Lower all statements except the last
+		for i := 0; i < len(block.Stmts)-1; i++ {
+			l.lowerStmt(&block.Stmts[i])
+		}
+		// Lower last statement — if it's an expression, assign its value to result
+		last := &block.Stmts[len(block.Stmts)-1]
+		if last.Kind == ast.StmtExpr {
+			d := last.Data.(*ast.ExprStmt)
+			val := l.lowerExpr(&d.Expr)
+			l.emit(LStmt{Kind: LStmtAssign, Data: &LAssign{
+				Target: resultName,
+				Value:  val,
+			}})
+		} else {
+			l.lowerStmt(last)
+		}
+	}
+
+	result := l.stmts
+	l.stmts = saved
+	return result
+}
+
+func (l *Lowerer) lowerElseIfChain(elseIfs []ast.ElseIfBranch, elseBlock *ast.Block, resultName string, resultType *LType) {
+	if len(elseIfs) == 0 {
+		stmts := l.lowerBlockAsExpr(elseBlock, resultName, resultType)
+		for _, s := range stmts {
+			l.emit(s)
+		}
+		return
+	}
+
+	eif := &elseIfs[0]
+	cond := l.lowerExpr(&eif.Cond)
+	thenStmts := l.lowerBlockAsExpr(&eif.Body, resultName, resultType)
+
+	saved := l.stmts
+	l.stmts = nil
+	l.lowerElseIfChain(elseIfs[1:], elseBlock, resultName, resultType)
+	elseStmts := l.stmts
+	l.stmts = saved
+
+	l.emit(LStmt{Kind: LStmtIf, Data: &LIf{
+		Cond: cond,
+		Then: thenStmts,
+		Else: elseStmts,
+	}})
+}
 
 func (l *Lowerer) lowerIs(expr *ast.Expr) LValue {
 	is := dataAs[ast.IsExpr](expr.Data)

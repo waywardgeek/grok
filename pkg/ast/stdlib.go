@@ -549,6 +549,22 @@ func collectFuncCallNamesExpr(expr *Expr, names map[string]bool) {
 		if d, ok := expr.Data.(*IsExpr); ok {
 			collectFuncCallNamesExpr(&d.Operand, names)
 		}
+	case ExprIfElse:
+		if d, ok := expr.Data.(*IfElseExpr); ok {
+			collectFuncCallNamesExpr(&d.Cond, names)
+			for i := range d.Then.Stmts {
+				collectFuncCallNamesStmt(&d.Then.Stmts[i], names)
+			}
+			for i := range d.Else.Stmts {
+				collectFuncCallNamesStmt(&d.Else.Stmts[i], names)
+			}
+			for i := range d.ElseIfs {
+				collectFuncCallNamesExpr(&d.ElseIfs[i].Cond, names)
+				for j := range d.ElseIfs[i].Body.Stmts {
+					collectFuncCallNamesStmt(&d.ElseIfs[i].Body.Stmts[j], names)
+				}
+			}
+		}
 	case ExprStringInterp:
 		if d, ok := expr.Data.(*StringInterpExpr); ok {
 			for i := range d.Parts {
