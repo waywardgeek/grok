@@ -1459,9 +1459,25 @@ func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 	if recvType.Kind == TyStruct || recvType.Kind == TyClass || recvType.Kind == TyInterface {
 		if info := c.registry.Lookup(recvType.Name); info != nil {
 			if methType, ok := info.Methods[mc.Method]; ok && methType.Kind == TyFunc {
-				// Check argument types
+				// Check argument types and propagate expected types
 				for i := range mc.Args {
-					c.checkExpr(&mc.Args[i])
+					argType := c.checkExpr(&mc.Args[i])
+					if methType.Params != nil && i < len(methType.Params) {
+						if !c.assignableTo(argType, methType.Params[i]) && argType.Kind != TyError {
+							c.error(mc.Args[i].Span, "%s.%s: argument %d: expected %s, got %s", recvType.Name, mc.Method, i+1, methType.Params[i], argType)
+						}
+						// Propagate expected type to empty slice literals
+						if mc.Args[i].Kind == ast.ExprListLit {
+							lit := mc.Args[i].Data.(*ast.ListLitExpr)
+							if len(lit.Elems) == 0 && methType.Params[i].Kind == TyList {
+								mc.Args[i].ResolvedType = methType.Params[i]
+							}
+						}
+						// Propagate expected type to nil args
+						if mc.Args[i].Kind == ast.ExprNil {
+							mc.Args[i].ResolvedType = methType.Params[i]
+						}
+					}
 				}
 				retType := methType.Return
 				// Substitute type args for generic class instances

@@ -569,7 +569,12 @@ func (g *cGen) cTupleType(t *LType) string {
 			return "forge_parse_float_result"
 		}
 	}
-	return g.cType(t)
+	// Fallback: anonymous struct
+	var fields []string
+	for i, f := range t.Fields {
+		fields = append(fields, fmt.Sprintf("%s _%d", g.cType(f.Type), i))
+	}
+	return fmt.Sprintf("struct { %s; }", strings.Join(fields, "; "))
 }
 
 // ---------------------------------------------------------------------------
@@ -1819,6 +1824,15 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		if g.isGenFuncByName(name) {
 			return fmt.Sprintf("%s_init(%s)", name, args)
 		}
+		// Map Forge builtins to runtime functions
+		switch name {
+		case "atoi":
+			return fmt.Sprintf("forge_atoi(%s)", args)
+		case "parse_float":
+			return fmt.Sprintf("forge_parse_float(%s)", args)
+		case "itoa":
+			return fmt.Sprintf("forge_itoa(%s)", args)
+		}
 		return fmt.Sprintf("%s(%s)", name, args)
 
 	case LExprMethodCall:
@@ -2113,7 +2127,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 				valType = resolved
 			}
 		}
-		if valType != nil && (valType.Kind == LTyClassHandle ||
+		if valType != nil && (valType.Kind == LTyClassHandle || valType.Kind == LTyAny ||
 			(valType.Kind == LTyOptional && valType.Elem != nil && valType.Elem.Kind == LTyClassHandle)) {
 			return fmt.Sprintf("(%s == NULL)", g.emitValue(&d.Value))
 		}
@@ -2386,7 +2400,7 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 					argType = resolved
 				}
 			}
-			if argType != nil && (argType.Kind == LTyClassHandle ||
+			if argType != nil && (argType.Kind == LTyClassHandle || argType.Kind == LTyAny ||
 				(argType.Kind == LTyOptional && argType.Elem != nil && argType.Elem.Kind == LTyClassHandle)) {
 				return fmt.Sprintf("(%s == NULL)", g.emitValue(&d.Args[0]))
 			}
@@ -3094,11 +3108,7 @@ func (g *cGen) cType(t *LType) string {
 	case LTyErrorResult:
 		return g.resultTypeName(t.Elem)
 	case LTyTuple:
-		var fields []string
-		for i, f := range t.Fields {
-			fields = append(fields, fmt.Sprintf("%s _%d", g.cType(f.Type), i))
-		}
-		return fmt.Sprintf("struct { %s; }", strings.Join(fields, "; "))
+		return g.cTupleType(t)
 	case LTyMutex:
 		return "pthread_mutex_t"
 	case LTyTypeVar:
