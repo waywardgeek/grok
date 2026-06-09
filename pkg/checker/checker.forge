@@ -266,6 +266,28 @@ forge Checker {
     when not a registered type variable, but kept for .forge compatibility)
   """
 
+  doc "Invariants — validateAllExprsResolved": """
+    Post-checker pass that walks EVERY Expr node in the AST and panics if
+    ResolvedType is nil. Only runs when the checker produced zero errors
+    (error paths may intentionally leave sub-expressions unannotated).
+
+    Coverage:
+    - Function bodies (non-generic only — generic functions checked at instantiation)
+    - Struct and class field default expressions
+    - Pattern literals in match arms
+    - All sub-expressions recursively (call args, binary operands, etc.)
+
+    Gaps this caught and we fixed:
+    - f-string literal parts: even-indexed Parts in StringInterpExpr were not
+      annotated (they're string literals interleaved with interpolated exprs)
+    - Struct/class field defaults: registerStruct/registerClass didn't call
+      checkExpr on Field.Default expressions
+
+    // PROCEDURAL — the walker itself is tested via TestStructFieldDefaultHasResolvedType
+    // and TestFStringTypeChecks. Any new Expr kind added to the AST must have
+    // a corresponding case in walkExpr.
+  """
+
   doc "Built-in Functions": """
     Registered in New(): println, print (variadic, any types, unit return),
     len (collection → i32), append (list + elem → list), isnull (optional → bool).
@@ -421,6 +443,8 @@ forge Checker {
       why: "Cross-file compilation. Runs Phase 0+1 across ALL files before Phase 2 (body checking)."
     func validateAllTypesResolved(self, file: File?)
       why: "Post-check validation that no function parameter or return type remains unresolved."
+    func validateAllExprsResolved(self, file: File?)
+      why: "Post-check validation that every Expr node has ResolvedType set. Only runs when no checker errors. Walks function bodies, struct/class field defaults, and pattern literals recursively."
     func Errors(self) -> [error]
     pub func CheckModuleFile(self, importPath: string, fromSpan: ast.Span) -> ModuleExports?
   }

@@ -1712,3 +1712,17 @@ func TestGuardedByTopLevelLock(t *testing.T) {
 }`)
 	expectNoErrors(t, c)
 }
+
+
+func TestStructFieldDefaultHasResolvedType(t *testing.T) {
+	c := parseAndCheck(t, `forge test {
+  struct Point {
+    x: i32 = 0
+    y: i32 = 1
+  }
+  func main() {
+    let p = Point{}
+  }
+}`)
+	expectNoErrors(t, c)
+}

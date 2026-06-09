@@ -1091,6 +1091,9 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 		for i := range interp.Parts {
 			if i%2 != 0 {
 				c.checkExpr(&interp.Parts[i])
+			} else {
+				// Even parts are string literals — annotate them
+				interp.Parts[i].ResolvedType = TypeString
 			}
 		}
 		return TypeString
@@ -2531,6 +2534,258 @@ func (c *Checker) CheckFile(file *ast.File) {
 
 	// Phase 3: Validate all function signatures are fully resolved.
 	c.validateAllTypesResolved(file)
+
+	// Phase 4: Validate all expressions have ResolvedType set.
+	// Only run when there are no checker errors — error paths may leave
+	// sub-expressions unannotated intentionally.
+	if len(c.errors) == 0 {
+		c.validateAllExprsResolved(file)
+	}
+}
+
+// validateAllExprsResolved walks every Expr node in the AST after checking
+// and panics if any has a nil ResolvedType. This catches checker gaps
+// systematically rather than chasing panics one at a time in the lowerer.
+func (c *Checker) validateAllExprsResolved(file *ast.File) {
+	for _, block := range file.Blocks {
+		// Check struct/class field defaults
+		for i := range block.Structs {
+			for j := range block.Structs[i].Fields {
+				if block.Structs[i].Fields[j].Default != nil {
+					c.walkExpr(block.Structs[i].Fields[j].Default, block.Structs[i].Name)
+				}
+			}
+		}
+		for i := range block.Classes {
+			for j := range block.Classes[i].Fields {
+				if block.Classes[i].Fields[j].Default != nil {
+					c.walkExpr(block.Classes[i].Fields[j].Default, block.Classes[i].Name)
+				}
+			}
+		}
+		// Check function bodies
+		for i := range block.Functions {
+			fn := &block.Functions[i]
+			if len(fn.TypeParams) > 0 {
+				continue // generic functions aren't checked until instantiation
+			}
+			name := fn.Name
+			if fn.ReceiverType != "" {
+				name = fn.ReceiverType + "." + fn.Name
+			}
+			if fn.Body != nil {
+				c.walkBlock(fn.Body, name)
+			}
+		}
+	}
+}
+
+func (c *Checker) walkBlock(block *ast.Block, ctx string) {
+	for i := range block.Stmts {
+		c.walkStmt(&block.Stmts[i], ctx)
+	}
+}
+
+func (c *Checker) walkStmt(stmt *ast.Stmt, ctx string) {
+	switch stmt.Kind {
+	case ast.StmtVarDecl:
+		d := stmt.Data.(*ast.VarDeclStmt)
+		if d.Value != nil {
+			c.walkExpr(d.Value, ctx)
+		}
+	case ast.StmtAssign:
+		d := stmt.Data.(*ast.AssignStmt)
+		c.walkExpr(&d.Target, ctx)
+		c.walkExpr(&d.Value, ctx)
+	case ast.StmtReturn:
+		d := stmt.Data.(*ast.ReturnStmt)
+		if d.Value != nil {
+			c.walkExpr(d.Value, ctx)
+		}
+	case ast.StmtExpr:
+		d := stmt.Data.(*ast.ExprStmt)
+		c.walkExpr(&d.Expr, ctx)
+	case ast.StmtIf:
+		d := stmt.Data.(*ast.IfStmt)
+		c.walkExpr(&d.Condition, ctx)
+		c.walkBlock(&d.Then, ctx)
+		for i := range d.ElseIfs {
+			c.walkExpr(&d.ElseIfs[i].Condition, ctx)
+			c.walkBlock(&d.ElseIfs[i].Body, ctx)
+		}
+		if d.Else != nil {
+			c.walkBlock(d.Else, ctx)
+		}
+	case ast.StmtFor:
+		d := stmt.Data.(*ast.ForStmt)
+		c.walkExpr(&d.Collection, ctx)
+		c.walkBlock(&d.Body, ctx)
+	case ast.StmtWhile:
+		d := stmt.Data.(*ast.WhileStmt)
+		c.walkExpr(&d.Condition, ctx)
+		c.walkBlock(&d.Body, ctx)
+	case ast.StmtMatch:
+		d := stmt.Data.(*ast.MatchStmt)
+		c.walkExpr(&d.Value, ctx)
+		for i := range d.Arms {
+			c.walkPattern(&d.Arms[i].Pattern, ctx)
+			for j := range d.Arms[i].Patterns {
+				c.walkPattern(&d.Arms[i].Patterns[j], ctx)
+			}
+			if d.Arms[i].Guard != nil {
+				c.walkExpr(d.Arms[i].Guard, ctx)
+			}
+			c.walkBlock(&d.Arms[i].Body, ctx)
+		}
+	case ast.StmtBlock:
+		d := stmt.Data.(*ast.Block)
+		c.walkBlock(d, ctx)
+	case ast.StmtCascade:
+		d := stmt.Data.(*ast.CascadeStmt)
+		c.walkBlock(&d.Body, ctx)
+	case ast.StmtSpawn:
+		d := stmt.Data.(*ast.SpawnStmt)
+		c.walkBlock(&d.Body, ctx)
+	case ast.StmtSelect:
+		d := stmt.Data.(*ast.SelectStmt)
+		for i := range d.Cases {
+			if d.Cases[i].Expr != nil {
+				c.walkExpr(d.Cases[i].Expr, ctx)
+			}
+			c.walkBlock(&d.Cases[i].Body, ctx)
+		}
+	case ast.StmtYield:
+		d := stmt.Data.(*ast.YieldStmt)
+		if d.Value != nil {
+			c.walkExpr(d.Value, ctx)
+		}
+	case ast.StmtLock:
+		d := stmt.Data.(*ast.LockStmt)
+		c.walkExpr(&d.Mutex, ctx)
+		c.walkBlock(&d.Body, ctx)
+	case ast.StmtBreak, ast.StmtContinue:
+		// no expressions
+	}
+}
+
+func (c *Checker) walkPattern(pat *ast.Pattern, ctx string) {
+	switch pat.Kind {
+	case ast.PatLiteral:
+		d := pat.Data.(*ast.LiteralPattern)
+		c.walkExpr(&d.Expr, ctx)
+	case ast.PatVariant:
+		d := pat.Data.(*ast.VariantPattern)
+		for i := range d.Bindings {
+			c.walkPattern(&d.Bindings[i], ctx)
+		}
+	case ast.PatTuple:
+		d := pat.Data.(*ast.TuplePattern)
+		for i := range d.Elems {
+			c.walkPattern(&d.Elems[i], ctx)
+		}
+	case ast.PatIdent, ast.PatWildcard:
+		// no sub-expressions
+	}
+}
+
+func (c *Checker) walkExpr(expr *ast.Expr, ctx string) {
+	if expr.ResolvedType == nil {
+		panic(fmt.Sprintf("checker: validateAllExprsResolved: nil ResolvedType in %s at %s:%d:%d (kind=%d)",
+			ctx, expr.Span.Start.File, expr.Span.Start.Line, expr.Span.Start.Column, expr.Kind))
+	}
+	// Recurse into sub-expressions
+	switch expr.Kind {
+	case ast.ExprIdent, ast.ExprIntLit, ast.ExprFloatLit, ast.ExprStringLit, ast.ExprBoolLit, ast.ExprNil:
+		// leaf nodes
+	case ast.ExprStringInterp:
+		d := expr.Data.(*ast.StringInterpExpr)
+		for i := range d.Parts {
+			c.walkExpr(&d.Parts[i], ctx)
+		}
+	case ast.ExprCall:
+		d := expr.Data.(*ast.CallExpr)
+		c.walkExpr(&d.Func, ctx)
+		for i := range d.Args {
+			c.walkExpr(&d.Args[i], ctx)
+		}
+	case ast.ExprMethodCall:
+		d := expr.Data.(*ast.MethodCallExpr)
+		c.walkExpr(&d.Receiver, ctx)
+		for i := range d.Args {
+			c.walkExpr(&d.Args[i], ctx)
+		}
+	case ast.ExprFieldAccess:
+		d := expr.Data.(*ast.FieldAccessExpr)
+		c.walkExpr(&d.Receiver, ctx)
+	case ast.ExprIndex:
+		d := expr.Data.(*ast.IndexExpr)
+		c.walkExpr(&d.Receiver, ctx)
+		c.walkExpr(&d.Index, ctx)
+	case ast.ExprUnary:
+		d := expr.Data.(*ast.UnaryExpr)
+		c.walkExpr(&d.Operand, ctx)
+	case ast.ExprBinary:
+		d := expr.Data.(*ast.BinaryExpr)
+		c.walkExpr(&d.Left, ctx)
+		c.walkExpr(&d.Right, ctx)
+	case ast.ExprTupleLit:
+		d := expr.Data.(*ast.TupleLitExpr)
+		for i := range d.Elems {
+			c.walkExpr(&d.Elems[i], ctx)
+		}
+	case ast.ExprListLit:
+		d := expr.Data.(*ast.ListLitExpr)
+		for i := range d.Elems {
+			c.walkExpr(&d.Elems[i], ctx)
+		}
+	case ast.ExprMapLit:
+		d := expr.Data.(*ast.MapLitExpr)
+		for i := range d.Entries {
+			c.walkExpr(&d.Entries[i].Key, ctx)
+			c.walkExpr(&d.Entries[i].Value, ctx)
+		}
+	case ast.ExprStructLit:
+		d := expr.Data.(*ast.StructLitExpr)
+		for i := range d.Fields {
+			c.walkExpr(&d.Fields[i].Value, ctx)
+		}
+	case ast.ExprLambda:
+		d := expr.Data.(*ast.LambdaExpr)
+		if d.Body != nil {
+			c.walkBlock(d.Body, ctx+".<lambda>")
+		}
+	case ast.ExprCast:
+		d := expr.Data.(*ast.CastExpr)
+		c.walkExpr(&d.Operand, ctx)
+	case ast.ExprUnwrap:
+		d := expr.Data.(*ast.UnwrapExpr)
+		c.walkExpr(&d.Operand, ctx)
+	case ast.ExprSlice:
+		d := expr.Data.(*ast.SliceExpr)
+		c.walkExpr(&d.Receiver, ctx)
+		if d.Low != nil {
+			c.walkExpr(d.Low, ctx)
+		}
+		if d.High != nil {
+			c.walkExpr(d.High, ctx)
+		}
+	case ast.ExprTry:
+		d := expr.Data.(*ast.TryExpr)
+		c.walkExpr(&d.Operand, ctx)
+	case ast.ExprMatch:
+		d := expr.Data.(*ast.MatchStmt) // match expressions reuse MatchStmt
+		c.walkExpr(&d.Value, ctx)
+		for i := range d.Arms {
+			c.walkPattern(&d.Arms[i].Pattern, ctx)
+			for j := range d.Arms[i].Patterns {
+				c.walkPattern(&d.Arms[i].Patterns[j], ctx)
+			}
+			if d.Arms[i].Guard != nil {
+				c.walkExpr(d.Arms[i].Guard, ctx)
+			}
+			c.walkBlock(&d.Arms[i].Body, ctx)
+		}
+	}
 }
 
 // validateAllTypesResolved checks that no function parameter or return type
@@ -2713,6 +2968,9 @@ func (c *Checker) registerStruct(s *ast.StructDecl) {
 		if f.GuardedBy != "" {
 			info.GuardedFields[f.Name] = f.GuardedBy
 		}
+		if f.Default != nil {
+			c.checkExpr(f.Default)
+		}
 	}
 	c.registry.Register(s.Name, info)
 }
@@ -2738,6 +2996,9 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 		info.FieldOrder = append(info.FieldOrder, f.Name)
 		if f.GuardedBy != "" {
 			info.GuardedFields[f.Name] = f.GuardedBy
+		}
+		if f.Default != nil {
+			c.checkExpr(f.Default)
 		}
 	}
 	for _, m := range cls.Methods {
