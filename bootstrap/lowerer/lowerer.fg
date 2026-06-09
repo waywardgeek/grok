@@ -1120,12 +1120,8 @@ forge lowerer {
     for wc in f.where_children() {
       let mut wc_type_args: [string] = []
       for ta in wc.wc_arg_children() {
-        // Extract name from TypeExpr
-        match ta.kind {
-          Named(name_sym, args) => {
-            wc_type_args = append(wc_type_args, sym_str(name_sym))
-          }
-          _ => {}
+        if let Named(name_sym, args) = ta.kind {
+          wc_type_args = append(wc_type_args, sym_str(name_sym))
         }
       }
       constraints = append(constraints, LRelationalConstraint {

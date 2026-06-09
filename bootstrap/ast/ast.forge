@@ -24,6 +24,9 @@ forge ast {
 
     Applies to: Expr, Stmt, TypeExpr, Pattern.
 
+    Exception: Expr.resolved_type is typed as TypeExpr? (not any). TypeExpr
+    is defined earlier in the same file, so proper typing is possible.
+
     CRITICAL: When accessing variant data, always check null first. The
     pattern is: `if expr.call != null { let c = expr.call! ... }`.
     Do NOT assume a field is non-null based on kind without checking.

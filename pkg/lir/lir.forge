@@ -218,6 +218,11 @@ forge Lir {
     knownPackageReturnType() overrides LTyAny with correct types for known
     functions. Both lowerCall and lowerMethodCall check this for
     package-qualified calls.
+
+    ErrorResult tuple field access: ._0 → value (Elem type), ._1 → error.
+    The ._1 field MUST use LTyError (not LTyAny). LTyError maps to
+    `const char*` in C; LTyAny maps to `void*`, causing const-qualifier
+    discard warnings.
   """
 
 

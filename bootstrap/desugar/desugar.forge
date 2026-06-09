@@ -22,10 +22,31 @@ forge desugar {
     produces silent failures. All desugar runs BEFORE the checker.
   """
 
-  doc "Invariants — Cross-Block Interface Lookup": """
-    DesugarRelations needs to find interface declarations across ALL forge
-    blocks. It builds a globalIfaceMap before processing relations, so
-    interfaces defined in one block can be referenced by relations in another.
+  doc "Invariants — Cross-Block Class Lookup (DesugarRelations)": """
+    DesugarRelations must use a GLOBAL class lookup (across all blocks) when
+    injecting fields and generating impl method renames. Per-block classIdx
+    fails when a relation references a class from another block (e.g.,
+    Lexer:lc owns [Comment:lc] where Comment is in ast.fg but the relation
+    is in lexer.fg).
+
+    The Go implementation uses `classLoc` map (blockIdx + classIdx) to find
+    classes globally. The same pattern applies to the bootstrap: relation
+    processing must scan ALL blocks to find target classes.
+
+    Bug symptom: missing label-prefixed methods (e.g., `lc_children` not
+    generated for Comment), causing monomorphizer to emit wrong types.
+  """
+
+  doc "Invariants — Deep Copy in Destructors": """
+    DesugarDestructors copies interface destructor bodies to each concrete
+    class. The copy MUST be deep — sharing Stmt/Expr Data pointers causes
+    cross-relation contamination when destructor method calls are renamed
+    to label-prefixed versions (e.g., `children` → `fb_children`).
+
+    The deepCopy functions must also copy TypeArgs slices on CallExpr and
+    MethodCallExpr, because type parameter substitution mutates TypeArgs
+    in-place. Without this, the last relation processed wins for ALL
+    destructors.
   """
 
   doc "Invariants — Type Parameter Substitution": """
