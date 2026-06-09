@@ -2558,6 +2558,13 @@ func (c *Checker) CheckFiles(files []*ast.File) {
 	for _, file := range files {
 		c.validateAllTypesResolved(file)
 	}
+	// Phase 4: Validate all expressions resolved + field/method access
+	if len(c.errors) == 0 {
+		for _, file := range files {
+			c.validateAllExprsResolved(file)
+			c.validateFieldAndMethodAccess(file)
+		}
+	}
 }
 
 // CheckFile type-checks an entire AST file.
@@ -2623,6 +2630,13 @@ func (c *Checker) CheckFile(file *ast.File) {
 	// sub-expressions unannotated intentionally.
 	if len(c.errors) == 0 {
 		c.validateAllExprsResolved(file)
+	}
+
+	// Phase 5: Validate all field accesses and method calls resolve to real
+	// fields/methods on the receiver type. Catches bugs in desugared code
+	// (e.g., destructors) that might bypass normal checking.
+	if len(c.errors) == 0 {
+		c.validateFieldAndMethodAccess(file)
 	}
 }
 
@@ -3692,4 +3706,338 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 		}
 	}
 	return info.Type
+}
+
+// validateFieldAndMethodAccess walks all Expr nodes post-checker and verifies:
+// - Every ExprFieldAccess: the field exists on the receiver's resolved type
+// - Every ExprMethodCall: the method exists on the receiver's resolved type
+// Skips TyVar, TyError, TyAny (can't validate), and builtins (string/list/map/channel).
+// Only runs when there are zero checker errors.
+func (c *Checker) validateFieldAndMethodAccess(file *ast.File) {
+	for _, block := range file.Blocks {
+		// Check struct/class field defaults
+		for i := range block.Structs {
+			for j := range block.Structs[i].Fields {
+				if block.Structs[i].Fields[j].Default != nil {
+					c.validateAccessExpr(block.Structs[i].Fields[j].Default, block.Structs[i].Name)
+				}
+			}
+		}
+		for i := range block.Classes {
+			for j := range block.Classes[i].Fields {
+				if block.Classes[i].Fields[j].Default != nil {
+					c.validateAccessExpr(block.Classes[i].Fields[j].Default, block.Classes[i].Name)
+				}
+			}
+		}
+		// Check constant values
+		for i := range block.Constants {
+			c.validateAccessExpr(&block.Constants[i].Value, "const:"+block.Constants[i].Name)
+		}
+		// Check function bodies
+		for i := range block.Functions {
+			fn := &block.Functions[i]
+			if len(fn.TypeParams) > 0 {
+				continue // generic functions checked at instantiation
+			}
+			name := fn.Name
+			if fn.ReceiverType != "" {
+				name = fn.ReceiverType + "." + fn.Name
+			}
+			if fn.Body != nil {
+				c.validateAccessBlock(fn.Body, name)
+			}
+		}
+	}
+}
+
+func (c *Checker) validateAccessBlock(block *ast.Block, ctx string) {
+	for i := range block.Stmts {
+		c.validateAccessStmt(&block.Stmts[i], ctx)
+	}
+}
+
+func (c *Checker) validateAccessStmt(stmt *ast.Stmt, ctx string) {
+	// Reuse the same stmt-walking pattern as walkStmt but call validateAccessExpr
+	switch stmt.Kind {
+	case ast.StmtVarDecl:
+		d := stmt.Data.(*ast.VarDeclStmt)
+		if d.Value != nil {
+			c.validateAccessExpr(d.Value, ctx)
+		}
+		if d.ElseBlock != nil {
+			c.validateAccessBlock(d.ElseBlock, ctx)
+		}
+	case ast.StmtAssign:
+		d := stmt.Data.(*ast.AssignStmt)
+		c.validateAccessExpr(&d.Target, ctx)
+		c.validateAccessExpr(&d.Value, ctx)
+	case ast.StmtReturn:
+		d := stmt.Data.(*ast.ReturnStmt)
+		if d.Value != nil {
+			c.validateAccessExpr(d.Value, ctx)
+		}
+	case ast.StmtExpr:
+		d := stmt.Data.(*ast.ExprStmt)
+		c.validateAccessExpr(&d.Expr, ctx)
+	case ast.StmtIf:
+		d := stmt.Data.(*ast.IfStmt)
+		if d.LetPattern != nil {
+			c.validateAccessExpr(d.LetValue, ctx)
+			c.validateAccessBlock(&d.Then, ctx)
+			if d.Else != nil {
+				c.validateAccessBlock(d.Else, ctx)
+			}
+		} else {
+			c.validateAccessExpr(&d.Condition, ctx)
+			c.validateAccessBlock(&d.Then, ctx)
+			for i := range d.ElseIfs {
+				c.validateAccessExpr(&d.ElseIfs[i].Condition, ctx)
+				c.validateAccessBlock(&d.ElseIfs[i].Body, ctx)
+			}
+			if d.Else != nil {
+				c.validateAccessBlock(d.Else, ctx)
+			}
+		}
+	case ast.StmtFor:
+		d := stmt.Data.(*ast.ForStmt)
+		c.validateAccessExpr(&d.Collection, ctx)
+		c.validateAccessBlock(&d.Body, ctx)
+	case ast.StmtWhile:
+		d := stmt.Data.(*ast.WhileStmt)
+		c.validateAccessExpr(&d.Condition, ctx)
+		c.validateAccessBlock(&d.Body, ctx)
+	case ast.StmtMatch:
+		d := stmt.Data.(*ast.MatchStmt)
+		c.validateAccessExpr(&d.Value, ctx)
+		for i := range d.Arms {
+			if d.Arms[i].Guard != nil {
+				c.validateAccessExpr(d.Arms[i].Guard, ctx)
+			}
+			c.validateAccessBlock(&d.Arms[i].Body, ctx)
+		}
+	case ast.StmtBlock:
+		d := stmt.Data.(*ast.Block)
+		c.validateAccessBlock(d, ctx)
+	case ast.StmtCascade:
+		d := stmt.Data.(*ast.CascadeStmt)
+		c.validateAccessBlock(&d.Body, ctx)
+	case ast.StmtSpawn:
+		d := stmt.Data.(*ast.SpawnStmt)
+		c.validateAccessBlock(&d.Body, ctx)
+	case ast.StmtSelect:
+		d := stmt.Data.(*ast.SelectStmt)
+		for i := range d.Cases {
+			if d.Cases[i].Expr != nil {
+				c.validateAccessExpr(d.Cases[i].Expr, ctx)
+			}
+			c.validateAccessBlock(&d.Cases[i].Body, ctx)
+		}
+	case ast.StmtYield:
+		d := stmt.Data.(*ast.YieldStmt)
+		if d.Value != nil {
+			c.validateAccessExpr(d.Value, ctx)
+		}
+	case ast.StmtLock:
+		d := stmt.Data.(*ast.LockStmt)
+		c.validateAccessExpr(&d.Mutex, ctx)
+		c.validateAccessBlock(&d.Body, ctx)
+	case ast.StmtBreak, ast.StmtContinue:
+		// no expressions
+	}
+}
+
+func (c *Checker) validateAccessExpr(expr *ast.Expr, ctx string) {
+	if expr.ResolvedType == nil {
+		return // already caught by validateAllExprsResolved
+	}
+	switch expr.Kind {
+	case ast.ExprFieldAccess:
+		d := expr.Data.(*ast.FieldAccessExpr)
+		c.validateAccessExpr(&d.Receiver, ctx)
+		c.validateFieldAccess(expr, &d.Receiver, d.Field, ctx)
+	case ast.ExprMethodCall:
+		d := expr.Data.(*ast.MethodCallExpr)
+		c.validateAccessExpr(&d.Receiver, ctx)
+		for i := range d.Args {
+			c.validateAccessExpr(&d.Args[i], ctx)
+		}
+		c.validateMethodAccess(expr, &d.Receiver, d.Method, ctx)
+	case ast.ExprCall:
+		d := expr.Data.(*ast.CallExpr)
+		c.validateAccessExpr(&d.Func, ctx)
+		for i := range d.Args {
+			c.validateAccessExpr(&d.Args[i], ctx)
+		}
+	case ast.ExprBinary:
+		d := expr.Data.(*ast.BinaryExpr)
+		c.validateAccessExpr(&d.Left, ctx)
+		c.validateAccessExpr(&d.Right, ctx)
+	case ast.ExprUnary:
+		d := expr.Data.(*ast.UnaryExpr)
+		c.validateAccessExpr(&d.Operand, ctx)
+	case ast.ExprIndex:
+		d := expr.Data.(*ast.IndexExpr)
+		c.validateAccessExpr(&d.Receiver, ctx)
+		c.validateAccessExpr(&d.Index, ctx)
+	case ast.ExprStringInterp:
+		d := expr.Data.(*ast.StringInterpExpr)
+		for i := range d.Parts {
+			c.validateAccessExpr(&d.Parts[i], ctx)
+		}
+	case ast.ExprListLit:
+		d := expr.Data.(*ast.ListLitExpr)
+		for i := range d.Elems {
+			c.validateAccessExpr(&d.Elems[i], ctx)
+		}
+	case ast.ExprMapLit:
+		d := expr.Data.(*ast.MapLitExpr)
+		for i := range d.Entries {
+			c.validateAccessExpr(&d.Entries[i].Key, ctx)
+			c.validateAccessExpr(&d.Entries[i].Value, ctx)
+		}
+	case ast.ExprTupleLit:
+		d := expr.Data.(*ast.TupleLitExpr)
+		for i := range d.Elems {
+			c.validateAccessExpr(&d.Elems[i], ctx)
+		}
+	case ast.ExprStructLit:
+		d := expr.Data.(*ast.StructLitExpr)
+		for i := range d.Fields {
+			c.validateAccessExpr(&d.Fields[i].Value, ctx)
+		}
+	case ast.ExprLambda:
+		d := expr.Data.(*ast.LambdaExpr)
+		if d.Body != nil {
+			c.validateAccessBlock(d.Body, ctx+".<lambda>")
+		}
+	case ast.ExprCast:
+		d := expr.Data.(*ast.CastExpr)
+		c.validateAccessExpr(&d.Operand, ctx)
+	case ast.ExprUnwrap:
+		d := expr.Data.(*ast.UnwrapExpr)
+		c.validateAccessExpr(&d.Operand, ctx)
+	case ast.ExprSlice:
+		d := expr.Data.(*ast.SliceExpr)
+		c.validateAccessExpr(&d.Receiver, ctx)
+		if d.Low != nil {
+			c.validateAccessExpr(d.Low, ctx)
+		}
+		if d.High != nil {
+			c.validateAccessExpr(d.High, ctx)
+		}
+	case ast.ExprTry:
+		d := expr.Data.(*ast.TryExpr)
+		c.validateAccessExpr(&d.Operand, ctx)
+	case ast.ExprMatch:
+		d := expr.Data.(*ast.MatchStmt)
+		c.validateAccessExpr(&d.Value, ctx)
+		for i := range d.Arms {
+			if d.Arms[i].Guard != nil {
+				c.validateAccessExpr(d.Arms[i].Guard, ctx)
+			}
+			c.validateAccessBlock(&d.Arms[i].Body, ctx)
+		}
+	}
+	// leaf nodes (Ident, IntLit, FloatLit, StringLit, BoolLit, Nil) — nothing to validate
+}
+
+// validateFieldAccess checks that a field exists on the receiver's type.
+func (c *Checker) validateFieldAccess(expr *ast.Expr, receiver *ast.Expr, field string, ctx string) {
+	recvType := c.resolvedType(receiver)
+	if recvType == nil {
+		return
+	}
+	// Skip types we can't validate
+	switch recvType.Kind {
+	case TyVar, TyError, TyAny:
+		return
+	case TyTuple:
+		// Tuple field access validated by checker already (_0, _1, etc.)
+		return
+	case TyModule:
+		// Module field access validated by checker already
+		return
+	case TyOptional:
+		// Field access on optionals is unwrap — not a real field
+		return
+	}
+	if recvType.Kind == TyStruct || recvType.Kind == TyClass || recvType.Kind == TyEnum || recvType.Kind == TyInterface {
+		info := c.registry.Lookup(recvType.Name)
+		if info == nil {
+			return // external types (Go stdlib) may not be in registry
+		}
+		// Case-insensitive field lookup (Forge→Go capitalization)
+		if _, ok := info.Fields[field]; ok {
+			return
+		}
+		if _, ok := info.Fields[strings.ToLower(field[:1])+field[1:]]; ok {
+			return
+		}
+		if _, ok := info.Fields[strings.ToUpper(field[:1])+field[1:]]; ok {
+			return
+		}
+		// Enum variants are stored as fields in the registry
+		if recvType.Kind == TyEnum {
+			return // enum variant access checked elsewhere
+		}
+		panic(fmt.Sprintf("checker: validateFieldAndMethodAccess: field %q not found on type %s in %s at %s:%d:%d",
+			field, recvType.Name, ctx, expr.Span.Start.File, expr.Span.Start.Line, expr.Span.Start.Column))
+	}
+	// Builtins (string, list, map, etc.) — field access on these is unusual but not invalid
+}
+
+// validateMethodAccess checks that a method exists on the receiver's type.
+func (c *Checker) validateMethodAccess(expr *ast.Expr, receiver *ast.Expr, method string, ctx string) {
+	recvType := c.resolvedType(receiver)
+	if recvType == nil {
+		return
+	}
+	// Skip types we can't validate
+	switch recvType.Kind {
+	case TyVar, TyError, TyAny:
+		return
+	case TyOptional:
+		return // methods on optional (e.g. unwrap) handled specially
+	}
+	// Builtin type methods — validated at check time
+	switch recvType.Kind {
+	case TyString, TyList, TyMap, TyChannel:
+		return // checkBuiltinMethod already validates these
+	}
+	if recvType.Kind == TyStruct || recvType.Kind == TyClass || recvType.Kind == TyEnum || recvType.Kind == TyInterface {
+		info := c.registry.Lookup(recvType.Name)
+		if info == nil {
+			return // external types
+		}
+		if _, ok := info.Methods[method]; ok {
+			return
+		}
+		// Try case-insensitive
+		if _, ok := info.Methods[strings.ToLower(method[:1])+method[1:]]; ok {
+			return
+		}
+		if _, ok := info.Methods[strings.ToUpper(method[:1])+method[1:]]; ok {
+			return
+		}
+		// Check if it's a builtin universal method
+		switch method {
+		case "to_string", "destroy":
+			return
+		}
+		panic(fmt.Sprintf("checker: validateFieldAndMethodAccess: method %q not found on type %s in %s at %s:%d:%d",
+			method, recvType.Name, ctx, expr.Span.Start.File, expr.Span.Start.Line, expr.Span.Start.Column))
+	}
+	// Other types (int, float, bool) — method calls on these are unusual
+}
+
+// resolvedType extracts the checker's *Type from an Expr's ResolvedType annotation.
+func (c *Checker) resolvedType(expr *ast.Expr) *Type {
+	if expr.ResolvedType == nil {
+		return nil
+	}
+	if t, ok := expr.ResolvedType.(*Type); ok {
+		return t
+	}
+	return nil
 }
