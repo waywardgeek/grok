@@ -761,24 +761,81 @@ forge lowerer {
         out = append(out, LStmt { kind: StBlock, block: block_data })
       }
       IfLet(pattern, value, then_block, else_block) => {
-        // Lower if let as a match statement with 1-2 arms
-        let val = self.lower_expr(value, stmts)
-        let mut then_stmts: [LStmt?] = []
-        self.lower_block(then_block, then_stmts)
-        let mut else_stmts: [LStmt?] = []
+        // Lower if let as a match with 1-2 arms
+        let mut arms: [MatchArm] = []
+        arms = append(arms, MatchArm { pattern: pattern, body: then_block })
         if else_block != null {
-          self.lower_block(else_block!, else_stmts)
+          let wildcard = Pattern { kind: Wildcard }
+          arms = append(arms, MatchArm { pattern: wildcard, body: else_block! })
         }
-        // TODO: proper match lowering for if let
-        let mut out = stmts
+        self.lower_match_into(value, arms, "", stmts)
       }
       LetElse(pattern, value, else_block) => {
-        // Lower let..else: declare bindings in outer scope, match to extract
-        let val = self.lower_expr(value, stmts)
-        let mut else_stmts: [LStmt?] = []
-        self.lower_block(else_block, else_stmts)
-        // TODO: proper match lowering for let..else
+        // Lower let..else: bindings escape to outer scope
         let mut out = stmts
+        let val = self.lower_expr(value, out)
+
+        // Only handle Variant patterns for now
+        if let Variant(name_sym, bindings) = pattern.kind {
+          let variant_name = sym_str(name_sym)
+
+          // Get enum name from value type
+          let mut enum_name = ""
+          if !isnull(val) && !isnull(val!.typ) {
+            if val!.typ!.kind == TyTaggedUnion {
+              enum_name = val!.typ!.name
+            }
+          }
+
+          let tag_idx = self.find_variant_tag(enum_name, variant_name)
+
+          // Declare binding variables in outer scope
+          for binding in bindings {
+            if let Ident(bind_sym) = binding.kind {
+              let bind_name = sym_str(bind_sym)
+              let decl = LVarDeclData { name: bind_name, mutable: true }
+              out = append(out, LStmt { kind: StVarDecl, var_decl: decl })
+            }
+          }
+
+          // Check tag
+          let tag_data = LVariantTagData { value: val }
+          let tag_type = LType { kind: TyI32, bits: 32 }
+          let tag_ex = LExpr { kind: ExVariantTag, typ: tag_type, variant_tag: tag_data }
+          let tag_val = self.emit_temp(tag_ex, out)
+
+          let lit_tag = make_lit_int(<i64>(tag_idx), 32)
+          let cmp_data = LBinOpData { op: BinEq, left: tag_val, right: lit_tag }
+          let bool_type = LType { kind: TyBool }
+          let cmp_ex = LExpr { kind: ExBinOp, typ: bool_type, bin_op: cmp_data }
+          let cond = self.emit_temp(cmp_ex, out)
+
+          // Then block: extract variant data into binding vars
+          let mut then_stmts: [LStmt?] = []
+          let mut bind_idx: i32 = 0
+          for binding in bindings {
+            if let Ident(bind_sym) = binding.kind {
+              let bind_name = sym_str(bind_sym)
+              let field_name = self.find_variant_field_name(enum_name, variant_name, bind_idx)
+              let vd_data = LVariantDataData {
+                value: val, enum_name: enum_name,
+                variant: variant_name, field: field_name
+              }
+              let vd_ex = LExpr { kind: ExVariantData, variant_data: vd_data }
+              let extracted = self.emit_temp(vd_ex, then_stmts)
+              let assign = LAssignData { target: bind_name, value: extracted }
+              then_stmts = append(then_stmts, LStmt { kind: StAssign, assign: assign })
+            }
+            bind_idx = bind_idx + 1
+          }
+
+          // Else block
+          let mut else_stmts: [LStmt?] = []
+          self.lower_block(else_block, else_stmts)
+
+          let if_data = LIfData { cond: cond, then_body: then_stmts, else_body: else_stmts }
+          out = append(out, LStmt { kind: StIf, if_data: if_data })
+        }
       }
     }
   }
@@ -1037,6 +1094,27 @@ forge lowerer {
       }
     }
     return -1
+  }
+
+  // Helper: look up variant field name by index
+  func Lowerer.find_variant_field_name(self, enum_name: string, variant_name: string, field_idx: i32) -> string {
+    if !isnull(self.enums) {
+      let found = dict_get(self.enums!, enum_name)
+      if !isnull(found) {
+        for v in found!.value.ev_children() {
+          if sym_str(v.name) == variant_name {
+            let mut idx: i32 = 0
+            for vf in v.evf_children() {
+              if idx == field_idx {
+                return sym_str(vf.name)
+              }
+              idx = idx + 1
+            }
+          }
+        }
+      }
+    }
+    return f"_{field_idx}"
   }
 
   // ==========================================================================
