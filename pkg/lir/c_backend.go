@@ -294,6 +294,24 @@ func (g *cGen) generate() string {
 		g.line("")
 	}
 
+	// Pre-collect optional types from struct and class fields so FORGE_OPT_DEF
+	// can be emitted before structs that reference ForgeOpt_* types as fields.
+	// Without this, struct LExpr references ForgeOpt_LBinOpData before it's defined.
+	for _, s := range g.prog.Structs {
+		for _, f := range s.Fields {
+			if f.Type != nil && f.Type.Kind == LTyOptional {
+				g.optTypeName(f.Type.Elem)
+			}
+		}
+	}
+	for _, c := range g.prog.Classes {
+		for _, f := range c.Fields {
+			if f.Type != nil && f.Type.Kind == LTyOptional {
+				g.optTypeName(f.Type.Elem)
+			}
+		}
+	}
+
 	// Emit enum definitions first (other types may reference them)
 	// Simple enums already emitted in forward-decl section as typedef enum
 	for _, e := range g.prog.Enums {
@@ -308,21 +326,41 @@ func (g *cGen) generate() string {
 		g.emitStructDecl(&s)
 	}
 
+	// Emit optional/result type typedefs AFTER struct/enum definitions but BEFORE
+	// class definitions. These macros embed the element type by value, so the inner
+	// type must be complete. Structs like LExpr have ForgeOpt_* fields, so opt defs
+	// must come before any struct/class that references them.
+	// We pre-collected struct/class field optionals above; emitStructDecl/emitClassDecl
+	// may register more during field emission.
+	emittedOpts := make(map[string]bool)
+	for elemType, name := range g.optTypes {
+		g.linef("FORGE_OPT_DEF(%s, %s)", elemType, name)
+		emittedOpts[elemType] = true
+	}
+	emittedResults := make(map[string]bool)
+	for elemType, name := range g.resultTypes {
+		g.linef("FORGE_RESULT_DEF(%s, %s)", elemType, name)
+		emittedResults[elemType] = true
+	}
+	if len(g.optTypes)+len(g.resultTypes) > 0 {
+		g.line("")
+	}
+
 	// Emit class definitions (heap-allocated structs)
 	for _, c := range g.prog.Classes {
 		g.emitClassDecl(&c)
 	}
 
-	// Emit optional/result/channel type typedefs AFTER struct/class/enum definitions
-	// These macros embed the element type by value, so the type must be complete.
-	// Class-handle optionals are nullable pointers (no FORGE_OPT needed),
-	// so the types referenced here are primitives, strings, enums, and structs —
-	// all complete by this point.
+	// Emit any additional optional/result/channel types discovered during class/func emission
 	for elemType, name := range g.optTypes {
-		g.linef("FORGE_OPT_DEF(%s, %s)", elemType, name)
+		if !emittedOpts[elemType] {
+			g.linef("FORGE_OPT_DEF(%s, %s)", elemType, name)
+		}
 	}
 	for elemType, name := range g.resultTypes {
-		g.linef("FORGE_RESULT_DEF(%s, %s)", elemType, name)
+		if !emittedResults[elemType] {
+			g.linef("FORGE_RESULT_DEF(%s, %s)", elemType, name)
+		}
 	}
 	for cElemType, suffix := range g.chanTypes {
 		chanName := fmt.Sprintf("ForgeChan_%s", suffix)
