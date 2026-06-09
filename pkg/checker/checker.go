@@ -3181,6 +3181,27 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 			c.scope = c.scope.parent
 		}
 
+		// Infer type for context-dependent literals (nil, empty slice/map)
+		// when the expected field type is known. This prevents void* in C output.
+		if ok && fieldType.Kind != TyUnknown {
+			if sl.Fields[i].Value.Kind == ast.ExprNil {
+				valType = fieldType
+				sl.Fields[i].Value.ResolvedType = fieldType
+			} else if sl.Fields[i].Value.Kind == ast.ExprListLit {
+				lit := sl.Fields[i].Value.Data.(*ast.ListLitExpr)
+				if len(lit.Elems) == 0 {
+					valType = fieldType
+					sl.Fields[i].Value.ResolvedType = fieldType
+				}
+			} else if sl.Fields[i].Value.Kind == ast.ExprMapLit {
+				lit := sl.Fields[i].Value.Data.(*ast.MapLitExpr)
+				if len(lit.Entries) == 0 {
+					valType = fieldType
+					sl.Fields[i].Value.ResolvedType = fieldType
+				}
+			}
+		}
+
 		if ok {
 			if !c.assignableTo(valType, fieldType) && valType.Kind != TyUnknown && fieldType.Kind != TyUnknown {
 				c.error(expr.Span, "field %s: expected %s, got %s", sl.Fields[i].Name, fieldType, valType)
