@@ -1412,6 +1412,14 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 			if call.Args[i].Kind == ast.ExprNil {
 				call.Args[i].ResolvedType = paramTypes[i]
 			}
+			// Propagate expected type to empty slice literals in call args
+			// (e.g. MethodCall(expr, name, [], args) where [] is [TypeExpr])
+			if call.Args[i].Kind == ast.ExprListLit {
+				lit := call.Args[i].Data.(*ast.ListLitExpr)
+				if len(lit.Elems) == 0 && paramTypes[i].Kind == TyList {
+					call.Args[i].ResolvedType = paramTypes[i]
+				}
+			}
 		}
 	}
 	return retType

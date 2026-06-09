@@ -336,12 +336,180 @@ func DesugarRelations(file *File) {
 }
 
 // deepCopyBlock creates a deep copy of a Block by JSON-like recursive copying.
-// This is a shallow-enough copy for our purposes: we copy the Stmts slice and
-// let substituteTypeParams handle the mutation.
+// deepCopyBlock creates a true recursive deep copy of a Block.
+// This is critical for DesugarDestructors: each relation gets its own copy of
+// the interface destructor body. Without deep copying, Stmt.Data pointers are
+// shared and mutations (rename, type substitution) bleed across relations.
 func deepCopyBlock(b Block) Block {
 	stmts := make([]Stmt, len(b.Stmts))
-	copy(stmts, b.Stmts)
+	for i := range b.Stmts {
+		stmts[i] = deepCopyStmt(b.Stmts[i])
+	}
 	return Block{Stmts: stmts}
+}
+
+func deepCopyStmt(s Stmt) Stmt {
+	out := Stmt{Kind: s.Kind, Span: s.Span}
+	switch d := s.Data.(type) {
+	case *ExprStmt:
+		c := *d
+		c.Expr = deepCopyExpr(d.Expr)
+		out.Data = &c
+	case *VarDeclStmt:
+		c := *d
+		if d.Value != nil {
+			v := deepCopyExpr(*d.Value)
+			c.Value = &v
+		}
+		if d.Type != nil {
+			t := deepCopyTypeExpr(*d.Type)
+			c.Type = &t
+		}
+		out.Data = &c
+	case *AssignStmt:
+		c := *d
+		c.Target = deepCopyExpr(d.Target)
+		c.Value = deepCopyExpr(d.Value)
+		out.Data = &c
+	case *ReturnStmt:
+		c := *d
+		if d.Value != nil {
+			v := deepCopyExpr(*d.Value)
+			c.Value = &v
+		}
+		out.Data = &c
+	case *IfStmt:
+		c := *d
+		c.Condition = deepCopyExpr(d.Condition)
+		c.Then = deepCopyBlock(d.Then)
+		if d.Else != nil {
+			e := deepCopyBlock(*d.Else)
+			c.Else = &e
+		}
+		elseIfs := make([]ElseIf, len(d.ElseIfs))
+		for i, ei := range d.ElseIfs {
+			elseIfs[i] = ElseIf{
+				Condition: deepCopyExpr(ei.Condition),
+				Body:      deepCopyBlock(ei.Body),
+			}
+		}
+		c.ElseIfs = elseIfs
+		out.Data = &c
+	case *WhileStmt:
+		c := *d
+		c.Condition = deepCopyExpr(d.Condition)
+		c.Body = deepCopyBlock(d.Body)
+		out.Data = &c
+	case *ForStmt:
+		c := *d
+		c.Collection = deepCopyExpr(d.Collection)
+		c.Body = deepCopyBlock(d.Body)
+		out.Data = &c
+	case *MatchStmt:
+		c := *d
+		c.Value = deepCopyExpr(d.Value)
+		arms := make([]MatchArm, len(d.Arms))
+		for i, a := range d.Arms {
+			arms[i] = a
+			arms[i].Body = deepCopyBlock(a.Body)
+		}
+		c.Arms = arms
+		out.Data = &c
+	case *Block:
+		b := deepCopyBlock(*d)
+		out.Data = &b
+	default:
+		// For statement types that don't contain Exprs (e.g. BreakStmt, ContinueStmt),
+		// the shallow copy is fine.
+		out.Data = s.Data
+	}
+	return out
+}
+
+func deepCopyExpr(e Expr) Expr {
+	out := Expr{Kind: e.Kind, Span: e.Span, ResolvedType: e.ResolvedType}
+	switch d := e.Data.(type) {
+	case *MethodCallExpr:
+		c := *d
+		c.Receiver = deepCopyExpr(d.Receiver)
+		args := make([]Expr, len(d.Args))
+		for i := range d.Args {
+			args[i] = deepCopyExpr(d.Args[i])
+		}
+		c.Args = args
+		out.Data = &c
+	case MethodCallExpr:
+		c := d
+		c.Receiver = deepCopyExpr(d.Receiver)
+		args := make([]Expr, len(d.Args))
+		for i := range d.Args {
+			args[i] = deepCopyExpr(d.Args[i])
+		}
+		c.Args = args
+		out.Data = &c
+	case *CallExpr:
+		c := *d
+		c.Func = deepCopyExpr(d.Func)
+		args := make([]Expr, len(d.Args))
+		for i := range d.Args {
+			args[i] = deepCopyExpr(d.Args[i])
+		}
+		c.Args = args
+		out.Data = &c
+	case CallExpr:
+		c := d
+		c.Func = deepCopyExpr(d.Func)
+		args := make([]Expr, len(d.Args))
+		for i := range d.Args {
+			args[i] = deepCopyExpr(d.Args[i])
+		}
+		c.Args = args
+		out.Data = &c
+	case UnaryExpr:
+		c := d
+		c.Operand = deepCopyExpr(d.Operand)
+		out.Data = c
+	case BinaryExpr:
+		c := d
+		c.Left = deepCopyExpr(d.Left)
+		c.Right = deepCopyExpr(d.Right)
+		out.Data = c
+	case FieldAccessExpr:
+		c := d
+		c.Receiver = deepCopyExpr(d.Receiver)
+		out.Data = c
+	case IndexExpr:
+		c := d
+		c.Receiver = deepCopyExpr(d.Receiver)
+		c.Index = deepCopyExpr(d.Index)
+		out.Data = c
+	default:
+		// Literals, identifiers, etc. — no nested Exprs to copy
+		out.Data = e.Data
+	}
+	return out
+}
+
+func deepCopyTypeExpr(te TypeExpr) TypeExpr {
+	out := TypeExpr{Kind: te.Kind, Span: te.Span}
+	switch d := te.Data.(type) {
+	case NamedType:
+		c := d
+		if len(d.Args) > 0 {
+			args := make([]TypeExpr, len(d.Args))
+			for i := range d.Args {
+				args[i] = deepCopyTypeExpr(d.Args[i])
+			}
+			c.Args = args
+		}
+		out.Data = c
+	case *TypeExpr:
+		inner := deepCopyTypeExpr(*d)
+		out.Data = &inner
+	default:
+		out.Data = te.Data
+	}
+	return out
 }
 
 // substituteTypeParamsInBlock rewrites type parameter references in a block's statements.

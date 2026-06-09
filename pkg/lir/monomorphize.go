@@ -176,8 +176,11 @@ func Monomorphize(prog *LProgram) {
 	prog.Structs = filterStructs(prog.Structs, m.structInstances)
 	prog.Structs = append(prog.Structs, newStructs...)
 
-	// Phase 4: Rewrite all call sites in all function bodies
+	// Phase 4: Rewrite all call sites in all function bodies.
+	// Set currentClassRenameMap so method call return type lookups use
+	// the per-function map instead of the global last-writer-wins classRenames.
 	for i := range prog.Functions {
+		m.currentClassRenameMap = prog.Functions[i].ClassRenameMap
 		m.rewriteStmts(prog.Functions[i].Body)
 	}
 
@@ -228,6 +231,9 @@ type monoPass struct {
 
 	// Map from generic class/struct name → mangled name (when only one instantiation)
 	classRenames map[string]string
+
+	// Per-function class rename map, set during Phase 4 rewrite
+	currentClassRenameMap map[string]string
 
 	// Indexes into the original program
 	funcByName     map[string]*LFuncDecl
@@ -1052,7 +1058,12 @@ func (m *monoPass) rewriteExpr(e *LExpr) {
 			}
 			// Update expression type from specialized function's return type
 			recvName := d.Receiver.Type.Name
-			if renamed, ok := m.classRenames[recvName]; ok {
+			// Use per-function ClassRenameMap (correct) instead of global classRenames (last-writer-wins)
+			if len(m.currentClassRenameMap) > 0 {
+				if renamed, ok := m.currentClassRenameMap[recvName]; ok {
+					recvName = renamed
+				}
+			} else if renamed, ok := m.classRenames[recvName]; ok {
 				recvName = renamed
 			}
 			for _, fn := range m.prog.Functions {
