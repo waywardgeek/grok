@@ -1386,6 +1386,18 @@ func (g *cGen) emitStmt(s *LStmt) {
 			g.indent--
 			g.line("}")
 		}
+		// If no default case exists, add __builtin_unreachable() to silence
+		// GCC "control reaches end of non-void function" warnings on exhaustive switches.
+		hasDefault := false
+		for _, c := range d.Cases {
+			if c.Tag == -1 {
+				hasDefault = true
+				break
+			}
+		}
+		if !hasDefault {
+			g.line("default: __builtin_unreachable();")
+		}
 		g.line("}")
 
 	case LStmtTypeSwitch:

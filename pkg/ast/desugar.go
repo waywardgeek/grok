@@ -202,14 +202,22 @@ func DesugarRelations(file *File) {
 		}
 	}
 
+	// Build GLOBAL class lookup: name -> (block index, class index)
+	// Relations may reference classes in other blocks (e.g., Lexer:lc owns [Comment:lc]
+	// where Comment is defined in ast.fg but the relation is in lexer.fg).
+	type classLoc struct {
+		blockIdx int
+		classIdx int
+	}
+	globalClassIdx := make(map[string]classLoc)
+	for bi := range file.Blocks {
+		for ci := range file.Blocks[bi].Classes {
+			globalClassIdx[file.Blocks[bi].Classes[ci].Name] = classLoc{bi, ci}
+		}
+	}
+
 	for bi := range file.Blocks {
 		block := &file.Blocks[bi]
-
-		// Build class lookup: name -> index in block.Classes
-		classIdx := make(map[string]int)
-		for ci := range block.Classes {
-			classIdx[block.Classes[ci].Name] = ci
-		}
 
 		for _, rel := range block.Relations {
 			iface := globalIfaceMap[rel.Hint]
@@ -235,7 +243,7 @@ func DesugarRelations(file *File) {
 				if !ok {
 					continue
 				}
-				ci, ok := classIdx[side.TypeName]
+				ci, ok := globalClassIdx[side.TypeName]
 				if !ok {
 					continue
 				}
@@ -249,7 +257,8 @@ func DesugarRelations(file *File) {
 				// Rewrite type: replace type param references with concrete types
 				fieldType := rewriteFieldType(fd.Type, iface.TypeParams, rel)
 
-				block.Classes[ci].Fields = append(block.Classes[ci].Fields, Field{
+				file.Blocks[ci.blockIdx].Classes[ci.classIdx].Fields = append(
+					file.Blocks[ci.blockIdx].Classes[ci.classIdx].Fields, Field{
 					Name: fieldName,
 					Type: fieldType,
 					Span: fd.Span,
