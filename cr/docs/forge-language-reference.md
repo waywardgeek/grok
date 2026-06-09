@@ -20,7 +20,34 @@ forge BlockName {
 }
 ```
 
-Each `.fg` file has one or more `forge` blocks. Multiple `.fg` files can be compiled together: `forge compile --c file1.fg file2.fg ...` — they are merged into a single compilation unit.
+The `forge` wrapper is **optional**. Bare `.fg` files with top-level declarations are valid — the module name is derived from the filename:
+
+```forge
+// mymodule.fg — no wrapper needed
+enum Color { Red, Green, Blue }
+func greet(name: string) -> string { return f"Hello {name}" }
+```
+
+Each `.fg` file has one or more `forge` blocks (or bare declarations). Multiple `.fg` files can be compiled together: `forge compile --c file1.fg file2.fg ...` — they are merged into a single compilation unit.
+
+## Newlines and Multi-line Expressions
+
+Newlines are statement terminators. However, **inside `()` and `[]` brackets, newlines are treated as whitespace**, enabling multi-line expressions:
+
+```forge
+let result = add(
+    first_arg,
+    second_arg,
+    third_arg
+)
+
+let xs: [i32] = [
+    10, 20, 30,
+    40, 50, 60
+]
+```
+
+Note: `{}` braces do NOT suppress newlines (they delimit blocks with statements).
 
 ## Primitives
 
@@ -155,6 +182,34 @@ let prec = match kind {
 ### Match on non-enum values
 
 Match works on enum types. For non-enum dispatch, use `if`/`else if` chains.
+
+### `if let` — conditional pattern match
+
+Extract a single variant without a full `match`:
+
+```forge
+if let Circle(r) = shape {
+    println(f"radius: {r}")
+} else {
+    println("not a circle")
+}
+```
+
+Bindings (`r`) are scoped to the then-block. The `else` branch is optional.
+
+### `let..else` — assertive pattern extract
+
+Extract variant data into the surrounding scope, with a mandatory diverging `else`:
+
+```forge
+let Circle(r) = shape else {
+    return -1.0
+}
+// r is now in scope
+println(f"radius: {r}")
+```
+
+The `else` block must diverge (`return`, `break`, `continue`). Bindings escape into the outer scope — this avoids rightward drift for the common "extract or bail" pattern.
 
 ## Type Aliases
 

@@ -659,6 +659,19 @@ match expr {
     Pattern => { ... }
     _ => { ... }
 }
+
+// Conditional pattern match
+if let Circle(r) = shape {
+    use(r)
+} else {
+    fallback()
+}
+
+// Assertive pattern extract (bindings escape to outer scope)
+let Circle(r) = shape else {
+    return error
+}
+use(r)
 ```
 
 ### Block Scoping
@@ -1167,6 +1180,10 @@ forge BlockName {
     // types, functions, relations, impls, constants
 }
 ```
+
+The `forge` wrapper is **optional**. Bare `.fg` files with top-level declarations are valid — the module name is derived from the filename.
+
+**Newlines**: Newlines are statement terminators. Inside `()` and `[]` brackets, newlines are treated as whitespace, enabling multi-line function calls, list literals, and tuple expressions. `{}` braces do NOT suppress newlines (they delimit statement blocks).
 
 ### Multi-File Compilation
 
