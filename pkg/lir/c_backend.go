@@ -2650,6 +2650,32 @@ func (g *cGen) emitToStringFunctions() {
 		}
 	}
 
+	// Forward-declare ALL to_string functions first.
+	// to_string functions may reference each other (e.g., Checker_to_string calls
+	// Dict_CType_to_string), so forward decls prevent undeclared function errors.
+	for _, e := range g.prog.Enums {
+		name := g.structName(e.Name, e.IsExported)
+		if hasToString[e.Name] || hasToString[name] {
+			continue
+		}
+		g.linef("static forge_string %s_to_string(%s v);", name, name)
+	}
+	for _, s := range g.prog.Structs {
+		name := g.structName(s.Name, s.IsExported)
+		if hasToString[s.Name] || hasToString[name] {
+			continue
+		}
+		g.linef("static forge_string %s_to_string(%s v);", name, name)
+	}
+	for _, c := range g.prog.Classes {
+		name := g.structName(c.Name, c.IsExported)
+		if hasToString[c.Name] || hasToString[name] {
+			continue
+		}
+		g.linef("static forge_string %s_to_string(%s* v);", name, name)
+	}
+	g.line("")
+
 	// Enum to_string: switch on tag, return variant name
 	for _, e := range g.prog.Enums {
 		name := g.structName(e.Name, e.IsExported)

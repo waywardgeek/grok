@@ -545,6 +545,35 @@ func RewriteImplRenames(prog *LProgram) {
 		return
 	}
 
+	// Expand renames to cover monomorphized class names.
+	// E.g., DictEntry.set_parent → set_d_parent should also apply to
+	// DictEntry_CClassDecl.set_parent → set_d_parent.
+	for _, f := range prog.Functions {
+		if f.Receiver == "" {
+			continue
+		}
+		// Check if this receiver is a monomorphized variant of a renamed class
+		for key, newName := range renames {
+			if strings.HasPrefix(f.Receiver, key.class+"_") {
+				monoKey := classMethodKey{f.Receiver, key.method}
+				if _, exists := renames[monoKey]; !exists {
+					renames[monoKey] = newName
+				}
+			}
+		}
+	}
+	// Also check class declarations for monomorphized names
+	for _, c := range prog.Classes {
+		for key, newName := range renames {
+			if strings.HasPrefix(c.Name, key.class+"_") {
+				monoKey := classMethodKey{c.Name, key.method}
+				if _, exists := renames[monoKey]; !exists {
+					renames[monoKey] = newName
+				}
+			}
+		}
+	}
+
 	// Walk all function bodies
 	for i := range prog.Functions {
 		rewriteImplRenamesInStmts(prog.Functions[i].Body, renames)
