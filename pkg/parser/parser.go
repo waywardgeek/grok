@@ -186,18 +186,37 @@ func (p *Parser) parseFile() (*ast.File, error) {
 
 func (p *Parser) parseForgeBlock() (*ast.ForgeBlock, error) {
 	start := p.peek().Span.Start
-	if _, err := p.expect(TForge); err != nil {
-		return nil, err
-	}
 
-	nameTok, err := p.expect(TIdent)
-	if err != nil {
-		return nil, err
-	}
-	block := &ast.ForgeBlock{Name: nameTok.Text}
+	// Optional: if the file doesn't start with `forge`, create an implicit block
+	// using the filename as the module name.
+	implicit := p.peek().Kind != TForge
+	var block *ast.ForgeBlock
 
-	if _, err := p.expect(TLBrace); err != nil {
-		return nil, err
+	if implicit {
+		// Derive module name from filename: "/path/foo.fg" → "foo"
+		name := p.lex.filename
+		if i := strings.LastIndex(name, "/"); i >= 0 {
+			name = name[i+1:]
+		}
+		if i := strings.Index(name, "."); i >= 0 {
+			name = name[:i]
+		}
+		if name == "" || name == "<string>" {
+			name = "main"
+		}
+		block = &ast.ForgeBlock{Name: name}
+	} else {
+		if _, err := p.expect(TForge); err != nil {
+			return nil, err
+		}
+		nameTok, err := p.expect(TIdent)
+		if err != nil {
+			return nil, err
+		}
+		block = &ast.ForgeBlock{Name: nameTok.Text}
+		if _, err := p.expect(TLBrace); err != nil {
+			return nil, err
+		}
 	}
 	p.skipNewlines()
 
@@ -208,8 +227,10 @@ func (p *Parser) parseForgeBlock() (*ast.ForgeBlock, error) {
 		p.skipNewlines()
 	}
 
-	if _, err := p.expect(TRBrace); err != nil {
-		return nil, err
+	if !implicit {
+		if _, err := p.expect(TRBrace); err != nil {
+			return nil, err
+		}
 	}
 
 	block.Span = ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: p.peek().Span.End}

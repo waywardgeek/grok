@@ -1170,25 +1170,32 @@ func (l *Lowerer) lowerVarDeclStmt(stmt *ast.Stmt) {
 		val := l.lowerExpr(vd.Value)
 		if vd.Pattern.Kind == ast.PatVariant {
 			vp := vd.Pattern.Data.(*ast.VariantPattern)
-			// Find the variant tag index
-			variantIdx := -1
+
+			// Get enum name from value type
+			enumName := ""
 			if val.Type != nil && val.Type.Kind == LTyTaggedUnion {
-				for i, v := range val.Type.Variants {
+				enumName = val.Type.Name
+			}
+
+			// Find variant tag and fields via lowerer's enum registry
+			variantIdx := l.findVariantTag(enumName, vp.Name)
+			var variantFields []LField
+			if variants, ok := l.enumVariants[enumName]; ok {
+				for _, v := range variants {
 					if v.Name == vp.Name {
-						variantIdx = i
+						variantFields = v.Fields
 						break
 					}
 				}
 			}
 
 			// Declare binding variables in outer scope (before the if)
-			var bindingNames []string
 			for i := range vp.Bindings {
 				if vp.Bindings[i].Kind == ast.PatIdent {
 					id := vp.Bindings[i].Data.(*ast.IdentPattern)
 					var bindType *LType
-					if variantIdx >= 0 && i < len(val.Type.Variants[variantIdx].Fields) {
-						bindType = val.Type.Variants[variantIdx].Fields[i].Type
+					if i < len(variantFields) {
+						bindType = variantFields[i].Type
 					} else {
 						bindType = &LType{Kind: LTyAny}
 					}
@@ -1198,17 +1205,18 @@ func (l *Lowerer) lowerVarDeclStmt(stmt *ast.Stmt) {
 						Type:    bindType,
 						Mutable: vd.IsMut,
 					}})
-					bindingNames = append(bindingNames, id.Name)
 				}
 			}
 
 			// Emit: if (tag == variantIdx) { extract bindings } else { elseBlock }
-			tagVal := l.emitTemp(LExpr{Kind: LExprStructField, Operand: &val,
-				Field: "tag", Type: &LType{Kind: LTyI32, Bits: 32}})
-			tagLit := l.emitTemp(LExpr{Kind: LExprIntLit, IntVal: int64(variantIdx),
-				Type: &LType{Kind: LTyI32, Bits: 32}})
-			cond := l.emitTemp(LExpr{Kind: LExprBinOp, Op: LBinEq,
-				Left: &tagVal, Right: &tagLit, Type: &LType{Kind: LTyBool}})
+			tagVal := l.emitTemp(LExpr{Kind: LExprVariantTag,
+				Type: &LType{Kind: LTyI32, Bits: 32},
+				Data: &LVariantTagData{Value: val}})
+			tagLit := LValue{Kind: LValLitInt, IntVal: int64(variantIdx),
+				Type: &LType{Kind: LTyI32, Bits: 32}}
+			cond := l.emitTemp(LExpr{Kind: LExprBinOp,
+				Type: &LType{Kind: LTyBool},
+				Data: &LBinOpData{Op: LBinEq, Left: tagVal, Right: tagLit}})
 
 			// Build "then" block: extract fields and assign to outer variables
 			savedStmts := l.stmts
@@ -1216,17 +1224,22 @@ func (l *Lowerer) lowerVarDeclStmt(stmt *ast.Stmt) {
 			for i := range vp.Bindings {
 				if vp.Bindings[i].Kind == ast.PatIdent && variantIdx >= 0 {
 					id := vp.Bindings[i].Data.(*ast.IdentPattern)
-					if i < len(val.Type.Variants[variantIdx].Fields) {
+					if i < len(variantFields) {
+						fieldName := l.findVariantFieldName(enumName, vp.Name, i)
+						fieldType := variantFields[i].Type
 						fieldVal := l.emitTemp(LExpr{
-							Kind:    LExprClassGet,
-							Operand: &val,
-							Field:   val.Type.Variants[variantIdx].Fields[i].Name,
-							Type:    val.Type.Variants[variantIdx].Fields[i].Type,
+							Kind: LExprVariantData,
+							Type: fieldType,
+							Data: &LVariantDataData{
+								Value:   val,
+								Enum:    enumName,
+								Variant: vp.Name,
+								Field:   fieldName,
+							},
 						})
 						l.emit(LStmt{Kind: LStmtAssign, Data: &LAssign{
-							Target: LValue{Kind: LValVar, Name: id.Name,
-								Type: val.Type.Variants[variantIdx].Fields[i].Type},
-							Value: fieldVal,
+							Target: id.Name,
+							Value:  fieldVal,
 						}})
 					}
 				}

@@ -1,0 +1,35 @@
+// Test if let and let..else syntax — no forge wrapper needed
+
+enum Shape {
+    Circle(radius: f64)
+    Rect(w: f64, h: f64)
+}
+
+func test_if_let(s: Shape) -> f64 {
+    if let Circle(r) = s {
+        return r
+    }
+    return 0.0
+}
+
+func test_if_let_else(s: Shape) -> f64 {
+    if let Circle(r) = s {
+        return r
+    } else {
+        return -1.0
+    }
+}
+
+func test_let_else(s: Shape) -> f64 {
+    let Circle(r) = s else {
+        return -1.0
+    }
+    return r
+}
+
+func test_let_else_rect(s: Shape) -> f64 {
+    let Rect(w, h) = s else {
+        return -1.0
+    }
+    return w * h
+}

@@ -245,13 +245,14 @@ var tokenNames = map[TokenKind]string{
 
 // Lexer tokenizes Forge source code.
 type Lexer struct {
-	source   string
-	filename string
-	pos      int
-	line     int
-	column   int
-	peeked   *Token
-	Comments []ast.Comment // collected during scanning
+	source       string
+	filename     string
+	pos          int
+	line         int
+	column       int
+	peeked       *Token
+	bracketDepth int           // tracks (), [], {} nesting — newlines suppressed when > 0
+	Comments     []ast.Comment // collected during scanning
 }
 
 // NewLexer creates a new lexer for the given source.
@@ -349,7 +350,7 @@ func (l *Lexer) scan() Token {
 	start := l.currentPos()
 	r := l.peek()
 
-	// Newline
+	// Newline — suppress inside brackets
 	if r == '\n' {
 		l.advance()
 		// Collapse multiple newlines
@@ -369,6 +370,9 @@ func (l *Lexer) scan() Token {
 					break
 				}
 			}
+		}
+		if l.bracketDepth > 0 {
+			return l.scan() // skip newline inside brackets
 		}
 		return Token{Kind: TNewline, Text: "\n", Span: ast.Span{Start: start, End: l.currentPos()}}
 	}
@@ -397,16 +401,20 @@ func (l *Lexer) scan() Token {
 	l.advance()
 	switch r {
 	case '(':
+		l.bracketDepth++
 		return Token{Kind: TLParen, Text: "(", Span: ast.Span{Start: start, End: l.currentPos()}}
 	case ')':
+		l.bracketDepth--
 		return Token{Kind: TRParen, Text: ")", Span: ast.Span{Start: start, End: l.currentPos()}}
 	case '{':
 		return Token{Kind: TLBrace, Text: "{", Span: ast.Span{Start: start, End: l.currentPos()}}
 	case '}':
 		return Token{Kind: TRBrace, Text: "}", Span: ast.Span{Start: start, End: l.currentPos()}}
 	case '[':
+		l.bracketDepth++
 		return Token{Kind: TLBracket, Text: "[", Span: ast.Span{Start: start, End: l.currentPos()}}
 	case ']':
+		l.bracketDepth--
 		return Token{Kind: TRBracket, Text: "]", Span: ast.Span{Start: start, End: l.currentPos()}}
 	case ',':
 		return Token{Kind: TComma, Text: ",", Span: ast.Span{Start: start, End: l.currentPos()}}
