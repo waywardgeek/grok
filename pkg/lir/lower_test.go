@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/waywardgeek/forge/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/checker"
 )
 
 func TestLowerEmptyProgram(t *testing.T) {
@@ -103,10 +104,11 @@ func TestLowerSimpleFunction(t *testing.T) {
 							Value: &ast.Expr{
 								Kind: ast.ExprBinary,
 								Data: &ast.BinaryExpr{
-									Left:  ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "a"}},
+									Left:  ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "a"}, ResolvedType: checker.TypeI32},
 									Op:    ast.OpAdd,
-									Right: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "b"}},
+									Right: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "b"}, ResolvedType: checker.TypeI32},
 								},
+								ResolvedType: checker.TypeI32,
 							},
 						},
 					}},
@@ -146,17 +148,19 @@ func TestLowerFlatExpressions(t *testing.T) {
 	expr := &ast.Expr{
 		Kind: ast.ExprBinary,
 		Data: &ast.BinaryExpr{
-			Left: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "a"}},
+			Left: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "a"}, ResolvedType: checker.TypeI32},
 			Op:   ast.OpAdd,
 			Right: ast.Expr{
 				Kind: ast.ExprBinary,
 				Data: &ast.BinaryExpr{
-					Left:  ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "b"}},
+					Left:  ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "b"}, ResolvedType: checker.TypeI32},
 					Op:    ast.OpMul,
-					Right: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "c"}},
+					Right: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "c"}, ResolvedType: checker.TypeI32},
 				},
+				ResolvedType: checker.TypeI32,
 			},
 		},
+		ResolvedType: checker.TypeI32,
 	}
 	l.stmts = nil
 	result := l.lowerExpr(expr)
@@ -210,13 +214,15 @@ func TestLowerWhileCondBlock(t *testing.T) {
 							Condition: ast.Expr{
 								Kind: ast.ExprBinary,
 								Data: &ast.BinaryExpr{
-									Left: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "x"}},
+									Left: ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: "x"}, ResolvedType: checker.TypeI32},
 									Op:   ast.OpGt,
 									Right: ast.Expr{
-										Kind: ast.ExprIntLit,
-										Data: &ast.IntLitExpr{Value: "0"},
+										Kind:         ast.ExprIntLit,
+										Data:         &ast.IntLitExpr{Value: "0"},
+										ResolvedType: checker.TypeI32,
 									},
 								},
+								ResolvedType: checker.TypeBool,
 							},
 							Body: ast.Block{
 								Stmts: []ast.Stmt{{
@@ -319,7 +325,7 @@ func TestLowerIfElse(t *testing.T) {
 					Stmts: []ast.Stmt{{
 						Kind: ast.StmtIf,
 						Data: &ast.IfStmt{
-							Condition: ast.Expr{Kind: ast.ExprBoolLit, Data: &ast.BoolLitExpr{Value: true}},
+							Condition: ast.Expr{Kind: ast.ExprBoolLit, Data: &ast.BoolLitExpr{Value: true}, ResolvedType: checker.TypeBool},
 							Then: ast.Block{
 								Stmts: []ast.Stmt{{Kind: ast.StmtBreak}},
 							},
@@ -371,8 +377,9 @@ func TestLowerUnitVariant(t *testing.T) {
 						Kind: ast.StmtReturn,
 						Data: &ast.ReturnStmt{
 							Value: &ast.Expr{
-								Kind: ast.ExprIdent,
-								Data: &ast.IdentExpr{Name: "Red"},
+								Kind:         ast.ExprIdent,
+								Data:         &ast.IdentExpr{Name: "Red"},
+								ResolvedType: &checker.Type{Kind: checker.TyEnum, Name: "Color"},
 							},
 						},
 					}},

@@ -36,7 +36,8 @@ const (
 	TyUnion                   // union type (T | U)
 	TyModule                  // imported Forge module (qualified access to exports)
 	TyAny                     // any (empty interface)
-	TyUnknown                 // not yet resolved
+	TyNil                     // nil literal — assignable to optional and interface types
+	TyUnknown                 // not yet resolved — MUST NOT survive past checker
 	TyError                   // error sentinel
 )
 
@@ -132,6 +133,8 @@ func (t *Type) String() string {
 		return "<module " + t.Name + ">"
 	case TyAny:
 		return "any"
+	case TyNil:
+		return "nil"
 	case TyUnknown:
 		return "?"
 	case TyError:
@@ -147,6 +150,7 @@ var (
 	TypeString  = &Type{Kind: TyString}
 	TypeUnit    = &Type{Kind: TyUnit}
 	TypeAny     = &Type{Kind: TyAny}
+	TypeNil     = &Type{Kind: TyNil}
 	TypeUnknown = &Type{Kind: TyUnknown}
 	TypeError   = &Type{Kind: TyError}
 	TypeI32     = &Type{Kind: TyInt, Bits: 32}
@@ -407,9 +411,9 @@ func (c *Checker) registerBuiltins() {
 
 	// Collections
 	c.scope.Define("len", &Type{Kind: TyFunc, Params: nil, Return: &Type{Kind: TyInt, Bits: -1}, Name: "len"})
-	c.scope.Define("append", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "append"})
+	c.scope.Define("append", &Type{Kind: TyFunc, Params: nil, Return: TypeError, Name: "append"})
 	c.scope.Define("isnull", &Type{Kind: TyFunc, Params: nil, Return: TypeBool, Name: "isnull"})
-	c.scope.Define("make_channel", &Type{Kind: TyFunc, Params: nil, Return: TypeUnknown, Name: "make_channel"})
+	c.scope.Define("make_channel", &Type{Kind: TyFunc, Params: nil, Return: TypeError, Name: "make_channel"})
 
 	// Hashing
 	c.scope.Define("hash_string", &Type{Kind: TyFunc, Params: []*Type{TypeString}, Return: &Type{Kind: TyUint, Bits: 64}, Name: "hash_string"})
@@ -457,6 +461,60 @@ func (c *Checker) registerBuiltins() {
 		Return: TypeUnit, Name: "assert"})
 	c.scope.Define("assert_eq", &Type{Kind: TyFunc, Params: nil, // variadic: (any, any, string)
 		Return: TypeUnit, Name: "assert_eq"})
+
+	// Register known Go stdlib modules so module-qualified calls get proper types
+	c.registerGoStdlibModules()
+}
+
+// registerGoStdlibModules registers type information for known Go standard library
+// modules. This allows the checker to resolve return types for calls like
+// strings.ToUpper("x") instead of falling back to TypeError.
+func (c *Checker) registerGoStdlibModules() {
+	register := func(modName string, methods map[string]*Type) {
+		modInfo := &TypeInfo{
+			Type:    &Type{Kind: TyModule, Name: modName},
+			Fields:  make(map[string]*Type),
+			Methods: make(map[string]*Type),
+		}
+		for name, t := range methods {
+			modInfo.Methods[name] = t
+		}
+		c.registry.Register(modName, modInfo)
+	}
+
+	// strings module
+	register("strings", map[string]*Type{
+		"ToUpper":    {Kind: TyFunc, Params: []*Type{TypeString}, Return: TypeString},
+		"ToLower":    {Kind: TyFunc, Params: []*Type{TypeString}, Return: TypeString},
+		"Contains":   {Kind: TyFunc, Params: []*Type{TypeString, TypeString}, Return: TypeBool},
+		"HasPrefix":  {Kind: TyFunc, Params: []*Type{TypeString, TypeString}, Return: TypeBool},
+		"HasSuffix":  {Kind: TyFunc, Params: []*Type{TypeString, TypeString}, Return: TypeBool},
+		"TrimSpace":  {Kind: TyFunc, Params: []*Type{TypeString}, Return: TypeString},
+		"Split":      {Kind: TyFunc, Params: []*Type{TypeString, TypeString}, Return: ListType(TypeString)},
+		"Join":       {Kind: TyFunc, Params: []*Type{ListType(TypeString), TypeString}, Return: TypeString},
+		"Replace":    {Kind: TyFunc, Params: []*Type{TypeString, TypeString, TypeString, TypeI32}, Return: TypeString},
+		"ReplaceAll": {Kind: TyFunc, Params: []*Type{TypeString, TypeString, TypeString}, Return: TypeString},
+	})
+
+	// fmt module
+	register("fmt", map[string]*Type{
+		"Sprintf":  {Kind: TyFunc, Params: nil, Return: TypeString},
+		"Errorf":   {Kind: TyFunc, Params: nil, Return: &Type{Kind: TyError}},
+		"Println":  {Kind: TyFunc, Params: nil, Return: TypeUnit},
+		"Printf":   {Kind: TyFunc, Params: nil, Return: TypeUnit},
+	})
+
+	// errors module
+	register("errors", map[string]*Type{
+		"New": {Kind: TyFunc, Params: []*Type{TypeString}, Return: &Type{Kind: TyError}},
+	})
+
+	// strconv module
+	register("strconv", map[string]*Type{
+		"Itoa": {Kind: TyFunc, Params: []*Type{&Type{Kind: TyInt, Bits: -1}}, Return: TypeString},
+		"Atoi": {Kind: TyFunc, Params: []*Type{TypeString},
+			Return: &Type{Kind: TyTuple, Fields: []TypeField{{Type: &Type{Kind: TyInt, Bits: -1}}, {Type: &Type{Kind: TyError}}}}},
+	})
 }
 
 // CheckModuleFile parses, checks, and caches a .fg module file.
@@ -621,7 +679,7 @@ func (c *Checker) popScope() {
 // resolveTypeExpr converts an AST TypeExpr to a checker Type.
 func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type {
 	if te == nil {
-		return TypeUnknown
+		return TypeError // missing type expression is a bug in the AST
 	}
 	switch te.Kind {
 	case ast.TypeNamed:
@@ -650,6 +708,8 @@ func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type {
 		return &Type{Kind: TyTuple, Fields: fields}
 	case ast.TypeUnit:
 		return TypeUnit
+	case ast.TypeLock:
+		return &Type{Kind: TyStruct, Name: "Mutex"}
 	case ast.TypeFunc:
 		ft := te.Data.(ast.FuncType)
 		var params []*Type
@@ -674,7 +734,8 @@ func (c *Checker) resolveTypeExpr(te *ast.TypeExpr) *Type {
 		elem := c.resolveTypeExpr(&gt.Elem)
 		return &Type{Kind: TyGenerator, Elem: elem}
 	default:
-		return TypeUnknown
+		c.error(te.Span, "unsupported type expression kind %v", te.Kind)
+		return TypeError
 	}
 }
 
@@ -778,8 +839,12 @@ func (c *Checker) assignableTo(from, to *Type) bool {
 	if from.Kind == TyAny || to.Kind == TyAny {
 		return true
 	}
-	// nil (TyUnknown) is assignable to optional and interface types
-	if from.Kind == TyUnknown && (to.Kind == TyOptional || to.Kind == TyInterface) {
+	// nil is assignable to optional, interface, class, and struct types
+	if from.Kind == TyNil {
+		return true
+	}
+	// TyError (error sentinel / error type) is assignable to error interface and suppresses cascading
+	if from.Kind == TyError || to.Kind == TyError {
 		return true
 	}
 	// Numeric widening (e.g., int → i32, i32 → i64)
@@ -794,7 +859,7 @@ func (c *Checker) assignableTo(from, to *Type) bool {
 	if from.Kind == to.Kind {
 		switch from.Kind {
 		case TyList:
-			if from.Elem == nil || from.Elem.Kind == TyUnknown {
+			if from.Elem == nil || from.Elem.Kind == TyUnit {
 				return true // empty list [] is assignable to any typed list
 			}
 			if to.Elem != nil {
@@ -1001,7 +1066,7 @@ func matchTypeVars(param, arg *Type, subst map[string]*Type) {
 
 func (c *Checker) checkExpr(expr *ast.Expr) *Type {
 	if expr == nil {
-		return TypeUnknown
+		return TypeError
 	}
 	t := c.inferExpr(expr)
 	expr.ResolvedType = t
@@ -1032,7 +1097,8 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 	case ast.ExprBoolLit:
 		return TypeBool
 	case ast.ExprNil:
-		return TypeUnknown // needs context to resolve
+		// nil literal — callers with context (checkVarDecl, checkCall) override ResolvedType.
+		return TypeNil
 	case ast.ExprIdent:
 		id := expr.Data.(*ast.IdentExpr)
 		t := c.scope.Lookup(id.Name)
@@ -1074,7 +1140,8 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 	case ast.ExprLambda:
 		return c.checkLambda(expr)
 	default:
-		return TypeUnknown
+		c.error(expr.Span, "unsupported expression kind %v", expr.Kind)
+		return TypeError
 	}
 }
 
@@ -1095,7 +1162,8 @@ func (c *Checker) checkUnary(expr *ast.Expr) *Type {
 		}
 		return TypeBool
 	}
-	return TypeUnknown
+	c.error(expr.Span, "unsupported unary operator %v", u.Op)
+	return TypeError
 }
 
 func (c *Checker) checkBinary(expr *ast.Expr) *Type {
@@ -1137,8 +1205,8 @@ func (c *Checker) checkBinary(expr *ast.Expr) *Type {
 			return TypeError
 		}
 		// String concatenation (allow unknown on either side if the other is string)
-		if b.Op == ast.OpAdd && (left.Equal(TypeString) && (right.Equal(TypeString) || right.Kind == TyUnknown) ||
-			right.Equal(TypeString) && left.Kind == TyUnknown) {
+		if b.Op == ast.OpAdd && (left.Equal(TypeString) && (right.Equal(TypeString) || right.Kind == TyError) ||
+			right.Equal(TypeString) && left.Kind == TyError) {
 			return TypeString
 		}
 		c.error(expr.Span, "cannot apply %v to %s and %s", b.Op, left, right)
@@ -1146,7 +1214,7 @@ func (c *Checker) checkBinary(expr *ast.Expr) *Type {
 
 	case ast.OpEq, ast.OpNeq:
 		// Any two compatible types can be compared for equality
-		if !left.Equal(right) && left.Kind != TyUnknown && right.Kind != TyUnknown {
+		if !left.Equal(right) && left.Kind != TyError && right.Kind != TyError {
 			if numericWidens(left, right) || numericWidens(right, left) {
 				// Propagate platform int to literal operands
 				if left.Bits == -1 && (b.Right.Kind == ast.ExprIntLit || b.Right.Kind == ast.ExprFloatLit) {
@@ -1196,18 +1264,32 @@ func (c *Checker) checkBinary(expr *ast.Expr) *Type {
 		c.error(expr.Span, "bitwise operators require matching integer types, got %s and %s", left, right)
 		return TypeError
 	}
-	return TypeUnknown
+	c.error(expr.Span, "unsupported binary operator %v", b.Op)
+	return TypeError
 }
 
 func (c *Checker) checkCall(expr *ast.Expr) *Type {
 	call := expr.Data.(*ast.CallExpr)
 	fnType := c.checkExpr(&call.Func)
 
+	// Special builtin: append(slice, elem) -> slice (return type = first arg type)
+	if fnType.Kind == TyFunc && fnType.Name == "append" {
+		if len(call.Args) < 1 {
+			c.error(expr.Span, "append requires at least 1 argument")
+			return TypeError
+		}
+		sliceType := c.checkExpr(&call.Args[0])
+		for i := 1; i < len(call.Args); i++ {
+			c.checkExpr(&call.Args[i])
+		}
+		return sliceType
+	}
+
 	// Special builtin: make_channel<T>(capacity?) -> channel<T>
 	if fnType.Kind == TyFunc && fnType.Name == "make_channel" {
 		if len(call.TypeArgs) != 1 {
 			c.error(expr.Span, "make_channel requires exactly 1 type argument")
-			return TypeUnknown
+			return TypeError
 		}
 		elemType := c.resolveTypeExpr(&call.TypeArgs[0])
 		// Check optional capacity arg
@@ -1220,8 +1302,12 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 		return &Type{Kind: TyChannel, Elem: elemType}
 	}
 
-	if fnType.Kind == TyError || fnType.Kind == TyUnknown {
-		return TypeUnknown
+	if fnType.Kind == TyError {
+		// Still check args for side effects and sub-expression typing
+		for i := range call.Args {
+			c.checkExpr(&call.Args[i])
+		}
+		return TypeError
 	}
 	if fnType.Kind != TyFunc {
 		c.error(expr.Span, "cannot call non-function type %s", fnType)
@@ -1293,7 +1379,7 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 	} else if !argsChecked {
 		for i := range call.Args {
 			argType := c.checkExpr(&call.Args[i])
-			if !c.assignableTo(argType, paramTypes[i]) && argType.Kind != TyUnknown {
+			if !c.assignableTo(argType, paramTypes[i]) && argType.Kind != TyError {
 				c.error(call.Args[i].Span, "argument %d: expected %s, got %s", i+1, paramTypes[i], argType)
 			}
 			// Propagate expected type to literal args so transpiler emits correct type
@@ -1327,7 +1413,7 @@ func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 				for i := range mc.Args {
 					argType := c.checkExpr(&mc.Args[i])
 					if methType.Params != nil && i < len(methType.Params) {
-						if !c.assignableTo(argType, methType.Params[i]) && argType.Kind != TyUnknown {
+						if !c.assignableTo(argType, methType.Params[i]) && argType.Kind != TyError {
 							c.error(mc.Args[i].Span, "%s.%s: argument %d: expected %s, got %s", recvType.Name, mc.Method, i+1, methType.Params[i], argType)
 						}
 					}
@@ -1337,9 +1423,14 @@ func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 			c.error(expr.Span, "module %q has no exported function %q", recvType.Name, mc.Method)
 			return TypeError
 		}
+		// Unregistered module — check args, return TypeError (no way to resolve)
+		for i := range mc.Args {
+			c.checkExpr(&mc.Args[i])
+		}
+		return TypeError
 	}
 	// Look up method on the receiver type
-	if recvType.Kind == TyStruct || recvType.Kind == TyClass {
+	if recvType.Kind == TyStruct || recvType.Kind == TyClass || recvType.Kind == TyInterface {
 		if info := c.registry.Lookup(recvType.Name); info != nil {
 			if methType, ok := info.Methods[mc.Method]; ok && methType.Kind == TyFunc {
 				// Check argument types
@@ -1378,11 +1469,21 @@ func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 			}
 		}
 	}
-	// Check args but return unknown
+	// Universal methods available on all types
+	if mc.Method == "to_string" {
+		for i := range mc.Args {
+			c.checkExpr(&mc.Args[i])
+		}
+		return TypeString
+	}
+	// Unknown method — check args but report error (suppress if receiver already errored)
 	for i := range mc.Args {
 		c.checkExpr(&mc.Args[i])
 	}
-	return TypeUnknown
+	if recvType.Kind != TyError {
+		c.error(expr.Span, "unknown method %q on type %s", mc.Method, recvType)
+	}
+	return TypeError
 }
 
 // checkBuiltinMethod resolves methods on built-in types (string, list, map).
@@ -1440,7 +1541,7 @@ func (c *Checker) checkStringMethod(method string, args []ast.Expr, expr *ast.Ex
 		// Accept any integer type for count
 		if len(args) > 0 {
 			t := c.checkExpr(&args[0])
-			if !t.IsInteger() && t.Kind != TyUnknown {
+			if !t.IsInteger() && t.Kind != TyError {
 				c.error(args[0].Span, "%s: argument 1 must be integer, got %s", method, t)
 			}
 		}
@@ -1452,7 +1553,7 @@ func (c *Checker) checkStringMethod(method string, args []ast.Expr, expr *ast.Ex
 func (c *Checker) checkListMethod(recvType *Type, method string, args []ast.Expr, expr *ast.Expr) *Type {
 	elemType := recvType.Elem
 	if elemType == nil {
-		elemType = TypeUnknown
+		elemType = TypeError
 	}
 	switch method {
 	case "len":
@@ -1502,13 +1603,13 @@ func (c *Checker) checkMapMethod(recvType *Type, method string, args []ast.Expr,
 		if recvType.Key != nil {
 			return ListType(recvType.Key)
 		}
-		return ListType(TypeUnknown)
+		return ListType(TypeError)
 	case "values":
 		c.expectArgs(method, args, 0, expr)
 		if recvType.Val != nil {
 			return ListType(recvType.Val)
 		}
-		return ListType(TypeUnknown)
+		return ListType(TypeError)
 	}
 	return nil
 }
@@ -1526,7 +1627,7 @@ func (c *Checker) checkChannelMethod(recvType *Type, method string, args []ast.E
 		if recvType.Elem != nil {
 			return recvType.Elem
 		}
-		return TypeUnknown
+		return TypeError
 	case "close":
 		c.expectArgs(method, args, 0, expr)
 		return TypeUnit
@@ -1544,7 +1645,7 @@ func (c *Checker) expectArgs(method string, args []ast.Expr, expected int, expr 
 // Helper: check arg type
 func (c *Checker) expectArgType(method string, arg *ast.Expr, idx int, expected *Type) {
 	t := c.checkExpr(arg)
-	if !c.assignableTo(t, expected) && t.Kind != TyUnknown {
+	if !c.assignableTo(t, expected) && t.Kind != TyError {
 		c.error(arg.Span, "%s: argument %d: expected %s, got %s", method, idx+1, expected, t)
 	}
 }
@@ -1581,6 +1682,7 @@ func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type {
 				return fieldType
 			}
 			c.error(expr.Span, "type %s has no field %q", recvType.Name, fa.Field)
+			return TypeError
 		}
 	}
 	if recvType.Kind == TyModule {
@@ -1597,7 +1699,10 @@ func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type {
 			return TypeError
 		}
 	}
-	return TypeUnknown
+	if recvType.Kind != TyError {
+		c.error(expr.Span, "cannot access field %q on type %s", fa.Field, recvType)
+	}
+	return TypeError
 }
 
 func (c *Checker) checkIndex(expr *ast.Expr) *Type {
@@ -1612,7 +1717,7 @@ func (c *Checker) checkIndex(expr *ast.Expr) *Type {
 		}
 		return recvType.Elem
 	case TyMap:
-		if !indexType.Equal(recvType.Key) && indexType.Kind != TyUnknown {
+		if !indexType.Equal(recvType.Key) && indexType.Kind != TyError {
 			c.error(expr.Span, "map key type mismatch: expected %s, got %s", recvType.Key, indexType)
 		}
 		return recvType.Val
@@ -1622,7 +1727,10 @@ func (c *Checker) checkIndex(expr *ast.Expr) *Type {
 		}
 		return TypeU8 // string indexing returns a byte
 	}
-	return TypeUnknown
+	if recvType.Kind != TyError {
+		c.error(expr.Span, "cannot index type %s", recvType)
+	}
+	return TypeError
 }
 
 func (c *Checker) checkSlice(expr *ast.Expr) *Type {
@@ -1630,13 +1738,13 @@ func (c *Checker) checkSlice(expr *ast.Expr) *Type {
 	recvType := c.checkExpr(&sl.Receiver)
 	if sl.Low != nil {
 		lowType := c.checkExpr(sl.Low)
-		if !lowType.IsInteger() && lowType.Kind != TyUnknown {
+		if !lowType.IsInteger() && lowType.Kind != TyError {
 			c.error(expr.Span, "slice low bound must be integer, got %s", lowType)
 		}
 	}
 	if sl.High != nil {
 		highType := c.checkExpr(sl.High)
-		if !highType.IsInteger() && highType.Kind != TyUnknown {
+		if !highType.IsInteger() && highType.Kind != TyError {
 			c.error(expr.Span, "slice high bound must be integer, got %s", highType)
 		}
 	}
@@ -1647,18 +1755,23 @@ func (c *Checker) checkSlice(expr *ast.Expr) *Type {
 	case TyString:
 		return TypeString
 	}
-	return TypeUnknown
+	if recvType.Kind != TyError {
+		c.error(expr.Span, "cannot slice type %s", recvType)
+	}
+	return TypeError
 }
 
 func (c *Checker) checkListLit(expr *ast.Expr) *Type {
 	lit := expr.Data.(*ast.ListLitExpr)
 	if len(lit.Elems) == 0 {
-		return ListType(TypeUnknown)
+		// Empty list — type comes from context (checkVarDecl/checkStructLit override ResolvedType).
+		// Return List(Unit) as placeholder; callers with declared types will override.
+		return ListType(TypeUnit)
 	}
 	elemType := c.checkExpr(&lit.Elems[0])
 	for i := 1; i < len(lit.Elems); i++ {
 		t := c.checkExpr(&lit.Elems[i])
-		if !t.Equal(elemType) && t.Kind != TyUnknown && elemType.Kind != TyUnknown {
+		if !t.Equal(elemType) && t.Kind != TyError && elemType.Kind != TyError {
 			c.error(lit.Elems[i].Span, "list element type mismatch: expected %s, got %s", elemType, t)
 		}
 	}
@@ -1678,17 +1791,18 @@ func (c *Checker) checkTupleLit(expr *ast.Expr) *Type {
 func (c *Checker) checkMapLit(expr *ast.Expr) *Type {
 	lit := expr.Data.(*ast.MapLitExpr)
 	if len(lit.Entries) == 0 {
-		return MapType(TypeUnknown, TypeUnknown)
+		// Empty map — type comes from context. Placeholder until caller overrides.
+		return MapType(TypeUnit, TypeUnit)
 	}
 	keyType := c.checkExpr(&lit.Entries[0].Key)
 	valType := c.checkExpr(&lit.Entries[0].Value)
 	for i := 1; i < len(lit.Entries); i++ {
 		k := c.checkExpr(&lit.Entries[i].Key)
 		v := c.checkExpr(&lit.Entries[i].Value)
-		if !k.Equal(keyType) && k.Kind != TyUnknown {
+		if !k.Equal(keyType) && k.Kind != TyError {
 			c.error(lit.Entries[i].Key.Span, "map key type mismatch: expected %s, got %s", keyType, k)
 		}
-		if !v.Equal(valType) && v.Kind != TyUnknown {
+		if !v.Equal(valType) && v.Kind != TyError {
 			c.error(lit.Entries[i].Value.Span, "map value type mismatch: expected %s, got %s", valType, v)
 		}
 	}
@@ -1730,7 +1844,7 @@ func (c *Checker) checkMatchExpr(expr *ast.Expr) *Type {
 		c.popScope()
 	}
 	if resultType == nil {
-		return TypeUnknown
+		return TypeUnit
 	}
 	return resultType
 }
@@ -1740,7 +1854,7 @@ func (c *Checker) checkCast(expr *ast.Expr) *Type {
 	targetType := c.resolveTypeExpr(&cast.TargetType)
 	fromType := c.checkExpr(&cast.Operand)
 	// For now, only validate numeric ↔ numeric casts
-	if fromType.Kind != TyUnknown && targetType.Kind != TyUnknown {
+	if fromType.Kind != TyError && targetType.Kind != TyError {
 		fromNumeric := fromType.IsNumeric()
 		toNumeric := targetType.IsNumeric()
 		if !fromNumeric || !toNumeric {
@@ -1756,10 +1870,10 @@ func (c *Checker) checkUnwrap(expr *ast.Expr) *Type {
 	if operandType.Kind == TyOptional {
 		return operandType.Elem
 	}
-	if operandType.Kind != TyUnknown {
+	if operandType.Kind != TyError {
 		c.error(expr.Span, "cannot unwrap non-optional type %s", operandType)
 	}
-	return TypeUnknown
+	return TypeError
 }
 
 // isErrorType returns true if the type represents Go's error interface.
@@ -1779,22 +1893,22 @@ func (c *Checker) checkTry(expr *ast.Expr) *Type {
 
 	// Operand must be (T, error) tuple
 	if operandType.Kind != TyTuple || len(operandType.Fields) < 2 {
-		if operandType.Kind != TyUnknown {
+		if operandType.Kind != TyError {
 			c.error(expr.Span, "? operator requires (T, error) return type, got %s", operandType)
 		}
-		return TypeUnknown
+		return TypeError
 	}
 
 	lastField := operandType.Fields[len(operandType.Fields)-1]
 	if !isErrorType(lastField.Type) {
 		c.error(expr.Span, "? operator requires last tuple element to be error, got %s", lastField.Type)
-		return TypeUnknown
+		return TypeError
 	}
 
 	// Enclosing function must also return (..., error)
 	if c.currentReturn == nil {
 		c.error(expr.Span, "? operator can only be used in functions that return error")
-		return TypeUnknown
+		return TypeError
 	}
 	if c.currentReturn.Kind == TyTuple {
 		lastRet := c.currentReturn.Fields[len(c.currentReturn.Fields)-1]
@@ -1937,14 +2051,14 @@ func (c *Checker) checkVarDecl(stmt *ast.Stmt) {
 						c.scope.Define(name, valType.Fields[i].Type)
 					}
 				}
-			} else if valType.Kind != TyUnknown {
+			} else if valType.Kind != TyError {
 				c.error(stmt.Span, "cannot destructure %s into %d variables", valType, len(decl.Names))
 				for _, name := range decl.Names {
 					c.scope.Define(name, TypeError)
 				}
 			} else {
 				for _, name := range decl.Names {
-					c.scope.Define(name, TypeUnknown)
+					c.scope.Define(name, TypeError)
 				}
 			}
 		} else {
@@ -1968,7 +2082,7 @@ func (c *Checker) checkVarDecl(stmt *ast.Stmt) {
 	var finalType *Type
 	if declaredType != nil && inferredType != nil {
 		// Both present: check compatibility (widening, interface subtyping, composites)
-		if !c.assignableTo(inferredType, declaredType) && inferredType.Kind != TyUnknown {
+		if !c.assignableTo(inferredType, declaredType) && inferredType.Kind != TyError {
 			c.error(stmt.Span, "type mismatch in variable %q: declared %s, got %s", decl.Name, declaredType, inferredType)
 		}
 		// Propagate declared type to the value expression (e.g., int literal 100 becomes i64 not i32)
@@ -2008,7 +2122,7 @@ func (c *Checker) checkAssign(stmt *ast.Stmt) {
 			c.error(stmt.Span, "cannot assign to immutable variable %q (use 'let mut')", id.Name)
 		}
 	}
-	if !c.assignableTo(valueType, targetType) && targetType.Kind != TyUnknown && valueType.Kind != TyUnknown {
+	if !c.assignableTo(valueType, targetType) && targetType.Kind != TyError && valueType.Kind != TyError {
 		c.error(stmt.Span, "cannot assign %s to %s", valueType, targetType)
 	}
 }
@@ -2018,7 +2132,7 @@ func (c *Checker) checkReturn(stmt *ast.Stmt) {
 	if ret.Value != nil {
 		valType := c.checkExpr(ret.Value)
 		if c.currentReturn != nil {
-			if !c.assignableTo(valType, c.currentReturn) && valType.Kind != TyUnknown && c.currentReturn.Kind != TyUnknown {
+			if !c.assignableTo(valType, c.currentReturn) && valType.Kind != TyError && c.currentReturn.Kind != TyError {
 				c.error(stmt.Span, "return type mismatch: expected %s, got %s", c.currentReturn, valType)
 			}
 		}
@@ -2032,13 +2146,13 @@ func (c *Checker) checkReturn(stmt *ast.Stmt) {
 func (c *Checker) checkIf(stmt *ast.Stmt) {
 	ifStmt := stmt.Data.(*ast.IfStmt)
 	condType := c.checkExpr(&ifStmt.Condition)
-	if !condType.Equal(TypeBool) && condType.Kind != TyUnknown && condType.Kind != TyError {
+	if !condType.Equal(TypeBool) && condType.Kind != TyError {
 		c.error(stmt.Span, "if condition must be bool, got %s", condType)
 	}
 	c.checkBlock(&ifStmt.Then)
 	for i := range ifStmt.ElseIfs {
 		elifCond := c.checkExpr(&ifStmt.ElseIfs[i].Condition)
-		if !elifCond.Equal(TypeBool) && elifCond.Kind != TyUnknown && elifCond.Kind != TyError {
+		if !elifCond.Equal(TypeBool) && elifCond.Kind != TyError {
 			c.error(ifStmt.ElseIfs[i].Span, "else-if condition must be bool, got %s", elifCond)
 		}
 		c.checkBlock(&ifStmt.ElseIfs[i].Body)
@@ -2066,10 +2180,10 @@ func (c *Checker) checkFor(stmt *ast.Stmt) {
 	case TyMap:
 		elemType = collType.Key // iterate keys
 	default:
-		if collType.Kind != TyUnknown && collType.Kind != TyError {
+		if collType.Kind != TyError {
 			c.error(stmt.Span, "cannot iterate over %s", collType)
 		}
-		elemType = TypeUnknown
+		elemType = TypeError
 	}
 	if forStmt.IndexVar != "" {
 		// Platform int type for index
@@ -2084,7 +2198,7 @@ func (c *Checker) checkFor(stmt *ast.Stmt) {
 func (c *Checker) checkWhile(stmt *ast.Stmt) {
 	whileStmt := stmt.Data.(*ast.WhileStmt)
 	condType := c.checkExpr(&whileStmt.Condition)
-	if !condType.Equal(TypeBool) && condType.Kind != TyUnknown && condType.Kind != TyError {
+	if !condType.Equal(TypeBool) && condType.Kind != TyError {
 		c.error(stmt.Span, "while condition must be bool, got %s", condType)
 	}
 	c.loopDepth++
@@ -2214,7 +2328,7 @@ func (c *Checker) bindUnionPattern(pat *ast.Pattern, matchType *Type) {
 		}
 		// Try to resolve as a type name
 		resolved := c.resolveNamedType(id.Name, nil)
-		if resolved.Kind == TyUnknown {
+		if resolved.Kind == TyError {
 			c.error(pat.Span, "unknown type '%s' in union match", id.Name)
 			return
 		}
@@ -2262,7 +2376,8 @@ func (c *Checker) bindPattern(pat *ast.Pattern, matchType *Type) {
 			if i < len(fieldTypes) {
 				bindType = fieldTypes[i].Type
 			} else {
-				bindType = TypeUnknown
+				c.error(pat.Span, "too many bindings for variant %s (has %d fields)", vp.Name, len(fieldTypes))
+				bindType = TypeError
 			}
 			c.bindPattern(&vp.Bindings[i], bindType)
 		}
@@ -2273,12 +2388,15 @@ func (c *Checker) bindPattern(pat *ast.Pattern, matchType *Type) {
 			if matchType.Kind == TyTuple && i < len(matchType.Fields) {
 				elemType = matchType.Fields[i].Type
 			} else {
-				elemType = TypeUnknown
+				c.error(pat.Span, "too many elements in tuple pattern (expected %d)", len(matchType.Fields))
+				elemType = TypeError
 			}
 			c.bindPattern(&tp.Elems[i], elemType)
 		}
 	case ast.PatLiteral:
-		// Literals don't bind variables
+		// Check the literal expression so it gets ResolvedType set
+		lp := pat.Data.(*ast.LiteralPattern)
+		c.checkExpr(&lp.Expr)
 	case ast.PatWildcard:
 		// Wildcards don't bind variables
 	}
@@ -2416,8 +2534,7 @@ func (c *Checker) CheckFile(file *ast.File) {
 }
 
 // validateAllTypesResolved checks that no function parameter or return type
-// is TyUnknown after type checking. This catches resolution failures at the
-// source rather than letting them propagate as void* in the C backend.
+// is TyUnknown after type checking. TyUnknown must not survive past the checker.
 func (c *Checker) validateAllTypesResolved(file *ast.File) {
 	for _, block := range file.Blocks {
 		for _, fn := range block.Functions {
@@ -2442,11 +2559,11 @@ func (c *Checker) validateAllTypesResolved(file *ast.File) {
 						if i < len(fn.Params) {
 							paramName = fn.Params[i].Name
 						}
-						fmt.Fprintf(os.Stderr, "checker: function %s: parameter %q has unresolved type\n", fn.Name, paramName)
+						panic(fmt.Sprintf("checker: function %s: parameter %q has TyUnknown type", fn.Name, paramName))
 					}
 				}
 				if fnType.Return != nil && fnType.Return.Kind == TyUnknown {
-					fmt.Fprintf(os.Stderr, "checker: function %s: return type is unresolved\n", fn.Name)
+					panic(fmt.Sprintf("checker: function %s: return type is TyUnknown", fn.Name))
 				}
 			}
 		}
@@ -2508,7 +2625,7 @@ func (c *Checker) registerForgeBlock(block *ast.ForgeBlock) {
 				c.scope.Define(imp.Alias, modType)
 			}
 		} else {
-			c.scope.Define(imp.Alias, &Type{Kind: TyUnknown, Name: imp.Path})
+			c.scope.Define(imp.Alias, &Type{Kind: TyModule, Name: imp.Path})
 		}
 	}
 
@@ -3183,7 +3300,7 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 
 		// Infer type for context-dependent literals (nil, empty slice/map)
 		// when the expected field type is known. This prevents void* in C output.
-		if ok && fieldType.Kind != TyUnknown {
+		if ok && fieldType.Kind != TyError {
 			if sl.Fields[i].Value.Kind == ast.ExprNil {
 				valType = fieldType
 				sl.Fields[i].Value.ResolvedType = fieldType
@@ -3203,7 +3320,7 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 		}
 
 		if ok {
-			if !c.assignableTo(valType, fieldType) && valType.Kind != TyUnknown && fieldType.Kind != TyUnknown {
+			if !c.assignableTo(valType, fieldType) && valType.Kind != TyError && fieldType.Kind != TyError {
 				c.error(expr.Span, "field %s: expected %s, got %s", sl.Fields[i].Name, fieldType, valType)
 			}
 		} else {

@@ -1435,7 +1435,7 @@ func TestTryOperatorNonTupleOperand(t *testing.T) {
 			return (y, nil)
 		}
 	}`)
-	expectErrors(t, c, 2)
+	expectErrors(t, c, 1)
 }
 
 func TestTryOperatorExprStmt(t *testing.T) {

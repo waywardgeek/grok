@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/waywardgeek/forge/pkg/ast"
+	"github.com/waywardgeek/forge/pkg/checker"
 )
 
 // ============================================================
@@ -119,8 +120,9 @@ func TestLowerStringLiteral(t *testing.T) {
 	l := NewLowerer()
 	l.stmts = nil
 	result := l.lowerExpr(&ast.Expr{
-		Kind: ast.ExprStringLit,
-		Data: &ast.StringLitExpr{Value: "hello"},
+		Kind:         ast.ExprStringLit,
+		Data:         &ast.StringLitExpr{Value: "hello"},
+		ResolvedType: checker.TypeString,
 	})
 	if result.Kind != LValLitString {
 		t.Errorf("expected LitString, got %d", result.Kind)
@@ -134,8 +136,9 @@ func TestLowerIntLiteral(t *testing.T) {
 	l := NewLowerer()
 	l.stmts = nil
 	result := l.lowerExpr(&ast.Expr{
-		Kind: ast.ExprIntLit,
-		Data: &ast.IntLitExpr{Value: "42"},
+		Kind:         ast.ExprIntLit,
+		Data:         &ast.IntLitExpr{Value: "42"},
+		ResolvedType: checker.TypeI32,
 	})
 	if result.Kind != LValLitInt {
 		t.Errorf("expected LitInt, got %d", result.Kind)
@@ -149,8 +152,9 @@ func TestLowerBoolLiteral(t *testing.T) {
 	l := NewLowerer()
 	l.stmts = nil
 	result := l.lowerExpr(&ast.Expr{
-		Kind: ast.ExprBoolLit,
-		Data: &ast.BoolLitExpr{Value: true},
+		Kind:         ast.ExprBoolLit,
+		Data:         &ast.BoolLitExpr{Value: true},
+		ResolvedType: checker.TypeBool,
 	})
 	if result.Kind != LValLitBool {
 		t.Errorf("expected LitBool, got %d", result.Kind)
@@ -167,8 +171,9 @@ func TestLowerNegation(t *testing.T) {
 		Kind: ast.ExprUnary,
 		Data: &ast.UnaryExpr{
 			Op:      ast.OpNeg,
-			Operand: ast.Expr{Kind: ast.ExprIntLit, Data: &ast.IntLitExpr{Value: "5"}},
+			Operand: ast.Expr{Kind: ast.ExprIntLit, Data: &ast.IntLitExpr{Value: "5"}, ResolvedType: checker.TypeI32},
 		},
+		ResolvedType: checker.TypeI32,
 	})
 	if len(l.stmts) != 1 {
 		t.Fatalf("expected 1 temp, got %d", len(l.stmts))
@@ -196,7 +201,7 @@ func TestLowerVarDecl(t *testing.T) {
 							Name:  "x",
 							IsMut: true,
 							Type:  &ast.TypeExpr{Kind: ast.TypeNamed, Data: &ast.NamedType{Name: "i32"}},
-							Value: &ast.Expr{Kind: ast.ExprIntLit, Data: &ast.IntLitExpr{Value: "99"}},
+							Value: &ast.Expr{Kind: ast.ExprIntLit, Data: &ast.IntLitExpr{Value: "99"}, ResolvedType: checker.TypeI32},
 						},
 					}},
 				},
@@ -245,6 +250,7 @@ func TestLowerForLoop(t *testing.T) {
 							Collection: ast.Expr{
 								Kind: ast.ExprIdent,
 								Data: &ast.IdentExpr{Name: "items"},
+								ResolvedType: &checker.Type{Kind: checker.TyList, Elem: checker.TypeI32},
 							},
 							Body: ast.Block{
 								Stmts: []ast.Stmt{{Kind: ast.StmtBreak}},

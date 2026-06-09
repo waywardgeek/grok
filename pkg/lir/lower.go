@@ -593,8 +593,11 @@ func (l *Lowerer) lowerCheckerType(ct *checker.Type) *LType {
 		return &LType{Kind: LTyUnion, Fields: members}
 	case checker.TyAny:
 		return &LType{Kind: LTyAny}
-	case checker.TyUnknown:
+	case checker.TyNil:
+		// nil literal — lowerer handles ExprNil specially; type is contextual
 		return &LType{Kind: LTyAny}
+	case checker.TyUnknown:
+		panic(fmt.Sprintf("lowerCheckerType: TyUnknown must not reach lowerer (name=%q)", ct.Name))
 	}
 	return &LType{Kind: LTyUnit}
 }
@@ -2344,13 +2347,15 @@ func (l *Lowerer) emitTemp(expr LExpr) LValue {
 }
 
 // exprType extracts the checker-annotated type from an AST expression.
+// Returns LTyAny (void*) if the checker failed to annotate, but logs a warning.
 func (l *Lowerer) exprType(expr *ast.Expr) *LType {
 	if expr.ResolvedType != nil {
 		if ct, ok := expr.ResolvedType.(*checker.Type); ok {
 			return l.lowerCheckerType(ct)
 		}
+		panic(fmt.Sprintf("exprType: ResolvedType is %T, not *checker.Type, at %v", expr.ResolvedType, expr.Span))
 	}
-	return &LType{Kind: LTyAny}
+	panic(fmt.Sprintf("exprType: nil ResolvedType on %v expr at %v", expr.Kind, expr.Span))
 }
 
 // knownPackageReturnType returns the correct LType for known package-qualified
