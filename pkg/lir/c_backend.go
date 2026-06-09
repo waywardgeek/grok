@@ -1033,15 +1033,51 @@ func (g *cGen) resolveGenBaseName(v *LValue) string {
 	return "unknown_gen"
 }
 
-// findGenFuncNameInStmts searches statements for a TempDef with the given ID
-// that is a function call, returning the function name.
+// findGenFuncNameInStmts searches statements (recursively into nested blocks)
+// for a TempDef with the given ID that is a function call, returning the function name.
 func (g *cGen) findGenFuncNameInStmts(stmts []LStmt, tempID int) string {
 	for i := range stmts {
 		s := &stmts[i]
-		if s.Kind == LStmtTempDef {
+		switch s.Kind {
+		case LStmtTempDef:
 			d := s.Data.(*LTempDef)
 			if d.ID == tempID {
 				return g.extractFuncNameFromExpr(&d.Expr)
+			}
+		case LStmtIf:
+			d := s.Data.(*LIf)
+			if r := g.findGenFuncNameInStmts(d.Then, tempID); r != "unknown_gen" {
+				return r
+			}
+			if r := g.findGenFuncNameInStmts(d.Else, tempID); r != "unknown_gen" {
+				return r
+			}
+		case LStmtWhile:
+			d := s.Data.(*LWhile)
+			if r := g.findGenFuncNameInStmts(d.CondBlock, tempID); r != "unknown_gen" {
+				return r
+			}
+			if r := g.findGenFuncNameInStmts(d.Body, tempID); r != "unknown_gen" {
+				return r
+			}
+		case LStmtFor:
+			d := s.Data.(*LFor)
+			if r := g.findGenFuncNameInStmts(d.Body, tempID); r != "unknown_gen" {
+				return r
+			}
+		case LStmtSwitch:
+			d := s.Data.(*LSwitch)
+			for j := range d.Cases {
+				if r := g.findGenFuncNameInStmts(d.Cases[j].Body, tempID); r != "unknown_gen" {
+					return r
+				}
+			}
+		case LStmtTypeSwitch:
+			d := s.Data.(*LTypeSwitch)
+			for j := range d.Cases {
+				if r := g.findGenFuncNameInStmts(d.Cases[j].Body, tempID); r != "unknown_gen" {
+					return r
+				}
 			}
 		}
 	}
