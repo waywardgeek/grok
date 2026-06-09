@@ -1465,6 +1465,12 @@ func (l *Lowerer) lowerIfStmt(stmt *ast.Stmt) {
 				Pattern: ast.Pattern{Kind: ast.PatWildcard},
 				Body:    *is.Else,
 			})
+		} else {
+			// No else: add empty wildcard arm so the match falls through
+			arms = append(arms, ast.MatchArm{
+				Pattern: ast.Pattern{Kind: ast.PatWildcard},
+				Body:    ast.Block{},
+			})
 		}
 		ms := &ast.MatchStmt{
 			Value: *is.LetValue,
