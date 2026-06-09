@@ -694,6 +694,20 @@ func DesugarDestructors(file *File) {
 			typeParamToTypeExpr[iface.TypeParams[0].Name] = buildRichTypeExpr(rel.Parent)
 			typeParamToTypeExpr[iface.TypeParams[1].Name] = buildRichTypeExpr(rel.Child)
 
+			// Build method rename map for label-prefixed fields.
+			// Interface fields like "children" become "fb_children" when the label is "fb".
+			methodRenames := make(map[string]string)
+			typeParamToLabel := make(map[string]string)
+			typeParamToLabel[iface.TypeParams[0].Name] = rel.Parent.Label
+			typeParamToLabel[iface.TypeParams[1].Name] = rel.Child.Label
+			for _, fd := range iface.Fields {
+				label := typeParamToLabel[fd.TypeParam]
+				if label != "" {
+					methodRenames[fd.Name] = label + "_" + fd.Name
+					methodRenames["set_"+fd.Name] = "set_" + label + "_" + fd.Name
+				}
+			}
+
 			for _, db := range iface.Destructors {
 				className, ok := typeParamToClass[db.TypeParam]
 				if !ok {
@@ -705,6 +719,10 @@ func DesugarDestructors(file *File) {
 				// Deep copy and substitute type params in the body
 				bodyCopy := deepCopyBlock(db.Body)
 				substituteTypeParamsRichInBlock(&bodyCopy, typeParamToTypeExpr)
+				// Rename generic interface method calls to label-prefixed versions
+				if len(methodRenames) > 0 {
+					renameMethodCallsInBlock(&bodyCopy, methodRenames)
+				}
 				destructorBodies[className] = append(destructorBodies[className], bodyCopy)
 			}
 		}
@@ -735,6 +753,94 @@ func DesugarDestructors(file *File) {
 			ci := classIdx[className]
 			block.Classes[ci].Methods = append(block.Classes[ci].Methods, destroyMethod)
 		}
+	}
+}
+
+// renameMethodCallsInBlock renames method calls in a block using the provided map.
+// Used by DesugarDestructors to rewrite generic interface method names (e.g. "children")
+// to label-prefixed concrete names (e.g. "fb_children") so the checker can resolve them
+// on the correct concrete class.
+func renameMethodCallsInBlock(block *Block, renames map[string]string) {
+	for i := range block.Stmts {
+		renameMethodCallsInStmt(&block.Stmts[i], renames)
+	}
+}
+
+func renameMethodCallsInStmt(stmt *Stmt, renames map[string]string) {
+	switch d := stmt.Data.(type) {
+	case *ExprStmt:
+		renameMethodCallsInExpr(&d.Expr, renames)
+	case *AssignStmt:
+		renameMethodCallsInExpr(&d.Target, renames)
+		renameMethodCallsInExpr(&d.Value, renames)
+	case *VarDeclStmt:
+		if d.Value != nil {
+			renameMethodCallsInExpr(d.Value, renames)
+		}
+	case *IfStmt:
+		renameMethodCallsInExpr(&d.Condition, renames)
+		renameMethodCallsInBlock(&d.Then, renames)
+		for ei := range d.ElseIfs {
+			renameMethodCallsInExpr(&d.ElseIfs[ei].Condition, renames)
+			renameMethodCallsInBlock(&d.ElseIfs[ei].Body, renames)
+		}
+		if d.Else != nil {
+			renameMethodCallsInBlock(d.Else, renames)
+		}
+	case *WhileStmt:
+		renameMethodCallsInExpr(&d.Condition, renames)
+		renameMethodCallsInBlock(&d.Body, renames)
+	case *ForStmt:
+		renameMethodCallsInExpr(&d.Collection, renames)
+		renameMethodCallsInBlock(&d.Body, renames)
+	case *MatchStmt:
+		renameMethodCallsInExpr(&d.Value, renames)
+		for ai := range d.Arms {
+			renameMethodCallsInBlock(&d.Arms[ai].Body, renames)
+		}
+	case *Block:
+		renameMethodCallsInBlock(d, renames)
+	case *ReturnStmt:
+		if d.Value != nil {
+			renameMethodCallsInExpr(d.Value, renames)
+		}
+	}
+}
+
+func renameMethodCallsInExpr(expr *Expr, renames map[string]string) {
+	if expr == nil {
+		return
+	}
+	switch d := expr.Data.(type) {
+	case *MethodCallExpr:
+		if newName, ok := renames[d.Method]; ok {
+			// Clone the MethodCallExpr to avoid mutating the original (shared via shallow deepCopyBlock)
+			clone := *d
+			clone.Method = newName
+			expr.Data = &clone
+			d = &clone
+		}
+		renameMethodCallsInExpr(&d.Receiver, renames)
+		for i := range d.Args {
+			renameMethodCallsInExpr(&d.Args[i], renames)
+		}
+	case *CallExpr:
+		renameMethodCallsInExpr(&d.Func, renames)
+		for i := range d.Args {
+			renameMethodCallsInExpr(&d.Args[i], renames)
+		}
+	case *BinaryExpr:
+		renameMethodCallsInExpr(&d.Left, renames)
+		renameMethodCallsInExpr(&d.Right, renames)
+	case *UnaryExpr:
+		renameMethodCallsInExpr(&d.Operand, renames)
+	case *FieldAccessExpr:
+		renameMethodCallsInExpr(&d.Receiver, renames)
+	case *IndexExpr:
+		renameMethodCallsInExpr(&d.Receiver, renames)
+		renameMethodCallsInExpr(&d.Index, renames)
+	case *UnwrapExpr:
+		renameMethodCallsInExpr(&d.Operand, renames)
 	}
 }
 
