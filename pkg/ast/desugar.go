@@ -437,6 +437,13 @@ func deepCopyExpr(e Expr) Expr {
 			args[i] = deepCopyExpr(d.Args[i])
 		}
 		c.Args = args
+		if len(d.TypeArgs) > 0 {
+			typeArgs := make([]TypeExpr, len(d.TypeArgs))
+			for i := range d.TypeArgs {
+				typeArgs[i] = deepCopyTypeExpr(d.TypeArgs[i])
+			}
+			c.TypeArgs = typeArgs
+		}
 		out.Data = &c
 	case MethodCallExpr:
 		c := d
@@ -446,6 +453,13 @@ func deepCopyExpr(e Expr) Expr {
 			args[i] = deepCopyExpr(d.Args[i])
 		}
 		c.Args = args
+		if len(d.TypeArgs) > 0 {
+			typeArgs := make([]TypeExpr, len(d.TypeArgs))
+			for i := range d.TypeArgs {
+				typeArgs[i] = deepCopyTypeExpr(d.TypeArgs[i])
+			}
+			c.TypeArgs = typeArgs
+		}
 		out.Data = &c
 	case *CallExpr:
 		c := *d
@@ -455,6 +469,13 @@ func deepCopyExpr(e Expr) Expr {
 			args[i] = deepCopyExpr(d.Args[i])
 		}
 		c.Args = args
+		if len(d.TypeArgs) > 0 {
+			typeArgs := make([]TypeExpr, len(d.TypeArgs))
+			for i := range d.TypeArgs {
+				typeArgs[i] = deepCopyTypeExpr(d.TypeArgs[i])
+			}
+			c.TypeArgs = typeArgs
+		}
 		out.Data = &c
 	case CallExpr:
 		c := d
@@ -464,6 +485,13 @@ func deepCopyExpr(e Expr) Expr {
 			args[i] = deepCopyExpr(d.Args[i])
 		}
 		c.Args = args
+		if len(d.TypeArgs) > 0 {
+			typeArgs := make([]TypeExpr, len(d.TypeArgs))
+			for i := range d.TypeArgs {
+				typeArgs[i] = deepCopyTypeExpr(d.TypeArgs[i])
+			}
+			c.TypeArgs = typeArgs
+		}
 		out.Data = &c
 	case UnaryExpr:
 		c := d
