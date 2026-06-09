@@ -1146,6 +1146,8 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 		return c.checkUnwrap(expr)
 	case ast.ExprTry:
 		return c.checkTry(expr)
+	case ast.ExprIs:
+		return c.checkIs(expr)
 	case ast.ExprLambda:
 		return c.checkLambda(expr)
 	default:
@@ -1988,6 +1990,33 @@ func (c *Checker) checkTry(expr *ast.Expr) *Type {
 	}
 	// Return tuple of non-error field types
 	return &Type{Kind: TyTuple, Fields: nonErrorFields}
+}
+
+func (c *Checker) checkIs(expr *ast.Expr) *Type {
+	is := expr.Data.(*ast.IsExpr)
+	operandType := c.checkExpr(&is.Operand)
+
+	if operandType.Kind == TyError {
+		return TypeError
+	}
+
+	if operandType.Kind != TyEnum {
+		c.error(expr.Span, "'is' operator requires enum type, got %s", operandType)
+		return TypeError
+	}
+
+	// Look up the enum in the registry and verify the variant exists
+	info := c.registry.Lookup(operandType.Name)
+	if info == nil {
+		c.error(expr.Span, "unknown enum type %s", operandType.Name)
+		return TypeError
+	}
+	if _, ok := info.Variants[is.Variant]; !ok {
+		c.error(expr.Span, "enum %s has no variant %s", operandType.Name, is.Variant)
+		return TypeError
+	}
+
+	return TypeBool
 }
 
 func (c *Checker) checkLambda(expr *ast.Expr) *Type {
@@ -2887,6 +2916,9 @@ func (c *Checker) walkExpr(expr *ast.Expr, ctx string) {
 		}
 	case ast.ExprTry:
 		d := expr.Data.(*ast.TryExpr)
+		c.walkExpr(&d.Operand, ctx)
+	case ast.ExprIs:
+		d := expr.Data.(*ast.IsExpr)
 		c.walkExpr(&d.Operand, ctx)
 	case ast.ExprMatch:
 		d := expr.Data.(*ast.MatchStmt) // match expressions reuse MatchStmt
@@ -3928,6 +3960,9 @@ func (c *Checker) validateAccessExpr(expr *ast.Expr, ctx string) {
 		}
 	case ast.ExprTry:
 		d := expr.Data.(*ast.TryExpr)
+		c.validateAccessExpr(&d.Operand, ctx)
+	case ast.ExprIs:
+		d := expr.Data.(*ast.IsExpr)
 		c.validateAccessExpr(&d.Operand, ctx)
 	case ast.ExprMatch:
 		d := expr.Data.(*ast.MatchStmt)

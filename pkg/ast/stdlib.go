@@ -545,6 +545,10 @@ func collectFuncCallNamesExpr(expr *Expr, names map[string]bool) {
 		if d, ok := expr.Data.(*TryExpr); ok {
 			collectFuncCallNamesExpr(&d.Operand, names)
 		}
+	case ExprIs:
+		if d, ok := expr.Data.(*IsExpr); ok {
+			collectFuncCallNamesExpr(&d.Operand, names)
+		}
 	case ExprStringInterp:
 		if d, ok := expr.Data.(*StringInterpExpr); ok {
 			for i := range d.Parts {

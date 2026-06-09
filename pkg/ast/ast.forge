@@ -384,6 +384,7 @@ forge AST {
     Unwrap
     Try
     Slice
+    Is
   }
 
   struct Expr {
@@ -539,6 +540,12 @@ forge AST {
   struct TryExpr {
     why: "expr? — error propagation. Extracts T from (T, error) tuple, returns early on error. Returns T (not T?)."
     Operand: Expr
+  }
+
+  struct IsExpr {
+    why: "expr is Variant — checks if an enum value is a specific variant. Returns bool."
+    Operand: Expr
+    Variant: string
   }
 
   // ---- Statements (.fg) ----

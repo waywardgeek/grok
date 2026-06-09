@@ -29,6 +29,7 @@ const (
 	ExprUnwrap                    // x! — unwrap optional, panic if nil
 	ExprSlice                     // xs[start:end] — slice expression
 	ExprTry                       // expr? — error propagation, early return on error
+	ExprIs                        // expr is Variant — variant type check, returns bool
 )
 
 // Expr is any expression node.
@@ -187,6 +188,13 @@ type UnwrapExpr struct {
 // (T, error). If the error is non-nil, early-returns it. Otherwise evaluates to T.
 type TryExpr struct {
 	Operand Expr
+}
+
+// IsExpr represents expr is Variant — checks if an enum value is a specific variant.
+// Result type is always bool.
+type IsExpr struct {
+	Operand Expr
+	Variant string // variant name to check against
 }
 
 // --- Statements ---

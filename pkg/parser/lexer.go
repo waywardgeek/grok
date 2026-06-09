@@ -29,6 +29,7 @@ const (
 	TImplements
 	TImpl
 	TAs
+	TIs
 	TType
 	TWhere
 	TOwns
@@ -146,6 +147,7 @@ var keywords = map[string]TokenKind{
 	// "implements" is contextual — moved to annotationKeywords
 	"impl":       TImpl,
 	"as":         TAs,
+	"is":         TIs,
 	"type":       TType,
 	"where":      TWhere,
 	"owns":       TOwns,
@@ -216,7 +218,7 @@ var tokenNames = map[TokenKind]string{
 	TForge: "forge", TFunc: "func", TClass: "class", TStruct: "struct",
 	TEnum: "enum", TInterface: "interface", TRelation: "relation", TField: "field",
 	TDestructor: "destructor", TEmbed: "embed",
-	TImport: "import", TImplements: "implements", TImpl: "impl", TAs: "as", TWhere: "where",
+	TImport: "import", TImplements: "implements", TImpl: "impl", TAs: "as", TIs: "is", TWhere: "where",
 	TOwns: "owns", TRefs: "refs", TMut: "mut", TSelf: "self",
 	TFrom: "from", TTrue: "true", TFalse: "false", TNil: "nil",
 	TLet: "let", TIf: "if", TElse: "else", TFor: "for", TIn: "in",

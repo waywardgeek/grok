@@ -353,6 +353,18 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 				Data: &ast.TryExpr{Operand: *expr},
 				Span: ast.Span{Start: expr.Span.Start, End: q.Span.End},
 			}
+		case TIs:
+			// Postfix is — variant type check: expr is VariantName
+			p.next() // consume 'is'
+			variantTok, err := p.expectIdentLike()
+			if err != nil {
+				return nil, err
+			}
+			expr = &ast.Expr{
+				Kind: ast.ExprIs,
+				Data: &ast.IsExpr{Operand: *expr, Variant: variantTok.Text},
+				Span: ast.Span{Start: expr.Span.Start, End: variantTok.Span.End},
+			}
 		default:
 			return expr, nil
 		}

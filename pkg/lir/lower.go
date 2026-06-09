@@ -2464,6 +2464,8 @@ func (l *Lowerer) lowerExpr(expr *ast.Expr) LValue {
 		return l.lowerUnwrap(expr)
 	case ast.ExprTry:
 		return l.lowerTry(expr)
+	case ast.ExprIs:
+		return l.lowerIs(expr)
 	case ast.ExprLambda:
 		return l.lowerLambda(expr)
 	case ast.ExprMatch:
@@ -3370,6 +3372,35 @@ func (l *Lowerer) lowerTry(expr *ast.Expr) LValue {
 
 // Ensure strings import is used (for strings.Contains etc. in method lowering)
 var _ = strings.Contains
+
+func (l *Lowerer) lowerIs(expr *ast.Expr) LValue {
+	is := dataAs[ast.IsExpr](expr.Data)
+	operand := l.lowerExpr(&is.Operand)
+
+	// Get the enum name from the operand type
+	enumName := ""
+	if operand.Type != nil && operand.Type.Kind == LTyTaggedUnion {
+		enumName = operand.Type.Name
+	}
+
+	// Get variant tag
+	tag := l.findVariantTag(enumName, is.Variant)
+
+	// Emit: operand.tag == tag
+	tagVal := l.emitTemp(LExpr{
+		Kind: LExprVariantTag,
+		Type: &LType{Kind: LTyI32},
+		Data: &LVariantTagData{Value: operand},
+	})
+
+	tagLit := LValue{Kind: LValLitInt, IntVal: int64(tag), Type: &LType{Kind: LTyI32}}
+
+	return l.emitTemp(LExpr{
+		Kind: LExprBinOp,
+		Type: &LType{Kind: LTyBool},
+		Data: &LBinOpData{Op: LBinEq, Left: tagVal, Right: tagLit},
+	})
+}
 
 // lExprKindName returns a human-readable name for an LExpr kind.
 func lExprKindName(kind LExprKind) string {
