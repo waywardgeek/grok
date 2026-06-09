@@ -805,8 +805,8 @@ func TestCastNumeric(t *testing.T) {
 	c := parseAndCheck(t, `forge test {
   func f() {
     let x: i32 = 42
-    let y: i64 = <i64>x
-    let z: i32 = <i32>y
+    let y: i64 = x as i64
+    let z: i32 = y as i32
   }
 }`)
 	expectNoErrors(t, c)
@@ -816,7 +816,7 @@ func TestCastInvalidNonNumeric(t *testing.T) {
 	c := parseAndCheck(t, `forge test {
   func f() {
     let s: string = "hello"
-    let x = <i32>s
+    let x = s as i32
   }
 }`)
 	expectErrors(t, c, 1)
@@ -829,7 +829,7 @@ func TestCastPlatformInt(t *testing.T) {
 	c := parseAndCheck(t, `forge test {
   func f() {
     let x: i32 = 42
-    let y = <int>x
+    let y = x as int
   }
 }`)
 	expectNoErrors(t, c)

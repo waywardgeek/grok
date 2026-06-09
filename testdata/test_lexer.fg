@@ -50,7 +50,7 @@ forge lexer {
   }
 
   func test_keywords_other() {
-    let lex = make_lex("import where owns refs mut self pub true false nil")
+    let lex = make_lex("import where owns refs mut self pub true false nil as is")
     assert_eq(next_skip_nl(lex).kind, KImport, "import")
     assert_eq(next_skip_nl(lex).kind, KWhere, "where")
     assert_eq(next_skip_nl(lex).kind, KOwns, "owns")
@@ -61,14 +61,15 @@ forge lexer {
     assert_eq(next_skip_nl(lex).kind, KTrue, "true")
     assert_eq(next_skip_nl(lex).kind, KFalse, "false")
     assert_eq(next_skip_nl(lex).kind, KNil, "nil")
+    assert_eq(next_skip_nl(lex).kind, KAs, "as")
+    assert_eq(next_skip_nl(lex).kind, KIs, "is")
   }
 
   func test_keywords_concurrency() {
-    let lex = make_lex("spawn select case lock yield")
+    let lex = make_lex("spawn select case yield")
     assert_eq(next_skip_nl(lex).kind, KSpawn, "spawn")
     assert_eq(next_skip_nl(lex).kind, KSelect, "select")
     assert_eq(next_skip_nl(lex).kind, KCase, "case")
-    assert_eq(next_skip_nl(lex).kind, KLock, "lock")
     assert_eq(next_skip_nl(lex).kind, KYield, "yield")
   }
 
@@ -348,5 +349,48 @@ forge lexer {
     lex.restore_state(state)
     let tok = next_skip_nl(lex)
     assert_eq(tok.text, "b", "restored to b")
+  }
+
+  // ---- Bracket depth — newlines suppressed inside () and [] ----
+
+  func test_bracket_depth_parens() {
+    let lex = make_lex("foo(\na,\nb\n)")
+    assert_eq(next_skip_nl(lex).text, "foo", "ident")
+    assert_eq(next_skip_nl(lex).kind, PLParen, "(")
+    // Inside parens — newlines should be suppressed
+    assert_eq(next_skip_nl(lex).text, "a", "a (no newline before)")
+    assert_eq(next_skip_nl(lex).kind, PComma, ",")
+    assert_eq(next_skip_nl(lex).text, "b", "b (no newline before)")
+    assert_eq(next_skip_nl(lex).kind, PRParen, ")")
+  }
+
+  func test_bracket_depth_brackets() {
+    let lex = make_lex("[\n1,\n2\n]")
+    assert_eq(next_skip_nl(lex).kind, PLBracket, "[")
+    assert_eq(next_skip_nl(lex).text, "1", "1")
+    assert_eq(next_skip_nl(lex).kind, PComma, ",")
+    assert_eq(next_skip_nl(lex).text, "2", "2")
+    assert_eq(next_skip_nl(lex).kind, PRBracket, "]")
+  }
+
+  func test_bracket_depth_braces_do_not_suppress() {
+    let lex = make_lex("{\na\n}")
+    assert_eq(lex.next().kind, PLBrace, "{")
+    assert_eq(lex.next().kind, SNewline, "newline after {")
+    assert_eq(lex.next().text, "a", "a")
+    assert_eq(lex.next().kind, SNewline, "newline after a")
+    assert_eq(lex.next().kind, PRBrace, "}")
+  }
+
+  // ---- Contextual keywords lex as ident ----
+
+  func test_contextual_keywords_as_ident() {
+    let lex = make_lex("field lock implements source why doc")
+    assert_eq(next_skip_nl(lex).kind, LIdent, "field is ident")
+    assert_eq(next_skip_nl(lex).kind, LIdent, "lock is ident")
+    assert_eq(next_skip_nl(lex).kind, LIdent, "implements is ident")
+    assert_eq(next_skip_nl(lex).kind, LIdent, "source is ident")
+    assert_eq(next_skip_nl(lex).kind, LIdent, "why is ident")
+    assert_eq(next_skip_nl(lex).kind, LIdent, "doc is ident")
   }
 }

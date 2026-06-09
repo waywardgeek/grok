@@ -15,7 +15,7 @@ forge lexer {
   enum TokenKind {
     // Keywords
     KForge KFunc KClass KStruct KEnum KInterface KRelation KField
-    KDestructor KEmbed KImport KImplements KImpl KAs KType KWhere
+    KDestructor KEmbed KImport KImplements KImpl KAs KIs KType KWhere
     KOwns KRefs KMut KSelf KFrom KTrue KFalse KNil KPub
     // Statement keywords
     KLet KIf KElse KFor KIn KWhile KMatch KReturn KBreak KContinue
@@ -59,11 +59,12 @@ forge lexer {
     dict_set<TokenKind>(d, "relation", KRelation)
     dict_set<TokenKind>(d, "destructor", KDestructor)
     dict_set<TokenKind>(d, "embed", KEmbed)
-    dict_set<TokenKind>(d, "field", KField)
+    // "field" is contextual — in annot_keywords only
     dict_set<TokenKind>(d, "import", KImport)
-    dict_set<TokenKind>(d, "implements", KImplements)
+    // "implements" is contextual — in annot_keywords only
     dict_set<TokenKind>(d, "impl", KImpl)
     dict_set<TokenKind>(d, "as", KAs)
+    dict_set<TokenKind>(d, "is", KIs)
     dict_set<TokenKind>(d, "type", KType)
     dict_set<TokenKind>(d, "where", KWhere)
     dict_set<TokenKind>(d, "owns", KOwns)
@@ -89,7 +90,7 @@ forge lexer {
     dict_set<TokenKind>(d, "spawn", KSpawn)
     dict_set<TokenKind>(d, "select", KSelect)
     dict_set<TokenKind>(d, "case", KCase)
-    dict_set<TokenKind>(d, "lock", KLock)
+    // "lock" is contextual — in annot_keywords only
     dict_set<TokenKind>(d, "yield", KYield)
     dict_set<TokenKind>(d, "pub", KPub)
     return d
@@ -141,6 +142,7 @@ forge lexer {
     line: i32
     column: i32
     peeked_token: Token?
+    bracket_depth: i32
   }
 
   class Lexer {
@@ -152,6 +154,7 @@ forge lexer {
     peeked_token: Token?
     keywords: Dict<TokenKind>?
     annot_keywords: Dict<TokenKind>?
+    bracket_depth: i32 = 0
   }
   relation ArrayList Lexer:lc owns [Comment:lc]
 
@@ -160,7 +163,8 @@ forge lexer {
       pos: self.pos,
       line: self.line,
       column: self.column,
-      peeked_token: self.peeked_token
+      peeked_token: self.peeked_token,
+      bracket_depth: self.bracket_depth
     }
   }
 
@@ -169,6 +173,7 @@ forge lexer {
     self.line = state.line
     self.column = state.column
     self.peeked_token = state.peeked_token
+    self.bracket_depth = state.bracket_depth
   }
 
   func new_lexer(src_text: string, filename: Sym) -> Lexer {
@@ -353,8 +358,8 @@ forge lexer {
       if ch == '"' && self.peek_char() == '"' && self.peek_at(1) == '"' {
         self.advance()
         self.advance()
-        // TODO: trim leading/trailing whitespace lines
-        return make_token(LTripleString, buf.to_string(), start, self.current_pos())
+        // Trim leading/trailing whitespace lines (matches Go's strings.TrimSpace)
+        return make_token(LTripleString, str_trim(buf.to_string()), start, self.current_pos())
       }
       buf.write_byte(ch)
     }
@@ -513,6 +518,9 @@ forge lexer {
           break
         }
       }
+      if self.bracket_depth > 0 {
+        return self.scan()  // skip newline inside brackets
+      }
       return make_token(SNewline, "\n", start, self.current_pos())
     }
 
@@ -539,12 +547,12 @@ forge lexer {
     // Punctuation and operators
     self.advance()
 
-    if ch == '(' { return make_token(PLParen, "(", start, self.current_pos()) }
-    if ch == ')' { return make_token(PRParen, ")", start, self.current_pos()) }
+    if ch == '(' { self.bracket_depth = self.bracket_depth + 1; return make_token(PLParen, "(", start, self.current_pos()) }
+    if ch == ')' { self.bracket_depth = self.bracket_depth - 1; return make_token(PRParen, ")", start, self.current_pos()) }
     if ch == '{' { return make_token(PLBrace, "{", start, self.current_pos()) }
     if ch == '}' { return make_token(PRBrace, "}", start, self.current_pos()) }
-    if ch == '[' { return make_token(PLBracket, "[", start, self.current_pos()) }
-    if ch == ']' { return make_token(PRBracket, "]", start, self.current_pos()) }
+    if ch == '[' { self.bracket_depth = self.bracket_depth + 1; return make_token(PLBracket, "[", start, self.current_pos()) }
+    if ch == ']' { self.bracket_depth = self.bracket_depth - 1; return make_token(PRBracket, "]", start, self.current_pos()) }
     if ch == ',' { return make_token(PComma, ",", start, self.current_pos()) }
     if ch == ':' { return make_token(PColon, ":", start, self.current_pos()) }
     if ch == '.' { return make_token(PDot, ".", start, self.current_pos()) }

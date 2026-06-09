@@ -206,7 +206,7 @@ forge std {
       let cap = parent.hash_cap()
       let buckets = parent.buckets()
       let kids = parent.children()
-      let mut slot: i32 = <i32>(key % <u64>cap)
+      let mut slot: i32 = (key % (cap as u64)) as i32
       let mut i: i32 = 0
       while i < cap {
         let idx = buckets[slot]
@@ -244,7 +244,7 @@ forge std {
       i = 0
       while i < old_count {
         let key = old_kids[i].hash_key()
-        let mut slot: i32 = <i32>(key % <u64>new_cap)
+        let mut slot: i32 = (key % (new_cap as u64)) as i32
         while parent.buckets()[slot] >= 0 {
           slot = (slot + 1) % new_cap
         }
@@ -301,7 +301,7 @@ forge std {
       let cap = parent.hash_cap()
       let buckets = parent.buckets()
       let kids = parent.children()
-      let mut slot: i32 = <i32>(key % <u64>cap)
+      let mut slot: i32 = (key % (cap as u64)) as i32
       let mut i: i32 = 0
       while i < cap {
         let idx = buckets[slot]
@@ -327,7 +327,7 @@ forge std {
       let cap = parent.hash_cap()
       let buckets = parent.buckets()
       let kids = parent.children()
-      let mut slot: i32 = <i32>(key % <u64>cap)
+      let mut slot: i32 = (key % (cap as u64)) as i32
       let mut i: i32 = 0
       while i < cap {
         let idx = buckets[slot]
@@ -351,7 +351,7 @@ forge std {
               parent.set_children(k)
               // Update bucket for swapped child
               let swapped_key = last_child.hash_key()
-              let mut s: i32 = <i32>(swapped_key % <u64>cap)
+              let mut s: i32 = (swapped_key % (cap as u64)) as i32
               while buckets[s] != last_idx {
                 s = (s + 1) % cap
               }

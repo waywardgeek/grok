@@ -20,7 +20,7 @@ forge sym_test {
 
     // Direct hash_string call
     let h = hash_string("test")
-    if h != <u64>0 {
+    if h != 0 as u64 {
       println("hash is nonzero")
     }
   }

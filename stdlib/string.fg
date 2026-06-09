@@ -164,7 +164,7 @@ forge string_utils {
     while i < len(s) {
       let ch = s[i]
       if ch >= 'a' && ch <= 'z' {
-        buf.write_byte(ch - <u8>(32))
+        buf.write_byte(ch - (32 as u8))
       } else {
         buf.write_byte(ch)
       }
@@ -179,7 +179,7 @@ forge string_utils {
     while i < len(s) {
       let ch = s[i]
       if ch >= 'A' && ch <= 'Z' {
-        buf.write_byte(ch + <u8>(32))
+        buf.write_byte(ch + (32 as u8))
       } else {
         buf.write_byte(ch)
       }

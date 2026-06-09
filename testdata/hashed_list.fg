@@ -27,20 +27,20 @@ forge hashed_list {
     let reg = Registry {}
 
     // Insert entries
-    let e1 = Entry { key: <u64>100, value: 10 }
+    let e1 = Entry { key: 100 as u64, value: 10 }
     hash_insert<Registry, Entry>(reg, e1)
-    let e2 = Entry { key: <u64>200, value: 20 }
+    let e2 = Entry { key: 200 as u64, value: 20 }
     hash_insert<Registry, Entry>(reg, e2)
-    let e3 = Entry { key: <u64>300, value: 30 }
+    let e3 = Entry { key: 300 as u64, value: 30 }
     hash_insert<Registry, Entry>(reg, e3)
 
     // Lookup
-    let found = hash_lookup<Registry, Entry>(reg, <u64>200)
+    let found = hash_lookup<Registry, Entry>(reg, 200 as u64)
     if !isnull(found) {
       println(f"found 200: {found!.value}")
     }
 
-    let missing = hash_lookup<Registry, Entry>(reg, <u64>999)
+    let missing = hash_lookup<Registry, Entry>(reg, 999 as u64)
     if isnull(missing) {
       println("999 not found")
     }
@@ -49,26 +49,26 @@ forge hashed_list {
     println(f"count: {reg.reg_hash_count}")
 
     // Remove
-    let removed = hash_remove<Registry, Entry>(reg, <u64>100)
+    let removed = hash_remove<Registry, Entry>(reg, 100 as u64)
     println(f"removed 100: {removed}")
     println(f"count after remove: {reg.reg_hash_count}")
 
     // Verify 200 still there
-    let e200 = hash_lookup<Registry, Entry>(reg, <u64>200)
+    let e200 = hash_lookup<Registry, Entry>(reg, 200 as u64)
     if !isnull(e200) {
       println(f"200 still there: {e200!.value}")
     }
 
     // Verify 100 gone
-    let e100 = hash_lookup<Registry, Entry>(reg, <u64>100)
+    let e100 = hash_lookup<Registry, Entry>(reg, 100 as u64)
     if isnull(e100) {
       println("100 gone")
     }
 
     // Replace existing key
-    let e4 = Entry { key: <u64>200, value: 99 }
+    let e4 = Entry { key: 200 as u64, value: 99 }
     hash_insert<Registry, Entry>(reg, e4)
-    let e200b = hash_lookup<Registry, Entry>(reg, <u64>200)
+    let e200b = hash_lookup<Registry, Entry>(reg, 200 as u64)
     if !isnull(e200b) {
       println(f"200 replaced: {e200b!.value}")
     }
