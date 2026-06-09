@@ -112,11 +112,26 @@ func MergeStdlib(file *File, stdFile *File) {
 		mergedClasses[cls.Name] = true
 	}
 
+	// Build set of existing relations to avoid duplicates
+	// (when std.fg is both an input file AND stdlib source)
+	existingRels := make(map[string]bool)
+	for _, block := range file.Blocks {
+		for _, rel := range block.Relations {
+			key := rel.Hint + ":" + rel.Parent.TypeName + ":" + rel.Child.TypeName
+			existingRels[key] = true
+		}
+	}
+
 	var stdRelations []RelationDecl
 	for _, block := range stdFile.Blocks {
 		for _, rel := range block.Relations {
 			parentName := rel.Parent.TypeName
 			childName := rel.Child.TypeName
+			// Skip if this relation already exists in the target file
+			key := rel.Hint + ":" + parentName + ":" + childName
+			if existingRels[key] {
+				continue
+			}
 			if mergedClasses[parentName] || mergedClasses[childName] {
 				stdRelations = append(stdRelations, rel)
 				// Also ensure the interface hint is merged

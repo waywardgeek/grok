@@ -58,6 +58,30 @@ forge AST {
     distinguish Dict<ClassDecl> from Dict<InterfaceDecl>.
   """
 
+  doc "Invariants — Destructor Type Substitution": """
+    DesugarDestructors copies interface destructor bodies into concrete classes
+    and substitutes type params (P→Dict, C→DictEntry). For GENERIC classes like
+    Dict<V>, the substitution MUST preserve type arguments.
+
+    CRITICAL: The destructor body may call generic functions with interface type
+    params as type args: hash_remove<P, C>(parent, key). After substitution, this
+    must become hash_remove<Dict<V>, DictEntry<V>>() — NOT hash_remove<Dict, DictEntry>().
+
+    Without <V>, the monomorphizer creates hash_remove_CDict_CDictEntry (bare)
+    instead of hash_remove_CDict_i32_CDictEntry_i32, producing C code that calls
+    undeclared functions and uses wrong struct types.
+
+    Implementation: DesugarDestructors uses substituteTypeParamsRichInBlock with
+    map[string]TypeExpr (not map[string]string). The TypeExpr carries full Args
+    from RelationSide.TypeArgs, so P→Dict<V> preserves the nested <V>.
+
+    The type flow for Dict<V> through the pipeline:
+    1. Desugar: hash_remove<Dict<V>, DictEntry<V>>() — TypeExpr with Args
+    2. Checker: hash_remove<TyClass(Dict), TyClass(DictEntry)> with V as TyVar in scope
+    3. Lowerer: hash_remove with TypeArgs [LTyClassHandle(Dict, [LTyTypeVar(V)]), ...]
+    4. Monomorphizer: V→i32, produces hash_remove_CDict_i32_CDictEntry_i32
+  """
+
   doc "Expression and Statement AST (.fg support)": """
     Added in the .fg implementation phase. Expressions and statements are defined
     in expr.go alongside the declaration AST in ast.go.

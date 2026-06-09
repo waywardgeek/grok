@@ -160,8 +160,16 @@ func Monomorphize(prog *LProgram) {
 		}
 	}
 
+	// Build set of all generic class names for filtering uninstantiated generic methods
+	genericClasses := make(map[string]bool)
+	for _, c := range prog.Classes {
+		if len(c.TypeParams) > 0 {
+			genericClasses[c.Name] = true
+		}
+	}
+
 	// Phase 3: Remove generic declarations, add specialized ones
-	prog.Functions = filterFuncs(prog.Functions, m.funcInstances, m.classInstances, m.methodsByClass)
+	prog.Functions = filterFuncs(prog.Functions, m.funcInstances, m.classInstances, m.methodsByClass, genericClasses)
 	prog.Functions = append(prog.Functions, newFuncs...)
 	prog.Classes = filterClasses(prog.Classes, m.classInstances)
 	prog.Classes = append(prog.Classes, newClasses...)
@@ -1549,19 +1557,24 @@ func typeHasVar(t *LType) bool {
 // Helpers: filtering out generic declarations
 // ---------------------------------------------------------------------------
 
-func filterFuncs(funcs []LFuncDecl, funcInst map[string]map[string][]*LType, classInst map[string]map[string][]*LType, methodsByClass map[string][]*LFuncDecl) []LFuncDecl {
+func filterFuncs(funcs []LFuncDecl, funcInst map[string]map[string][]*LType, classInst map[string]map[string][]*LType, methodsByClass map[string][]*LFuncDecl, genericClasses map[string]bool) []LFuncDecl {
 	var out []LFuncDecl
 	for _, f := range funcs {
 		if len(f.TypeParams) > 0 && f.Receiver == "" {
-			if _, ok := funcInst[f.Name]; ok {
-				continue
-			}
+			// Filter generic functions: either they were instantiated (and specialized
+			// versions were created) or they were never used and should be dropped.
+			continue
 		}
 		if f.Receiver != "" {
 			// Filter methods on generic classes being monomorphized.
 			// Check both ReceiverTypeParams (direct methods) and classInst lookup
 			// (impl wrapper methods that don't set ReceiverTypeParams).
 			if _, ok := classInst[f.Receiver]; ok {
+				continue
+			}
+			// Also filter methods on generic classes that were never instantiated.
+			// These have unresolved type vars and can't be emitted to C.
+			if genericClasses[f.Receiver] {
 				continue
 			}
 		}
