@@ -707,8 +707,31 @@ func CGen.emit_value(self, v: LValue?) -> string {
       return "false"
     }
     ValLitNull => {
-      return "NULL"
+      return self.zero_value(v!.typ)
     }
+  }
+}
+
+func CGen.zero_value(self, t: LType?) -> string {
+  if isnull(t) { return "0" }
+  match t!.kind {
+    TyI8 | TyI16 | TyI32 | TyI64 | TyPlatformInt => { return "0" }
+    TyU8 | TyU16 | TyU32 | TyU64 | TyPlatformUint => { return "0" }
+    TyF32 | TyF64 => { return "0.0" }
+    TyBool => { return "false" }
+    TyString => { return "FORGE_STR_EMPTY" }
+    TyClassHandle => { return "NULL" }
+    TyOptional => {
+      if !isnull(t!.elem) && t!.elem!.kind is TyClassHandle {
+        return "NULL"
+      }
+      return f"forge_none({self.opt_type_name(t!.elem)})"
+    }
+    TySlice => {
+      return f"forge_slice_empty({self.slice_type_name(t!.elem)})"
+    }
+    TyStruct | TyTaggedUnion => { return "{0}" }
+    _ => { return "{0}" }
   }
 }
 

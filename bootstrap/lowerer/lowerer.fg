@@ -1174,6 +1174,45 @@ forge lowerer {
     return result
   }
 
+  func Lowerer.lower_else_ifs_with_result(self, else_ifs: [ElseIf], final_else: Block?, result_name: string, result_type: LType?) {
+    if len(else_ifs) == 0 {
+      if !isnull(final_else) {
+        self.lower_arm_body(final_else, result_name, result_type)
+      }
+      return
+    }
+
+    let ei = else_ifs[0]
+    let rest_eis: [ElseIf] = []
+    let mut i = 1
+    while i < len(else_ifs) {
+      append(rest_eis, else_ifs[i])
+      i = i + 1
+    }
+
+    if isnull(ei.condition) {
+      // else block
+      self.lower_arm_body(ei.body, result_name, result_type)
+      return
+    }
+
+    let cv = self.lower_expr(ei.condition)
+    let saved_then = self.save_stmts()
+    self.lower_arm_body(ei.body, result_name, result_type)
+    let then_body = self.stmts
+    self.restore_stmts(saved_then)
+
+    let saved_else = self.save_stmts()
+    self.lower_else_ifs_with_result(rest_eis, final_else, result_name, result_type)
+    let else_body = self.stmts
+    self.restore_stmts(saved_else)
+
+    self.emit(LStmt {
+      kind: StIf,
+      if_data: LIfData { cond: cv, then_body: then_body, else_body: else_body }
+    })
+  }
+
   // ---------- While ----------
 
   func Lowerer.lower_while(self, condition: Expr?, body: Block?) {
@@ -1453,7 +1492,7 @@ forge lowerer {
       self.lower_enum_match(v, val_type!.name, arms)
     } else {
       // Non-enum match: lower as if-else chain
-      self.lower_match_as_if_else(v, val_type, arms)
+      self.lower_match_as_if_else(v, val_type, arms, "", nil)
     }
   }
 
@@ -1549,7 +1588,7 @@ forge lowerer {
     })
   }
 
-  func Lowerer.lower_match_as_if_else(self, val: LValue?, val_type: LType?, arms: [MatchArm]) {
+  func Lowerer.lower_match_as_if_else(self, val: LValue?, val_type: LType?, arms: [MatchArm], result_name: string, result_type: LType?) {
     // Lower as if-else chain
     if len(arms) == 0 { return }
 
@@ -1566,13 +1605,13 @@ forge lowerer {
     match arm.pattern!.kind {
       Wildcard => {
         // Default case: just emit body
-        self.lower_block(arm.body)
+        self.lower_arm_body(arm.body, result_name, result_type)
       }
       Ident(name) => {
         // Binding: bind and emit body
         self.emit(LStmt { kind: StVarDecl, var_decl: LVarDeclData { name: name.name, typ: val_type, init: val, mutable: false } })
         self.define_var(name.name, val_type)
-        self.lower_block(arm.body)
+        self.lower_arm_body(arm.body, result_name, result_type)
       }
       Literal(expr) => {
         let pat_val = self.lower_expr(expr)
@@ -1582,12 +1621,16 @@ forge lowerer {
           bin_op: LBinOpData { op: BinEq, left: val, right: pat_val }
         }
         let cond = self.emit_temp(cmp)
-        let then_body = self.lower_block_as_stmts(arm.body)
 
-        let saved = self.save_stmts()
-        self.lower_match_as_if_else(val, val_type, rest)
+        let saved_then = self.save_stmts()
+        self.lower_arm_body(arm.body, result_name, result_type)
+        let then_body = self.stmts
+        self.restore_stmts(saved_then)
+
+        let saved_else = self.save_stmts()
+        self.lower_match_as_if_else(val, val_type, rest, result_name, result_type)
         let else_body = self.stmts
-        self.restore_stmts(saved)
+        self.restore_stmts(saved_else)
 
         self.emit(LStmt {
           kind: StIf,
@@ -1621,7 +1664,7 @@ forge lowerer {
           }
           idx = idx + 1
         }
-        self.lower_block(arm.body)
+        self.lower_arm_body(arm.body, result_name, result_type)
         let body = self.stmts
         self.restore_stmts(saved)
 
@@ -1636,7 +1679,7 @@ forge lowerer {
       }
       _ => {
         // Fallback
-        self.lower_block(arm.body)
+        self.lower_arm_body(arm.body, result_name, result_type)
       }
     }
   }
@@ -2418,6 +2461,37 @@ forge lowerer {
     return self.emit_temp(fl)
   }
 
+  // ---------- Match arm body with result assignment ----------
+
+  // Lowers a match arm body. If result_name is non-empty, the last expression
+  // statement is assigned to it (match-as-expression pattern).
+  func Lowerer.lower_arm_body(self, body: Block?, result_name: string, rt: LType?) {
+    if isnull(body) { return }
+    let stmts = body!.bs_children()
+    if result_name == "" || len(stmts) == 0 {
+      self.lower_block(body)
+      return
+    }
+    // Lower all statements except the last
+    for i in range(0, len(stmts) - 1) {
+      self.lower_stmt(stmts[i])
+    }
+    // If last statement is an expression, assign to result
+    let last = stmts[len(stmts) - 1]
+    match last.kind {
+      ExprStmt(expr) => {
+        let val = self.lower_expr(expr)
+        self.emit(LStmt {
+          kind: StAssign,
+          assign: LAssignData { target: result_name, value: val }
+        })
+      }
+      _ => {
+        self.lower_stmt(last)
+      }
+    }
+  }
+
   // ---------- Match expression ----------
 
   func Lowerer.lower_match_expr(
@@ -2452,8 +2526,7 @@ forge lowerer {
           Variant(vname, bindings) => {
             let tag = self.find_variant_tag(val_type!.name, vname.name)
             self.emit_variant_bindings(v, val_type!.name, vname.name, bindings)
-            self.lower_block(arm.body)
-            // Assign result from last expression — simplified: use block as-is
+            self.lower_arm_body(arm.body, result_name, rt)
             let body = self.stmts
             self.restore_stmts(saved)
             append(cases, LSwitchCase { tag: tag, binding: "", body: body })
@@ -2461,21 +2534,21 @@ forge lowerer {
           Ident(name) => {
             let tag = self.find_variant_tag(val_type!.name, name.name)
             if tag >= 0 {
-              self.lower_block(arm.body)
+              self.lower_arm_body(arm.body, result_name, rt)
               let body = self.stmts
               self.restore_stmts(saved)
               append(cases, LSwitchCase { tag: tag, binding: "", body: body })
             } else {
               self.emit(LStmt { kind: StVarDecl, var_decl: LVarDeclData { name: name.name, typ: v!.typ, init: v, mutable: false } })
               self.define_var(name.name, v!.typ)
-              self.lower_block(arm.body)
+              self.lower_arm_body(arm.body, result_name, rt)
               let body = self.stmts
               self.restore_stmts(saved)
               append(cases, LSwitchCase { tag: -1, binding: name.name, body: body })
             }
           }
           Wildcard => {
-            self.lower_block(arm.body)
+            self.lower_arm_body(arm.body, result_name, rt)
             let body = self.stmts
             self.restore_stmts(saved)
             append(cases, LSwitchCase { tag: -1, binding: "_", body: body })
@@ -2487,12 +2560,13 @@ forge lowerer {
       }
 
       self.emit(LStmt {
+
         kind: StSwitch,
         switch_data: LSwitchData { tag: tag_val, cases: cases, enum_name: val_type!.name }
       })
     } else {
-      // Non-enum: if-else
-      self.lower_match_as_if_else(v, val_type, arms)
+      // Non-enum: if-else chain with result assignment
+      self.lower_match_as_if_else(v, val_type, arms, result_name, rt)
     }
 
     return make_var_val(result_name, rt)
@@ -2641,12 +2715,18 @@ forge lowerer {
 
     // Lower as regular if but capture result from last stmt in each branch
     let cv = self.lower_expr(cond)
-    let then_body = self.lower_block_as_stmts(then_block)
-    let else_body = if len(else_ifs) > 0 || !isnull(else_block) {
-      self.lower_else_ifs(else_ifs, else_block)
-    } else {
-      []
+
+    let saved_then = self.save_stmts()
+    self.lower_arm_body(then_block, result_name, rt)
+    let then_body = self.stmts
+    self.restore_stmts(saved_then)
+
+    let saved_else = self.save_stmts()
+    if len(else_ifs) > 0 || !isnull(else_block) {
+      self.lower_else_ifs_with_result(else_ifs, else_block, result_name, rt)
     }
+    let else_body = self.stmts
+    self.restore_stmts(saved_else)
 
     self.emit(LStmt {
       kind: StIf,
