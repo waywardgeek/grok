@@ -320,6 +320,30 @@ func T.method(self) -> i32 { ... }
 let f = (x: i32) -> i32 { return x * 2 }
 ```
 
+### Mutable Parameters (`mut`)
+
+Structs are value types — passing them to a function copies them.
+Use `mut` on both the parameter declaration and call site to pass by mutable reference:
+
+```forge
+struct Point { x: i32, y: i32 }
+
+func translate(mut p: Point, dx: i32, dy: i32) {
+    p.x = p.x + dx   // modifies caller's copy
+    p.y = p.y + dy
+}
+
+let mut pt = Point { x: 10, y: 20 }
+translate(mut pt, 5, 3)
+assert_eq(pt.x, 15)   // mutation visible to caller
+```
+
+Rules:
+- `mut` required on both parameter and call site (prevents accidental mutation)
+- Only variables can be passed as `mut` (not literals or expressions)
+- For classes (already heap-allocated), `mut` is a no-op
+- In C backend: `mut` params become `T*`, call sites emit `&x`, field access uses `->`
+
 ## Try Operator and Error Handling
 
 Forge uses `(T, error)` tuples for error handling, similar to Go.
