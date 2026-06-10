@@ -2107,14 +2107,21 @@ forge checker {
         return
       }
 
-      // Propagate expected type to empty list/map literals
+      // Propagate expected type to empty list/map/nil literals
       if declared_type != nil {
-        match val_type.kind {
-          Sequence(_) => {
-            // If value is empty list, infer from declared type
+        match value!.kind {
+          ListLit(elems) => {
+            if len(elems) == 0 {
+              value!.resolved_type = type_to_type_expr(declared_type!)
+            }
           }
-          Map(_, _) => {
-            // If value is empty map, infer from declared type
+          MapLit(keys, _) => {
+            if len(keys) == 0 {
+              value!.resolved_type = type_to_type_expr(declared_type!)
+            }
+          }
+          Nil => {
+            value!.resolved_type = type_to_type_expr(declared_type!)
           }
           _ => {}
         }
@@ -2585,24 +2592,36 @@ forge checker {
     let name_str = sym_to_string(type_name_sym)
     let info = self.registry.lookup(name_str)
 
-    // Check all field values
-    for f in fields {
-      if f.value != nil {
-        self.check_expr(f.value!)
-      }
-    }
-
     if info != nil {
-      // Validate field names exist
+      // Check field values, propagating expected types for empty literals
       for f in fields {
-        if f.name != nil {
-          let fname = sym_to_string(f.name!)
-          let field_type = dict_get<Type>(info!.fields, fname)
-          if field_type == nil {
-            // Check if it's a relation accessor
-            let method = dict_get<Type>(info!.methods, fname)
-            if method == nil {
-              // Not a fatal error — desugared fields may not be visible yet
+        if f.value != nil {
+          self.check_expr(f.value!)
+
+          // Look up expected field type
+          if f.name != nil {
+            let fname = sym_to_string(f.name!)
+            let field_entry = dict_get<Type>(info!.fields, fname)
+            if field_entry != nil {
+              let field_type = field_entry!.value
+              // Propagate expected type to empty list/map/nil literals
+              // This prevents ForgeSlice_void / ForgeMap_void in C output
+              match f.value!.kind {
+                ListLit(elems) => {
+                  if len(elems) == 0 {
+                    f.value!.resolved_type = type_to_type_expr(field_type)
+                  }
+                }
+                MapLit(keys, _) => {
+                  if len(keys) == 0 {
+                    f.value!.resolved_type = type_to_type_expr(field_type)
+                  }
+                }
+                Nil => {
+                  f.value!.resolved_type = type_to_type_expr(field_type)
+                }
+                _ => {}
+              }
             }
           }
         }
@@ -3699,6 +3718,28 @@ forge checker {
         if name.name == "any" {
           eprintln(f"checker: validateAllExprsResolved: void* (any) type in {ctx} at {expr.span.start.file}:{itoa(expr.span.start.line as i64)}:{itoa(expr.span.start.column as i64)}")
           os_exit(1)
+        }
+      }
+      _ => {}
+    }
+    // Detect Sequence(Unit) — empty [] that wasn't propagated to correct element type
+    match expr.resolved_type!.kind {
+      Sequence(elem) => {
+        match elem.kind {
+          Unit => {
+            eprintln(f"checker: validateAllExprsResolved: Sequence(Unit) [empty slice with no inferred type] in {ctx} at {expr.span.start.file}:{itoa(expr.span.start.line as i64)}:{itoa(expr.span.start.column as i64)}")
+            os_exit(1)
+          }
+          _ => {}
+        }
+      }
+      Map(key_type, _) => {
+        match key_type.kind {
+          Unit => {
+            eprintln(f"checker: validateAllExprsResolved: Map(Unit,...) [empty map with no inferred type] in {ctx} at {expr.span.start.file}:{itoa(expr.span.start.line as i64)}:{itoa(expr.span.start.column as i64)}")
+            os_exit(1)
+          }
+          _ => {}
         }
       }
       _ => {}

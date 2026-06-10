@@ -1595,7 +1595,22 @@ func CGen.emit_expr_str(self, e: LExpr?) -> string {
     }
     ExMakeSlice => {
       let slice_type = self.slice_type_name_from_type(e!.typ)
-      return f"forge_slice_empty({slice_type})"
+      let d = e!.builtin!
+      if len(d.args) == 0 {
+        return f"forge_slice_empty({slice_type})"
+      }
+      // Non-empty slice literal
+      let elem_type = if !isnull(e!.typ) && !isnull(e!.typ!.elem) { self.c_type(e!.typ!.elem) } else { "void*" }
+      let sb = new_string_builder()
+      sb.write(f"forge_slice_lit({slice_type}, {elem_type}, ")
+      let mut i = 0
+      while i < len(d.args) {
+        if i > 0 { sb.write(", ") }
+        sb.write(self.emit_value(d.args[i]))
+        i = i + 1
+      }
+      sb.write(")")
+      return sb.to_string()
     }
     ExMakeMap => {
       return "NULL /* make_map: not supported in C backend */"

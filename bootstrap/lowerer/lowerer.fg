@@ -740,26 +740,20 @@ forge lowerer {
           // Wrapper name and target
           let wrapper_name = class_name + "_" + method_name
           let target_member = if !isnull(mapping.target_member) { mapping.target_member!.name } else { method_name }
-          let target_name = class_name + "." + target_member
 
-          // Register rename with @-delimited key
-          let rename_key = rename_prefix + "@" + class_name + "@" + method_name
-          dict_set<string>(self.impl_method_renames!, rename_key, wrapper_name)
-          // Also register short key for backward compat
-          dict_set<string>(self.impl_method_renames!, class_name + "." + method_name, wrapper_name)
-
-          // Build forwarding call body
+          // Build forwarding call body — use method call on self (not static call)
           let mut call_args: [LValue?] = []
-          for p in params {
-            append(call_args, make_var_val(p.name, p.typ))
+          // Only non-self params (self is the receiver)
+          for i in range(1, len(params)) {
+            append(call_args, make_var_val(params[i].name, params[i].typ))
           }
 
           self.temp_id = 0
           let saved = self.save_stmts()
           let call_expr = LExpr {
-            kind: ExCall,
+            kind: ExMethodCall,
             typ: rt,
-            call: LCallData { func_name: target_name, args: call_args, mut_args: [], type_args: [], is_exported: false }
+            method_call: LMethodCallData { receiver: make_var_val("self", self_type), method: target_member, args: call_args, mut_args: [], is_exported: false }
           }
 
           if !isnull(rt) && rt!.kind is TyUnit {
@@ -775,7 +769,7 @@ forge lowerer {
           self.restore_stmts(saved)
 
           append(result, LFuncDecl {
-            name: wrapper_name,
+            name: method_name,
             params: params,
             return_type: rt,
             body: body,
