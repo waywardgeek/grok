@@ -642,14 +642,243 @@ forge desugar {
   }
 
   func deep_copy_stmt(s: Stmt) -> Stmt {
-    // Create a new Stmt with the same kind — since StmtKind is an enum (value type),
-    // this copies the associated data. However, class references (Expr, Block) within
-    // the enum data are shared. For type param substitution this is acceptable because
-    // substitute functions create new enum values rather than mutating class fields.
-    return Stmt {
-      kind: s.kind,
-      span: s.span,
+    let result = Stmt { kind: s.kind, span: s.span }
+    match s.kind {
+      ExprStmt(expr) => {
+        result.kind = ExprStmt(deep_copy_expr(expr))
+      }
+      VarDecl(name, names, type_expr, is_mut, value) => {
+        let mut new_value: Expr? = null
+        if !isnull(value) {
+          new_value = deep_copy_expr(value!)
+        }
+        let mut new_te: TypeExpr? = null
+        if !isnull(type_expr) {
+          new_te = deep_copy_type_expr(type_expr!)
+        }
+        result.kind = VarDecl(name, names, new_te, is_mut, new_value)
+      }
+      Assign(target, value) => {
+        result.kind = Assign(deep_copy_expr(target), deep_copy_expr(value))
+      }
+      Return(value) => {
+        let mut new_value: Expr? = null
+        if !isnull(value) {
+          new_value = deep_copy_expr(value!)
+        }
+        result.kind = Return(new_value)
+      }
+      If(condition, then_block, else_ifs, else_block) => {
+        let new_then = deep_copy_block_val(then_block)
+        let mut new_else_ifs: [ElseIf] = []
+        for ei in else_ifs {
+          let mut new_cond: Expr? = null
+          if !isnull(ei.condition) {
+            new_cond = deep_copy_expr(ei.condition!)
+          }
+          let new_ei = ElseIf {
+            condition: new_cond,
+            body: deep_copy_block(ei.body),
+            span: ei.span,
+          }
+          new_else_ifs = append(new_else_ifs, new_ei)
+        }
+        let mut new_else: Block? = null
+        if !isnull(else_block) {
+          new_else = deep_copy_block_val(else_block!)
+        }
+        result.kind = If(deep_copy_expr(condition), new_then, new_else_ifs, new_else)
+      }
+      While(condition, body) => {
+        result.kind = While(deep_copy_expr(condition), deep_copy_block_val(body))
+      }
+      For(var_name, index_var, collection, body) => {
+        result.kind = For(var_name, index_var, deep_copy_expr(collection), deep_copy_block_val(body))
+      }
+      Match(value, arms) => {
+        let mut new_arms: [MatchArm] = []
+        for arm in arms {
+          let mut new_guard: Expr? = null
+          if !isnull(arm.guard) {
+            new_guard = deep_copy_expr(arm.guard!)
+          }
+          let new_arm = MatchArm {
+            pattern: arm.pattern,
+            patterns: arm.patterns,
+            guard: new_guard,
+            body: deep_copy_block(arm.body),
+            span: arm.span,
+          }
+          new_arms = append(new_arms, new_arm)
+        }
+        result.kind = Match(deep_copy_expr(value), new_arms)
+      }
+      BlockStmt(block) => {
+        result.kind = BlockStmt(deep_copy_block_val(block))
+      }
+      IfLet(pattern, value, then_block, else_block) => {
+        let mut new_else: Block? = null
+        if !isnull(else_block) {
+          new_else = deep_copy_block_val(else_block!)
+        }
+        result.kind = IfLet(pattern, deep_copy_expr(value), deep_copy_block_val(then_block), new_else)
+      }
+      LetElse(pattern, value, else_block) => {
+        result.kind = LetElse(pattern, deep_copy_expr(value), deep_copy_block_val(else_block))
+      }
+      Cascade(body) => {
+        result.kind = Cascade(deep_copy_block_val(body))
+      }
+      Spawn(body) => {
+        result.kind = Spawn(deep_copy_block_val(body))
+      }
+      Lock(mutex, body) => {
+        // Cannot reconstruct: Lock() collides with TypeKind.Lock (checker bug)
+        // Shallow copy — Lock stmts don't appear in destructor bodies
+      }
+      Yield(value) => {
+        let mut new_value: Expr? = null
+        if !isnull(value) {
+          new_value = deep_copy_expr(value!)
+        }
+        result.kind = Yield(new_value)
+      }
+      _ => {}  // Break, Continue, Select — no nested Exprs/Blocks to copy
     }
+    return result
+  }
+
+  // Deep copy a non-optional Block (for use in enum fields that are Block not Block?)
+  func deep_copy_block_val(b: Block) -> Block {
+    let new_block = Block { span: b.span }
+    for stmt in b.bs_children() {
+      let new_stmt = deep_copy_stmt(stmt)
+      array_append<Block, Stmt>(new_block, new_stmt)
+    }
+    return new_block
+  }
+
+  func deep_copy_expr(e: Expr) -> Expr {
+    let result = Expr {
+      kind: e.kind,
+      span: e.span,
+      resolved_type: e.resolved_type,
+    }
+    match e.kind {
+      Call(func_expr, type_args, args) => {
+        let new_ta = deep_copy_type_args(type_args)
+        let new_args = deep_copy_expr_list(args)
+        result.kind = Call(deep_copy_expr(func_expr), new_ta, new_args)
+      }
+      MethodCall(receiver, method, type_args, args) => {
+        let new_ta = deep_copy_type_args(type_args)
+        let new_args = deep_copy_expr_list(args)
+        result.kind = MethodCall(deep_copy_expr(receiver), method, new_ta, new_args)
+      }
+      FieldAccess(receiver, field_name) => {
+        result.kind = FieldAccess(deep_copy_expr(receiver), field_name)
+      }
+      Index(receiver, index) => {
+        result.kind = Index(deep_copy_expr(receiver), deep_copy_expr(index))
+      }
+      Slice(receiver, low, high) => {
+        let new_low: Expr? = if !isnull(low) { deep_copy_expr(low!) } else { null }
+        let new_high: Expr? = if !isnull(high) { deep_copy_expr(high!) } else { null }
+        result.kind = Slice(deep_copy_expr(receiver), new_low, new_high)
+      }
+      Unary(op, operand) => {
+        result.kind = Unary(op, deep_copy_expr(operand))
+      }
+      Binary(left, op, right) => {
+        result.kind = Binary(deep_copy_expr(left), op, deep_copy_expr(right))
+      }
+      TupleLit(elems) => {
+        result.kind = TupleLit(deep_copy_expr_list(elems))
+      }
+      ListLit(elems) => {
+        result.kind = ListLit(deep_copy_expr_list(elems))
+      }
+      MapLit(keys, values) => {
+        result.kind = MapLit(deep_copy_expr_list(keys), deep_copy_expr_list(values))
+      }
+      StringInterp(parts) => {
+        result.kind = StringInterp(deep_copy_expr_list(parts))
+      }
+      StructLit(type_name, ta, fields) => {
+        let new_ta = deep_copy_type_args(ta)
+        let mut new_fields: [StructLitField] = []
+        for f in fields {
+          let new_val: Expr? = if !isnull(f.value) { deep_copy_expr(f.value!) } else { null }
+          let nf = StructLitField {
+            name: f.name,
+            value: new_val,
+          }
+          new_fields = append(new_fields, nf)
+        }
+        result.kind = StructLit(type_name, new_ta, new_fields)
+      }
+      Lambda(params, return_type, body) => {
+        let new_rt: TypeExpr? = if !isnull(return_type) { deep_copy_type_expr(return_type!) } else { null }
+        result.kind = Lambda(params, new_rt, deep_copy_block_val(body))
+      }
+      Match(value, arms) => {
+        // Cannot reconstruct: Match() collides with StmtKind.Match (checker bug)
+        // Shallow copy — match expressions in destructor bodies are rare
+      }
+      Cast(target_type, operand) => {
+        result.kind = Cast(deep_copy_type_expr(target_type), deep_copy_expr(operand))
+      }
+      Unwrap(operand) => {
+        result.kind = Unwrap(deep_copy_expr(operand))
+      }
+      Try(operand) => {
+        result.kind = Try(deep_copy_expr(operand))
+      }
+      Is(operand, variant) => {
+        result.kind = Is(deep_copy_expr(operand), variant)
+      }
+      IfElse(cond, then_block, else_ifs, else_block) => {
+        let mut new_else_ifs: [ElseIf] = []
+        for ei in else_ifs {
+          let new_ei = ElseIf {
+            condition: if !isnull(ei.condition) { deep_copy_expr(ei.condition!) } else { null },
+            body: deep_copy_block(ei.body),
+            span: ei.span,
+          }
+          new_else_ifs = append(new_else_ifs, new_ei)
+        }
+        result.kind = IfElse(deep_copy_expr(cond), deep_copy_block_val(then_block), new_else_ifs, deep_copy_block_val(else_block))
+      }
+      _ => {}  // Ident, IntLit, FloatLit, StringLit, BoolLit, Nil — no nested data
+    }
+    return result
+  }
+
+  func deep_copy_type_expr(te: TypeExpr) -> TypeExpr {
+    // Shallow copy of TypeExpr is safe for desugar: substitute_type_params_in_type_expr
+    // creates new enum values rather than mutating class fields. The critical deep copy
+    // is for Expr/Stmt trees where destructor method renames cause contamination.
+    return TypeExpr { kind: te.kind, span: te.span }
+  }
+
+  func deep_copy_type_args(args: [TypeExpr]) -> [TypeExpr] {
+    let mut result: [TypeExpr] = []
+    let mut i: i32 = 0
+    while i < len(args) {
+      result = append(result, TypeExpr { kind: args[i].kind, span: args[i].span })
+      i = i + 1
+    }
+    return result
+  }
+
+  func deep_copy_expr_list(exprs: [Expr]) -> [Expr] {
+    let mut result: [Expr] = []
+    let mut i: i32 = 0
+    while i < len(exprs) {
+      result = append(result, deep_copy_expr(exprs[i]))
+      i = i + 1
+    }
+    return result
   }
 
   // ---- Type param substitution in blocks/stmts/exprs ----
