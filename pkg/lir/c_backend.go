@@ -1125,6 +1125,11 @@ func (g *cGen) emitStmt(s *LStmt) {
 		d := s.Data.(*LTempDef)
 		ty := g.inferExprType(&d.Expr)
 		g.tempTypes[d.ID] = ty
+		// void-returning expressions can't be assigned to a temp in C
+		if ty.Kind == LTyUnit {
+			g.linef("%s;", g.emitExprStr(&d.Expr))
+			return
+		}
 		tempName := fmt.Sprintf("_t%d", d.ID)
 		g.linef("%s = %s;", g.cFieldDecl(ty, tempName), g.emitExprStr(&d.Expr))
 
@@ -1516,6 +1521,10 @@ func (g *cGen) emitStmt(s *LStmt) {
 
 	case LStmtExpr:
 		d := s.Data.(*LExprStmt)
+		// Skip references to void temps (e.g., println return)
+		if ty, ok := g.tempTypes[d.TempID]; ok && ty.Kind == LTyUnit {
+			return
+		}
 		g.linef("_t%d;", d.TempID)
 
 	case LStmtBreak:
@@ -1811,6 +1820,9 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 				return g.emitValueAsCStr(&d.Args[0])
 			}
 			return `"error"`
+		}
+		if name == "panic" && len(d.Args) > 0 {
+			return fmt.Sprintf("forge_panic(%s)", g.emitValue(&d.Args[0]))
 		}
 		// strconv functions
 		if name == "strconv.Itoa" && len(d.Args) > 0 {
@@ -2610,6 +2622,11 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 			eqExpr := g.eqExpr(actual, expected)
 			return fmt.Sprintf(`forge_assert_eq(%s, %s, %s, %s, %q, %d)`,
 				eqExpr, toStringA, toStringE, msg, d.File, d.Line)
+		}
+	case "panic":
+		if len(d.Args) >= 1 {
+			msg := g.emitValue(&d.Args[0])
+			return fmt.Sprintf(`forge_panic(%s)`, msg)
 		}
 	}
 	// Generic fallback

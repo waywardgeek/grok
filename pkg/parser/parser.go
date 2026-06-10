@@ -1665,6 +1665,13 @@ func (p *Parser) parseBaseType() (*ast.TypeExpr, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Empty () in type position is unit, not an empty tuple
+		if len(fields) == 0 {
+			return &ast.TypeExpr{
+				Kind: ast.TypeUnit,
+				Span: ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end.Span.End},
+			}, nil
+		}
 		return &ast.TypeExpr{
 			Kind: ast.TypeTuple,
 			Data: ast.TupleType{Fields: fields},

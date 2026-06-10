@@ -595,4 +595,10 @@ static inline void forge_fprint_str(FILE* f, forge_string s) {
     if (s.len > 0) fwrite(s.data, 1, s.len, f);
 }
 
+/* panic: print message to stderr and abort */
+static inline void forge_panic(forge_string msg) {
+    fprintf(stderr, "panic: %.*s\n", (int)msg.len, (const char*)msg.data);
+    exit(1);
+}
+
 #endif /* FORGE_RUNTIME_H */

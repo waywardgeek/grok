@@ -461,6 +461,8 @@ func (c *Checker) registerBuiltins() {
 		Return: TypeUnit, Name: "assert"})
 	c.scope.Define("assert_eq", &Type{Kind: TyFunc, Params: nil, // variadic: (any, any, string)
 		Return: TypeUnit, Name: "assert_eq"})
+	c.scope.Define("panic", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: TypeUnit, Name: "panic"})
 
 	// Register known Go stdlib modules so module-qualified calls get proper types
 	c.registerGoStdlibModules()
