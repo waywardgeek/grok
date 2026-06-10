@@ -274,6 +274,24 @@ forge parser {
             span: Span { start: expr!.span.start, end: q.span.end }
           }
         }
+        KIs => {
+          // Postfix is — variant type check: expr is VariantName
+          self.next()
+          let variant = self.expect_ident()?
+          expr = Expr {
+            kind: Is(expr!, sym(variant!.text)),
+            span: Span { start: expr!.span.start, end: variant!.span.end }
+          }
+        }
+        KAs => {
+          // Postfix as — type cast: expr as Type
+          self.next()
+          let target_type = self.parse_type_expr()?
+          expr = Expr {
+            kind: Cast(target_type!, expr!),
+            span: Span { start: expr!.span.start, end: target_type!.span.end }
+          }
+        }
         _ => {
           return (expr, null)
         }
@@ -413,9 +431,8 @@ forge parser {
       PPipe => {
         return self.parse_lambda_expr()
       }
-      PLt => {
-        // Cast expression: <Type>expr
-        return self.parse_cast_expr()
+      KIf => {
+        return self.parse_if_expr()
       }
       _ => {
         return (null, self.make_error(tok.span, f"expected expression, got {tok.kind} ({tok.text})"))
@@ -480,16 +497,37 @@ forge parser {
     }, null)
   }
 
-  // ---- Cast expression ----
+  // ---- If expression ----
 
-  func Parser.parse_cast_expr(self) -> (Expr?, error) {
-    let start = self.next()  // consume <
-    let target_type = self.parse_type_expr()?
-    self.expect(PGt)?
-    let operand = self.parse_unary_expr()?
+  func Parser.parse_if_expr(self) -> (Expr?, error) {
+    let start = self.peek().span.start
+    self.next()  // consume 'if'
+    let cond = self.parse_expr_no_struct_lit()?
+    let then_block = self.parse_block()?
+
+    let mut else_ifs: [ElseIf] = []
+    let mut else_block: Block? = null
+
+    while self.peek().kind == KElse {
+      self.next()
+      if self.peek().kind == KIf {
+        self.next()
+        let elif_cond = self.parse_expr_no_struct_lit()?
+        let elif_body = self.parse_block()?
+        else_ifs = append(else_ifs, ElseIf { elif_cond, elif_body })
+      } else {
+        else_block = self.parse_block()?
+        break
+      }
+    }
+
+    if else_block == null {
+      return (null, self.make_error(Span { start: start, end: start }, "if expression requires an else branch"))
+    }
+
     return (Expr {
-      Cast(target_type!, operand!),
-      span: Span { start: start.span.start, end: operand!.span.end }
+      IfElse(cond!, then_block!, else_ifs, else_block!),
+      span: Span { start: start, end: else_block!.span.end }
     }, null)
   }
 
@@ -887,6 +925,13 @@ forge parser {
     let mut arms: [MatchArm] = []
     while self.peek().kind != PRBrace && self.peek().kind != SEOF {
       let pat = self.parse_pattern()?
+      // Multi-pattern: pat1 | pat2 | pat3
+      let mut alt_patterns: [Pattern] = []
+      while self.peek().kind == PPipe {
+        self.next()
+        let alt = self.parse_pattern()?
+        alt_patterns = append(alt_patterns, alt!)
+      }
       let mut guard: Expr? = null
       if self.peek().kind == KIf {
         self.next()
@@ -894,7 +939,7 @@ forge parser {
       }
       self.expect(PFatArrow)?
       let body = self.parse_block()?
-      arms = append(arms, MatchArm { pat, [], guard, body, body!.span })
+      arms = append(arms, MatchArm { pat, alt_patterns, guard, body, body!.span })
       self.skip_newlines()
     }
     self.expect(PRBrace)?

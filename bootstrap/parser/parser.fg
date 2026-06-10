@@ -58,7 +58,25 @@ forge parser {
     if tok.kind == LIdent {
       return (tok, null)
     }
-    // TODO: allow annotation/keyword names as identifiers
+    // Accept annotation keywords and certain reserved words as identifiers
+    match tok.kind {
+      AWhy => { return (tok, null) }
+      ADoc => { return (tok, null) }
+      AInvariant => { return (tok, null) }
+      ASource => { return (tok, null) }
+      AFake => { return (tok, null) }
+      AVerifiedAt => { return (tok, null) }
+      AGuardedBy => { return (tok, null) }
+      KField => { return (tok, null) }
+      KEmbed => { return (tok, null) }
+      KDestructor => { return (tok, null) }
+      KImplements => { return (tok, null) }
+      KFrom => { return (tok, null) }
+      KAs => { return (tok, null) }
+      KIs => { return (tok, null) }
+      KIn => { return (tok, null) }
+      _ => {}
+    }
     return (null, self.make_error(tok.span, f"expected identifier, got {tok.kind} ({tok.text})"))
   }
 
