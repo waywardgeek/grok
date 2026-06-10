@@ -431,6 +431,12 @@ func (c *Checker) registerBuiltins() {
 		Return: TypeUnit, Name: "os_exit"})
 	c.scope.Define("os_getwd", &Type{Kind: TyFunc, Params: nil,
 		Return: TypeString, Name: "os_getwd"})
+	c.scope.Define("list_dir", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: ListType(TypeString), Name: "list_dir"})
+	c.scope.Define("file_exists", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: TypeBool, Name: "file_exists"})
+	c.scope.Define("mkdtemp", &Type{Kind: TyFunc, Params: []*Type{TypeString},
+		Return: TypeString, Name: "mkdtemp"})
 
 	// Process execution — exec_command(program, args) -> (string, bool)
 	c.scope.Define("exec_command", &Type{Kind: TyFunc, Params: []*Type{TypeString, ListType(TypeString)},

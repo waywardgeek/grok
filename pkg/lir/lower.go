@@ -2779,6 +2779,7 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 	case "println", "print", "eprint", "eprintln", "len", "append", "isnull", "hash_string",
 		"read_file", "write_file", "os_args", "os_exit", "os_getwd", "exec_command",
 		"path_join", "path_dir", "path_base", "path_ext",
+		"list_dir", "file_exists", "mkdtemp",
 		"itoa", "atoi", "char_to_string":
 		return l.emitTemp(LExpr{
 			Kind: LExprBuiltin,

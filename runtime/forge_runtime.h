@@ -24,6 +24,8 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 
 /* -------------------------------------------------------------------------
@@ -100,6 +102,10 @@
 
 FORGE_SLICE_DEF(uint8_t, ForgeSlice_uint8_t)
 typedef ForgeSlice_uint8_t forge_string;
+#ifndef FORGE_SLICE_FORGE_STRING_DEFINED
+#define FORGE_SLICE_FORGE_STRING_DEFINED
+FORGE_SLICE_DEF(forge_string, ForgeSlice_forge_string)
+#endif
 
 /* Create a string from a C string literal (compile-time length via sizeof) */
 #define FORGE_STR(lit) ((forge_string){ \
@@ -505,6 +511,44 @@ static inline forge_string forge_getwd(void) {
     static char buf[4096];
     if (getcwd(buf, sizeof(buf))) return forge_str_from_cstr(buf);
     return FORGE_STR_EMPTY;
+}
+
+static inline ForgeSlice_forge_string forge_list_dir(forge_string path) {
+    char* cpath = (char*)malloc(path.len + 1);
+    memcpy(cpath, path.data, path.len);
+    cpath[path.len] = '\0';
+    DIR* d = opendir(cpath);
+    free(cpath);
+    ForgeSlice_forge_string result = {NULL, 0, 0};
+    if (!d) return result;
+    struct dirent* entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (entry->d_name[0] == '.' && (entry->d_name[1] == '\0' ||
+            (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) continue;
+        forge_string name = forge_str_from_cstr(entry->d_name);
+        forge_push((&result), name, forge_string);
+    }
+    closedir(d);
+    return result;
+}
+
+static inline bool forge_file_exists(forge_string path) {
+    char* cpath = (char*)malloc(path.len + 1);
+    memcpy(cpath, path.data, path.len);
+    cpath[path.len] = '\0';
+    struct stat st;
+    bool exists = (stat(cpath, &st) == 0);
+    free(cpath);
+    return exists;
+}
+
+static inline forge_string forge_mkdtemp(forge_string prefix) {
+    char tmpl[4096];
+    int n = snprintf(tmpl, sizeof(tmpl), "/tmp/%.*s-XXXXXX", (int)prefix.len, (const char*)prefix.data);
+    (void)n;
+    char* result = mkdtemp(tmpl);
+    if (!result) return FORGE_STR_EMPTY;
+    return forge_str_from_cstr(result);
 }
 
 /* -------------------------------------------------------------------------

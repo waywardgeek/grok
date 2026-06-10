@@ -285,7 +285,7 @@ func (g *cGen) generate() string {
 	// Emit slice type typedefs (only need forward declarations — uses ElemType*)
 	// Skip ForgeSlice_uint8_t — already defined in runtime as forge_string's underlying type
 	for elemType, name := range g.sliceTypes {
-		if name == "ForgeSlice_uint8_t" {
+		if name == "ForgeSlice_uint8_t" || name == "ForgeSlice_forge_string" {
 			continue
 		}
 		g.linef("FORGE_SLICE_DEF(%s, %s)", elemType, name)
@@ -2562,6 +2562,18 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 		return "exit(0)"
 	case "os_getwd":
 		return "forge_getwd()"
+	case "list_dir":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_list_dir(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "file_exists":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_file_exists(%s)", g.emitValue(&d.Args[0]))
+		}
+	case "mkdtemp":
+		if len(d.Args) > 0 {
+			return fmt.Sprintf("forge_mkdtemp(%s)", g.emitValue(&d.Args[0]))
+		}
 	case "exec_command":
 		g.needsExecCmd = true
 		if len(d.Args) >= 2 {
@@ -3741,6 +3753,12 @@ func (g *cGen) inferExprType(e *LExpr) *LType {
 			}}
 		case "string_split":
 			return &LType{Kind: LTySlice, Elem: &LType{Kind: LTyString}}
+		case "list_dir", "os_args":
+			return &LType{Kind: LTySlice, Elem: &LType{Kind: LTyString}}
+		case "file_exists":
+			return &LType{Kind: LTyBool}
+		case "mkdtemp", "os_getwd":
+			return &LType{Kind: LTyString}
 		}
 	}
 	return t
