@@ -75,6 +75,7 @@ forge ast {
   }
 
   class Annotations {
+    why: string
     concurrent: bool
     requires_lock: [Sym]
     excludes_lock: [Sym]
@@ -205,6 +206,7 @@ forge ast {
 
   struct RelationSide {
     type_name: Sym?
+    type_args: [Sym]
     label: Sym?
   }
 
@@ -241,6 +243,14 @@ forge ast {
     name: Sym?
     is_public: bool
     type_expr: TypeExpr?
+    span: Span
+  }
+
+  class ConstDecl {
+    name: Sym?
+    is_public: bool
+    type_expr: TypeExpr?
+    value: Expr?
     span: Span
   }
 
@@ -289,6 +299,8 @@ forge ast {
     Cast(target_type: TypeExpr, operand: Expr)
     Unwrap(operand: Expr)
     Try(operand: Expr)
+    Is(operand: Expr, variant: Sym)
+    IfElse(cond: Expr, then_block: Block, else_ifs: [ElseIf], else_block: Block)
   }
 
   class Expr {
@@ -314,6 +326,7 @@ forge ast {
 
   class MatchArm {
     pattern: Pattern?
+    patterns: [Pattern]  // additional alternative patterns (pat1 | pat2 | pat3)
     guard: Expr?
     body: Block?
     span: Span
@@ -370,6 +383,7 @@ forge ast {
 
   class ForgeBlock {
     name: Sym?
+    why: string
     span: Span
   }
   relation ArrayList ForgeBlock:imp owns [ImportDecl:imp]
@@ -383,6 +397,7 @@ forge ast {
   relation ArrayList ForgeBlock:rd owns [RelationDecl:rd]
   relation ArrayList ForgeBlock:ib owns [ImplBlock:ib]
   relation ArrayList ForgeBlock:ta owns [TypeAliasDecl:ta]
+  relation ArrayList ForgeBlock:con owns [ConstDecl:con]
 
   class File {
     filename: string

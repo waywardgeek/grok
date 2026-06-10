@@ -894,7 +894,7 @@ forge parser {
       }
       self.expect(PFatArrow)?
       let body = self.parse_block()?
-      arms = append(arms, MatchArm { pat, guard, body, body!.span })
+      arms = append(arms, MatchArm { pat, [], guard, body, body!.span })
       self.skip_newlines()
     }
     self.expect(PRBrace)?

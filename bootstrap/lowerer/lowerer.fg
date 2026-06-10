@@ -395,6 +395,41 @@ forge lowerer {
         // TODO: implement map literal lowering
         return make_lit_null()
       }
+      Is(operand_expr, variant_sym) => {
+        // Lower operand, get variant tag, compare to expected tag
+        let operand = self.lower_expr(operand_expr, stmts)
+        let variant_name = sym_str(variant_sym)
+        // Get enum name from operand's resolved type
+        let operand_type = self.resolve_expr_type(operand_expr)
+        let enum_name = if !isnull(operand_type) { operand_type!.name } else { "" }
+        let tag = self.find_variant_tag(enum_name, variant_name)
+        let tag_type = LType { kind: TyI32, name: "", elem: nil, key: nil, fields: [], params: [], ret: nil, variants: [], bits: 32, is_exported: false }
+        let bool_type = LType { kind: TyBool, name: "", elem: nil, key: nil, fields: [], params: [], ret: nil, variants: [], bits: 0, is_exported: false }
+        let tag_access = LExpr { kind: ExVariantTag, typ: tag_type, variant_tag: LVariantTagData { value: operand! } }
+        let tag_temp = self.emit_temp(tag_access, stmts)
+        let tag_lit = make_lit_int(tag as i64, 32)
+        let cmp_data = LBinOpData { op: BinEq, left: tag_temp!, right: tag_lit! }
+        let cmp = LExpr { kind: ExBinOp, typ: bool_type, bin_op: cmp_data }
+        return self.emit_temp(cmp, stmts)
+      }
+      IfElse(cond, then_block, else_ifs, else_block) => {
+        // Lower as: let mut tmp; if cond { tmp = then_last } else { tmp = else_last }
+        let result_type = self.resolve_expr_type(e)
+        let tmp_id = self.next_temp()
+        let tmp = make_temp(tmp_id, result_type)
+        // Lower condition
+        let cond_val = self.lower_expr(cond, stmts)
+        // Lower then/else blocks
+        let mut then_stmts: [LStmt?] = []
+        self.lower_block(then_block, then_stmts)
+        let mut else_stmts: [LStmt?] = []
+        self.lower_block(else_block, else_stmts)
+        let if_data = LIfData { cond: cond_val!, then_body: then_stmts, else_body: else_stmts }
+        let if_stmt = LStmt { kind: StIf, if_data: if_data }
+        let mut out = stmts
+        out = append(out, if_stmt)
+        return tmp
+      }
     }
   }
 

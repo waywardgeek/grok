@@ -1395,6 +1395,16 @@ forge checker {
           _ => { result = operand_type }
         }
       }
+      Is(operand, variant) => {
+        self.check_expr(operand, scope)
+        result = make_bool_type()
+      }
+      IfElse(cond, then_block, else_ifs, else_block) => {
+        self.check_expr(cond, scope)
+        self.check_block(then_block, scope)
+        self.check_block(else_block, scope)
+        result = make_any_type()
+      }
     }
 
     // TODO: Annotate ResolvedType — for bootstrap, lowerer re-derives types
