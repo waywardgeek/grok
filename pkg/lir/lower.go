@@ -2609,6 +2609,55 @@ func (l *Lowerer) lowerBoolLit(expr *ast.Expr) LValue {
 
 func (l *Lowerer) lowerBinary(expr *ast.Expr) LValue {
 	be := dataAs[ast.BinaryExpr](expr.Data)
+
+	// Short-circuit && and || — right side must not be evaluated if left determines result.
+	// Lower: a && b → { let _sc = a; if _sc { _sc = b }; _sc }
+	// Lower: a || b → { let _sc = a; if !_sc { _sc = b }; _sc }
+	if be.Op == ast.OpAnd || be.Op == ast.OpOr {
+		boolType := &LType{Kind: LTyBool}
+		left := l.lowerExpr(&be.Left)
+
+		// Allocate a result variable
+		resultVar := fmt.Sprintf("_sc%d", l.nextTemp)
+		l.nextTemp++
+		l.emit(LStmt{Kind: LStmtVarDecl, Data: &LVarDecl{Name: resultVar, Type: boolType}})
+		l.emit(LStmt{Kind: LStmtAssign, Data: &LAssign{
+			Target: resultVar,
+			Value:  left,
+		}})
+
+		// Condition: for &&, enter if-block when left is true; for ||, when left is false
+		condVal := LValue{Kind: LValVar, Name: resultVar, Type: boolType}
+		if be.Op == ast.OpOr {
+			condVal = l.emitTemp(LExpr{
+				Kind: LExprUnOp,
+				Type: boolType,
+				Data: &LUnOpData{Op: LUnNot, Operand: condVal},
+			})
+		}
+
+		// Save and create new block for the if-body
+		saved := l.stmts
+		l.stmts = nil
+		right := l.lowerExpr(&be.Right)
+		l.emit(LStmt{Kind: LStmtAssign, Data: &LAssign{
+			Target: resultVar,
+			Value:  right,
+		}})
+		thenBody := l.stmts
+		l.stmts = saved
+
+		l.emit(LStmt{
+			Kind: LStmtIf,
+			Data: &LIf{
+				Cond: condVal,
+				Then: thenBody,
+			},
+		})
+
+		return LValue{Kind: LValVar, Name: resultVar, Type: boolType}
+	}
+
 	left := l.lowerExpr(&be.Left)
 	right := l.lowerExpr(&be.Right)
 
