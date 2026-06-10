@@ -291,7 +291,9 @@ forge desugar {
 
           if !isnull(existing) {
             // Merge: add mappings not already present
+            // Collect to_add first to avoid invalidating existing_mappings pointer
             let existing_mappings = existing!.ibm_children()
+            let mut to_add: [ImplMapping] = []
             for m in mappings {
               let mut found = false
               for em in existing_mappings {
@@ -300,8 +302,11 @@ forge desugar {
                 }
               }
               if !found {
-                array_append<ImplBlock, ImplMapping>(existing!, m)
+                to_add = append(to_add, m)
               }
+            }
+            for m in to_add {
+              array_append<ImplBlock, ImplMapping>(existing!, m)
             }
           } else {
             // Create new impl block

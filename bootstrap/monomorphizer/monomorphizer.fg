@@ -2425,7 +2425,7 @@ func type_to_mangle(t: LType?) -> string {
     TyBool => { return "bool" }
     TyString => { return "string" }
     TyStruct => {
-      let mut name = "S{t!.name}"
+      let mut name = f"S{t!.name}"
       let mut i = 0
       while i < len(t!.type_args) {
         name = f"{name}_{type_to_mangle(t!.type_args[i])}"
@@ -2434,7 +2434,7 @@ func type_to_mangle(t: LType?) -> string {
       return name
     }
     TyClassHandle => {
-      let mut name = "C{t!.name}"
+      let mut name = f"C{t!.name}"
       let mut i = 0
       while i < len(t!.type_args) {
         name = f"{name}_{type_to_mangle(t!.type_args[i])}"
@@ -2445,11 +2445,11 @@ func type_to_mangle(t: LType?) -> string {
     TySlice => { return "slice_{type_to_mangle(t!.elem)}" }
     TyMap => { return "map_{type_to_mangle(t!.key)}_{type_to_mangle(t!.elem)}" }
     TyOptional => { return "opt_{type_to_mangle(t!.elem)}" }
-    TyTaggedUnion => { return "E{t!.name}" }
+    TyTaggedUnion => { return f"E{t!.name}" }
     TyErrorResult => { return "res_{type_to_mangle(t!.elem)}" }
     TyAny => {
       if t!.name != "" {
-        return "I{t!.name}"
+        return f"I{t!.name}"
       }
       return "any"
     }

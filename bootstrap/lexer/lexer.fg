@@ -113,6 +113,9 @@ forge lexer {
     dict_set<TokenKind>(d, "source", ASource)
     dict_set<TokenKind>(d, "fake", AFake)
     dict_set<TokenKind>(d, "verified_at", AVerifiedAt)
+    dict_set<TokenKind>(d, "field", KField)
+    dict_set<TokenKind>(d, "lock", KLock)
+    dict_set<TokenKind>(d, "implements", KImplements)
     return d
   }
 

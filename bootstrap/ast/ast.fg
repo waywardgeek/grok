@@ -926,10 +926,23 @@ func merge_stdlib(file: File?, std_file: File?) {
         }
     }
 
-    // Collect referenced interface declarations
+    // Collect referenced interface declarations, skipping those already defined in user file
     let mut std_ifaces: [InterfaceDecl] = []
+    // Build set of user-defined interface names to avoid duplicates
+    let user_iface_names = dict_new<bool>()
+    for bi in range(0, len(blocks)) {
+        let user_ifaces = blocks[bi].id_children()
+        for i in range(0, len(user_ifaces)) {
+            if user_ifaces[i].name != nil {
+                dict_set<bool>(user_iface_names, user_ifaces[i].name!.name, true)
+            }
+        }
+    }
     let all_iface_keys = dict_keys<bool>(used_ifaces)
     for i in range(0, len(all_iface_keys)) {
+        // Skip if user already defines this interface
+        let user_has = dict_get<bool>(user_iface_names, all_iface_keys[i])
+        if user_has != nil { continue }
         let entry = dict_get<InterfaceDecl>(std_iface_map, all_iface_keys[i])
         if entry != nil {
             std_ifaces = append(std_ifaces, entry!.value)

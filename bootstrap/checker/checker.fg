@@ -118,6 +118,17 @@ forge checker {
   }
 
   func Registry.register(self, name: string, info: TypeInfo) {
+    // Panic if overwriting a fully-registered type (has methods or fields).
+    // Phase 0 stubs have empty methods/fields, so Phase 1 overwrites are OK.
+    let existing = self.lookup(name)
+    if existing != nil {
+      let em = dict_keys<Type>(existing!.methods)
+      let ef = dict_keys<Type>(existing!.fields)
+      if len(em) > 0 || len(ef) > 0 {
+        eprintln(f"FATAL: registry overwrite of fully-registered type '{name}' (had {itoa(len(em) as i64)} methods, {itoa(len(ef) as i64)} fields)")
+        os_exit(1)
+      }
+    }
     dict_set<TypeInfo>(self.types, name, info)
   }
 
@@ -140,6 +151,7 @@ forge checker {
     current_func_return: Type?
     current_func_name: string
     iface_decls: Dict<InterfaceDecl>  // for checkImplements
+    type_var_methods: Dict<Dict<Type>>?  // type var name → (method name → method type)
   }
 
   func new_checker() -> Checker {
@@ -1259,6 +1271,7 @@ forge checker {
     // Phase 1: Full registration with field resolution
     // Register interfaces first (classes may implement them)
     for iface in ifaces {
+      let dn = if iface.name != nil { sym_to_string(iface.name!) } else { "?" }
       self.register_interface(iface)
     }
 
@@ -1379,7 +1392,9 @@ forge checker {
     for m in imethods {
       let ft = self.func_decl_to_type(m)
       if m.name != nil {
-        dict_set<Type>(info.methods, sym_to_string(m.name!), ft)
+        let mn = sym_to_string(m.name!)
+        let rn = if m.receiver_type != nil { sym_to_string(m.receiver_type!) } else { "" }
+        dict_set<Type>(info.methods, mn, ft)
       }
     }
 
@@ -1670,9 +1685,19 @@ forge checker {
           if m.target_member != nil {
             let target = sym_to_string(m.target_member!)
             if target != method_name {
-              let existing2 = dict_get<Type>(class_info!.methods, target)
-              if existing2 == nil {
-                dict_set<Type>(class_info!.methods, target, substituted)
+              if str_starts_with(method_name, "set_") {
+                // Setter: set_next → set_from_next
+                let prefixed = "set_" + target
+                let existing2 = dict_get<Type>(class_info!.methods, prefixed)
+                if existing2 == nil {
+                  dict_set<Type>(class_info!.methods, prefixed, substituted)
+                }
+              } else {
+                // Getter: next → from_next
+                let existing2 = dict_get<Type>(class_info!.methods, target)
+                if existing2 == nil {
+                  dict_set<Type>(class_info!.methods, target, substituted)
+                }
               }
             }
           }
@@ -1708,6 +1733,104 @@ forge checker {
     } else {
       self.scope.define(fname, ft)
     }
+  }
+
+  // =====================================================================
+  // Relational where clause support
+  // =====================================================================
+
+  // grant_relational_methods populates type_var_methods from a relational where clause.
+  // Given `where DoublyLinked<P, C>`, looks up the DoublyLinked interface and maps
+  // typed methods (func P.children, func C.label, etc.) to the actual type var names.
+  func Checker.grant_relational_methods(self, iface_name: string, type_args: [TypeExpr]) {
+    let iface_entry = dict_get<InterfaceDecl>(self.iface_decls, iface_name)
+    let iface = iface_entry!.value
+
+    // Build interface type param name → where clause type arg name mapping
+    let itp = iface.itp_children()
+    let param_map = dict_new<string>()  // iface param name → func type var name
+    let mut i = 0
+    while i < len(itp) && i < len(type_args) {
+      if itp[i].name != nil {
+        match type_args[i].kind {
+          Named(name, _) => {
+            let src_name = sym_to_string(itp[i].name!)
+            let dst_name = sym_to_string(name)
+            dict_set<string>(param_map, src_name, dst_name)
+          }
+        }
+      }
+      i = i + 1
+    }
+
+    if self.type_var_methods == nil {
+      self.type_var_methods = dict_new<Dict<Type>>()
+    }
+
+    let ifuncs = iface.im_children()   // actual FuncDecl methods
+    for m in ifuncs {
+      let mname = if m.name != nil { sym_to_string(m.name!) } else { "<no-name>" }
+      let rtype = if m.receiver_type != nil { sym_to_string(m.receiver_type!) } else { "<no-recv>" }
+      if m.receiver_type == nil { continue }
+      let recv_param = sym_to_string(m.receiver_type!)
+      let mapping = dict_get<string>(param_map, recv_param)
+      if mapping == nil { continue }
+      let type_var_name = mapping!.value
+
+      let methods_for_tv = dict_get<Dict<Type>>(self.type_var_methods!, type_var_name)
+      let method_dict: Dict<Type> = if methods_for_tv != nil {
+        methods_for_tv!.value
+      } else {
+        let d = dict_new<Type>()
+        dict_set<Dict<Type>>(self.type_var_methods!, type_var_name, d)
+        d
+      }
+
+      if m.name != nil {
+        // Build method type with substituted names
+        let ft = self.func_decl_to_type_with_subst(m, param_map)
+        dict_set<Type>(method_dict, sym_to_string(m.name!), ft)
+      }
+    }
+  }
+
+  func Checker.func_decl_to_type_with_subst(self, f: FuncDecl, subst: Dict<string>) -> Type {
+    let mut params: [Type] = []
+    let fp = f.param_children()
+    for p in fp {
+      if p.is_self { continue }
+      if p.type_expr != nil {
+        let mut t = self.resolve_type_expr(p.type_expr!)
+        t = subst_type_var_names(t, subst)
+        params = append(params, t)
+      }
+    }
+    let mut ret = make_void_type()
+    if f.return_type != nil {
+      ret = self.resolve_type_expr(f.return_type!)
+      ret = subst_type_var_names(ret, subst)
+    }
+    return make_func_type(params, ret, [])
+  }
+
+  func subst_type_var_names(t: Type, subst: Dict<string>) -> Type {
+    match t.kind {
+      TypeVar(name) => {
+        let mapped = dict_get<string>(subst, name)
+        if mapped != nil {
+          return make_typevar_type(mapped!.value)
+        }
+        return t
+      }
+      Sequence(elem) => {
+        return make_sequence_type(subst_type_var_names(elem, subst))
+      }
+      Optional(inner) => {
+        return make_optional_type(subst_type_var_names(inner, subst))
+      }
+      _ => { return t }
+    }
+    return t
   }
 
   // =====================================================================
@@ -1783,6 +1906,21 @@ forge checker {
       }
     }
 
+    // Process relational where clauses to populate type_var_methods
+    let prev_tvm = self.type_var_methods
+    self.type_var_methods = null
+    let wheres = f.where_children()
+    for wc in wheres {
+      if wc.variable == nil && wc.constraint != nil {
+        // Bare relational constraint: where Graph<G, N, E>
+        let args = wc.wc_arg_children()
+        if len(args) > 0 {
+          self.grant_relational_methods(sym_to_string(wc.constraint!), args)
+        }
+      } else {
+      }
+    }
+
     // Bind parameters
     let params = f.param_children()
     for p in params {
@@ -1805,6 +1943,7 @@ forge checker {
 
     self.check_block(f.body!)
 
+    self.type_var_methods = prev_tvm
     self.current_func_return = prev_ret
     self.current_func_name = prev_name
     self.pop_scope()
@@ -2924,6 +3063,25 @@ forge checker {
 
     // Universal methods
     if method_str == "to_string" { return make_string_type() }
+
+    // Type variable methods from relational constraints (where Graph<G, N, E>)
+    match recv_type.kind {
+      TypeVar(tv_name) => {
+        if self.type_var_methods != nil {
+          let tv_methods = dict_get<Dict<Type>>(self.type_var_methods!, tv_name)
+          if tv_methods != nil {
+            let meth = dict_get<Type>(tv_methods!.value, method_str)
+            if meth != nil {
+              match meth!.value.kind {
+                Func(params, ret, _) => { return ret }
+                _ => { return meth!.value }
+              }
+            }
+          }
+        }
+      }
+      _ => {}
+    }
 
     eprintln(f"checker: unknown method: {method_str} at {call_expr.span.start.file}:{itoa(call_expr.span.start.line as i64)}:{itoa(call_expr.span.start.column as i64)}")
     os_exit(1)

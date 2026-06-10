@@ -1,0 +1,5 @@
+forge hello_world {
+  func main() {
+    println("Hello, World!")
+  }
+}

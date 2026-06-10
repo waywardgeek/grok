@@ -70,7 +70,7 @@ func compile_pipeline(inputs: [string], output: string) -> bool {
     }
     let parse_result = parse_file(result._0, inputs[i])
     if isnull(parse_result._0) {
-      eprintln(f"error: parse failed for {inputs[i]}")
+      eprintln(parse_result._1)
       return false
     }
     all_files = append(all_files, parse_result._0)
@@ -95,6 +95,7 @@ func compile_pipeline(inputs: [string], output: string) -> bool {
 
   // Desugar
   desugar_all(merged!)
+
 
   // Check
   let checker = check_file(merged!)
@@ -215,7 +216,7 @@ func cmd_test(args: [string]) -> bool {
     }
     let parse_result = parse_file(result._0, inputs[i])
     if isnull(parse_result._0) {
-      eprintln("error: parse failed")
+      eprintln(parse_result._1)
       return false
     }
     all_files = append(all_files, parse_result._0)
@@ -380,7 +381,7 @@ func fmt_file(path: string) -> bool {
 
   let parse_result = parse_file(zone1, path)
   if isnull(parse_result._0) {
-    eprintln("error: parse failed")
+    eprintln(parse_result._1)
     return false
   }
   let file = parse_result._0

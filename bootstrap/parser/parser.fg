@@ -97,6 +97,32 @@ forge parser {
     return Span { start: start, end: self.peek().span.end }
   }
 
+  // peek_annotation checks if the current token is a contextual keyword
+  // (field, lock, implements) used as an identifier. Returns the keyword
+  // TokenKind if it matches, or null if not.
+  func Parser.peek_annotation(self) -> TokenKind? {
+    let tok = self.peek()
+    if tok.kind != LIdent {
+      return null
+    }
+    if tok.text == "field" { return KField }
+    if tok.text == "lock" { return KLock }
+    if tok.text == "implements" { return KImplements }
+    return null
+  }
+
+  // consume_annotation consumes the current token if it's a contextual keyword
+  // matching the given kind. Returns true if consumed.
+  func Parser.consume_annotation(self, kind: TokenKind) -> bool {
+    let ann = self.peek_annotation()
+    if isnull(ann) { return false }
+    if ann! == kind {
+      self.next()
+      return true
+    }
+    return false
+  }
+
   // ---- isWhyAnnotation ----
   // Peeks ahead to check if `why` token is annotation ("string")
   // vs field name (TypeExpr).
@@ -560,6 +586,21 @@ forge parser {
         self.skip_newlines()
         continue
       }
+      // Check contextual keywords (field, implements) before match
+      let ann = self.peek_annotation()
+      if !isnull(ann) && ann! == KImplements {
+        self.next()
+        let imp = self.expect(LIdent)?
+        iface.implements = append(iface.implements, sym(imp!.text))
+        self.skip_newlines()
+        continue
+      }
+      if !isnull(ann) && ann! == KField {
+        let fd = self.parse_interface_field()?
+        array_append<InterfaceDecl, InterfaceFieldDecl>(iface, fd!)
+        self.skip_newlines()
+        continue
+      }
       match self.peek().kind {
         KImplements => {
           self.next()
@@ -594,7 +635,6 @@ forge parser {
       }
       self.skip_newlines()
     }
-
     self.expect(PRBrace)?
     iface.span = self.make_span(start)
     return (iface, null)
@@ -853,7 +893,7 @@ forge parser {
     }
 
     // Optional implements
-    if self.peek().kind == KImplements {
+    if self.peek().kind == KImplements || (!isnull(self.peek_annotation()) && self.peek_annotation()! == KImplements) {
       self.next()
       while true {
         let imp = self.expect(LIdent)?
