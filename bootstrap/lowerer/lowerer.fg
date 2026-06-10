@@ -1856,11 +1856,24 @@ forge lowerer {
       for a in args {
         append(bargs, self.lower_expr(a))
       }
-      let rt = self.expr_type(orig)
+      let mut rt = self.expr_type(orig)
+      if func_name == "assert" || func_name == "assert_eq" || func_name == "println" || func_name == "print" || func_name == "eprintln" || func_name == "eprint" || func_name == "panic" {
+        rt = LType { kind: TyUnit, name: "", bits: 0, is_exported: false }
+      }
+      let mut bfile = ""
+      let mut bline: i32 = 0
+      if func_name == "assert" || func_name == "assert_eq" {
+        if !isnull(orig) {
+          if !isnull(orig!.span.start.file) {
+            bfile = orig!.span.start.file!.get_name()
+          }
+          bline = orig!.span.start.line
+        }
+      }
       let builtin = LExpr {
         kind: ExBuiltin,
         typ: rt,
-        builtin: LBuiltinData { name: func_name, args: bargs }
+        builtin: LBuiltinData { name: func_name, args: bargs, file: bfile, line: bline }
       }
       return self.emit_temp(builtin)
     }
@@ -1873,6 +1886,12 @@ forge lowerer {
     let mut lta: [LType?] = []
     for ta in type_args {
       append(lta, self.lower_type(ta))
+    }
+    // Use inferred type args from checker if no explicit ones
+    if len(lta) == 0 && !isnull(orig) && len(orig!.inferred_type_args) > 0 {
+      for ta in orig!.inferred_type_args {
+        append(lta, self.lower_type(ta))
+      }
     }
 
     // If func_expr is not a simple ident, lower it as a value
@@ -2001,6 +2020,12 @@ forge lowerer {
     let mut lta: [LType?] = []
     for ta in type_args {
       append(lta, self.lower_type(ta))
+    }
+    // Use inferred type args from checker if no explicit ones
+    if len(lta) == 0 && !isnull(orig) && len(orig!.inferred_type_args) > 0 {
+      for ta in orig!.inferred_type_args {
+        append(lta, self.lower_type(ta))
+      }
     }
 
     // Build param types for the method

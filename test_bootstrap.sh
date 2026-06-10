@@ -65,11 +65,17 @@ for fg in testdata/*.fg; do
     continue
   fi
 
+  # Detect test-only files (have test_ functions but no main)
+  CMD="compile"
+  if grep -q 'func test_' "$fg" && ! grep -q 'func main()' "$fg" && ! grep -q 'func Main()' "$fg"; then
+    CMD="test"
+  fi
+
   # Step 1: Bootstrap compile .fg → .c
   bs_c="$TMPDIR/bs_${name%.fg}.c"
   bs_out="$TMPDIR/bs_${name%.fg}"
 
-  if ! $BOOTSTRAP compile "$fg" -o "$bs_c" 2>"$TMPDIR/err" ; then
+  if ! $BOOTSTRAP $CMD "$fg" -o "$bs_c" 2>"$TMPDIR/err" ; then
     FAIL=$((FAIL + 1))
     err=$(cat "$TMPDIR/err")
     FAILURES="$FAILURES\nFAIL  $name  (bootstrap compile: $err)"
@@ -92,7 +98,7 @@ for fg in testdata/*.fg; do
   # First, build and run Go compiler version as reference
   go_c="$TMPDIR/go_${name%.fg}.c"
   go_out="$TMPDIR/go_${name%.fg}"
-  if ! $FORGE compile "$fg" -o "$go_c" 2>/dev/null; then
+  if ! $FORGE $CMD "$fg" -o "$go_c" 2>/dev/null; then
     # Go compiler can't compile it either — skip
     SKIP=$((SKIP + 1))
     echo "SKIP  $name (Go compiler also fails to compile)"

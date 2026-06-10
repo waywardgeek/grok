@@ -46,8 +46,8 @@ The `.forge` file describes the design, not the target language's rules.
 
 **Sound constraints Forge does impose:**
 - Every parameter and return value must have a type (may be a type variable)
-- `self` declares method receivers (mutation is implicit — no `mut self` distinction
-  in current implementation)
+- `self` declares method receivers (mutation is implicit — no `mut self` distinction)
+- `mut` parameters pass structs by mutable reference (required on both decl and call site)
 - Thread safety annotations must be consistent (`guarded_by(mu)` requires `mu` to exist)
 
 **Constraints Forge deliberately does NOT impose:**
@@ -119,7 +119,7 @@ bool      // true | false
 int   uint    // NOT part of the Forge numeric tower
 ```
 
-**Default integer literal type:** `i32`. Cast with `<u64>(x)`.
+**Default integer literal type:** `i32`. Cast with `x as u64`.
 
 **Character literals:** `'A'` → `u8` constant (value 65). Supports escape sequences:
 `\n`, `\r`, `\t`, `\\`, `\'`, `\"`, `\0`, `\x##` (hex byte).
@@ -313,6 +313,31 @@ let greet = (name: string) -> string { return "hello " + name }
 Lambda parameters must have explicit types. Lambdas capture variables from their
 enclosing scope. In C backend, captured variables are passed via auto-generated
 context structs with capture-by-reference via pointer redirection.
+
+### Mutable Parameters (`mut`)
+
+Structs are value types — passing them to a function copies them. Use `mut` on
+both the parameter declaration and call site to pass by mutable reference:
+
+```forge
+struct Point { x: i32, y: i32 }
+
+func translate(mut p: Point, dx: i32, dy: i32) {
+    p.x = p.x + dx   // modifies caller's copy
+    p.y = p.y + dy
+}
+
+let mut pt = Point { x: 10, y: 20 }
+translate(mut pt, 5, 3)
+assert_eq(pt.x, 15, "mutation visible to caller")
+```
+
+**Rules:**
+- `mut` required on **both** parameter declaration and call site (Swift `inout` pattern — prevents accidental mutation)
+- Only variables can be passed as `mut` (not literals or expressions)
+- For classes (already heap-allocated), `mut` is a semantic no-op
+- **C backend:** `mut` params become `T*`, call sites emit `&x`, field access uses `->` or `(*p).x`
+- **Go backend:** `mut` params become `*T`, call sites emit `&x`
 
 ### Function Annotations (.forge files)
 

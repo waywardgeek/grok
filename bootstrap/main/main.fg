@@ -183,9 +183,17 @@ func cmd_compile(args: [string]) -> bool {
 
 func cmd_test(args: [string]) -> bool {
   let mut inputs: [string] = []
+  let mut output = ""
   let mut i = 0
   while i < len(args) {
-    inputs = append(inputs, args[i])
+    if args[i] == "-o" {
+      i = i + 1
+      if i < len(args) {
+        output = args[i]
+      }
+    } else {
+      inputs = append(inputs, args[i])
+    }
     i = i + 1
   }
 
@@ -276,6 +284,16 @@ func cmd_test(args: [string]) -> bool {
 
   // Generate C source + test runner
   let c_src = emit_c(prog) + emit_test_runner(test_funcs)
+
+  // If -o was provided, just write the C file and exit
+  if output != "" {
+    if !write_file(output, c_src) {
+      eprintln(f"error: cannot write {output}")
+      return false
+    }
+    println(f"wrote {output}")
+    return true
+  }
 
   // Write to temp dir
   let tmp_dir = mkdtemp("forge-test")

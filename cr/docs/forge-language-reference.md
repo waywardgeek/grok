@@ -266,6 +266,17 @@ if not (node is Leaf) { ... }
 Returns `bool`. Does not bind variables — use `if let` for destructuring.
 ```
 
+### Type Casts: `as`
+
+Postfix `as` for numeric conversions:
+```forge
+let x: i32 = 42
+let y: i64 = x as i64        // widen
+let z: i32 = y as i32        // narrow (may truncate)
+```
+
+Only numeric ↔ numeric casts are supported. All casts are unchecked.
+
 ### Block Scoping
 
 Forge has block-level scoping like Go. Any `{ }` block creates a new scope — variables declared inside are local to that block:

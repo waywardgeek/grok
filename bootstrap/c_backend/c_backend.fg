@@ -1342,6 +1342,28 @@ func CGen.emit_builtin(self, d: LBuiltinData?) -> string {
   if name == "print" || name == "Print" || name == "fmt.Print" {
     return self.emit_fprint("stdout", args, false)
   }
+  if name == "assert" {
+    if len(args) >= 1 {
+      let cond = self.emit_value(args[0])
+      let mut msg = "FORGE_STR(\"assertion failed\")"
+      if len(args) >= 2 {
+        msg = self.emit_value(args[1])
+      }
+      return f"forge_assert({cond}, {msg}, \"{d!.file}\", {itoa(d!.line)})"
+    }
+  }
+  if name == "assert_eq" {
+    if len(args) >= 2 {
+      let to_str_a = self.to_string_expr(args[0])
+      let to_str_e = self.to_string_expr(args[1])
+      let eq = self.eq_expr(args[0], args[1])
+      let mut msg = "FORGE_STR(\"assert_eq failed\")"
+      if len(args) >= 3 {
+        msg = self.emit_value(args[2])
+      }
+      return f"forge_assert_eq({eq}, {to_str_a}, {to_str_e}, {msg}, \"{d!.file}\", {itoa(d!.line)})"
+    }
+  }
   if name == "panic" {
     if len(args) >= 1 {
       return f"forge_panic({self.emit_value(args[0])})"
@@ -2796,6 +2818,9 @@ func CGen.infer_expr_type(self, e: LExpr?) -> LType? {
     if d.name == "hash_string" {
       return LType { kind: TyU64, name: "", elem: null, key: null, fields: [], params: [], ret: null, variants: [], bits: 64, is_exported: false }
     }
+    if d.name == "assert" || d.name == "assert_eq" || d.name == "println" || d.name == "print" || d.name == "eprintln" || d.name == "eprint" || d.name == "panic" || d.name == "Println" || d.name == "Print" || d.name == "fmt.Println" || d.name == "fmt.Print" || d.name == "fmt.Printf" {
+      return LType { kind: TyUnit, name: "", elem: null, key: null, fields: [], params: [], ret: null, variants: [], bits: 0, is_exported: false }
+    }
   }
   if isnull(t) {
     return LType { kind: TyI32, name: "", elem: null, key: null, fields: [], params: [], ret: null, variants: [], bits: 0, is_exported: false }
@@ -3519,23 +3544,23 @@ pub func emit_c(prog: LProgram?) -> string {
   // Test assertion macros
   g.line("static jmp_buf _forge_test_jmp;")
   g.line("static int _forge_test_failed;")
-  g.line(f"#define forge_assert(cond, msg, file, line) do {{ \\\\")
-  g.line(f"    if (!(cond)) {{ \\\\")
-  g.line("        fprintf(stderr, \"  assert failed at %s:%d\\n    %.*s\\n\", file, line, (int)(msg).len, (const char*)(msg).data); \\\\")
-  g.line("        _forge_test_failed = 1; \\\\")
-  g.line("        longjmp(_forge_test_jmp, 1); \\\\")
-  g.line("    } \\\\")
+  g.line(f"#define forge_assert(cond, msg, file, line) do {{ \\")
+  g.line(f"    if (!(cond)) {{ \\")
+  g.line("        fprintf(stderr, \"  assert failed at %s:%d\\n    %.*s\\n\", file, line, (int)(msg).len, (const char*)(msg).data); \\")
+  g.line("        _forge_test_failed = 1; \\")
+  g.line("        longjmp(_forge_test_jmp, 1); \\")
+  g.line("    } \\")
   g.line("} while(0)")
-  g.line(f"#define forge_assert_eq(eq, actual_str, expected_str, msg, file, line) do {{ \\\\")
-  g.line(f"    if (!(eq)) {{ \\\\")
-  g.line("        forge_string _a = (actual_str); \\\\")
-  g.line("        forge_string _e = (expected_str); \\\\")
-  g.line("        fprintf(stderr, \"  assert_eq failed at %s:%d\\n    %.*s\\n    expected: %.*s\\n    got:      %.*s\\n\", \\\\")
-  g.line("            file, line, (int)(msg).len, (const char*)(msg).data, \\\\")
-  g.line("            (int)_e.len, (const char*)_e.data, (int)_a.len, (const char*)_a.data); \\\\")
-  g.line("        _forge_test_failed = 1; \\\\")
-  g.line("        longjmp(_forge_test_jmp, 1); \\\\")
-  g.line("    } \\\\")
+  g.line(f"#define forge_assert_eq(eq, actual_str, expected_str, msg, file, line) do {{ \\")
+  g.line(f"    if (!(eq)) {{ \\")
+  g.line("        forge_string _a = (actual_str); \\")
+  g.line("        forge_string _e = (expected_str); \\")
+  g.line("        fprintf(stderr, \"  assert_eq failed at %s:%d\\n    %.*s\\n    expected: %.*s\\n    got:      %.*s\\n\", \\")
+  g.line("            file, line, (int)(msg).len, (const char*)(msg).data, \\")
+  g.line("            (int)_e.len, (const char*)_e.data, (int)_a.len, (const char*)_a.data); \\")
+  g.line("        _forge_test_failed = 1; \\")
+  g.line("        longjmp(_forge_test_jmp, 1); \\")
+  g.line("    } \\")
   g.line("} while(0)")
   g.line("")
 

@@ -307,6 +307,7 @@ forge ast {
     kind: ExprKind
     span: Span
     resolved_type: TypeExpr?  // Set by checker — used by lowerer to determine expression types
+    inferred_type_args: [TypeExpr]  // Set by checker for generic calls with inferred type args
   }
 
   // ---- Patterns ----

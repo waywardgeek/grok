@@ -342,14 +342,20 @@ func cmdTest(args []string) error {
 
 	checkInvariants := true // on by default
 	var inputs []string
-	for _, a := range args {
-		switch a {
+	var outputFile string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--check-invariants":
 			checkInvariants = true
 		case "--no-check-invariants":
 			checkInvariants = false
+		case "-o":
+			i++
+			if i < len(args) {
+				outputFile = args[i]
+			}
 		default:
-			inputs = append(inputs, a)
+			inputs = append(inputs, args[i])
 		}
 	}
 	if len(inputs) == 0 {
@@ -454,6 +460,15 @@ func cmdTest(args []string) error {
 	// Generate C source + test runner
 	cSrc := lir.EmitC(prog)
 	cSrc += lir.EmitTestRunner(testFuncs)
+
+	// If -o was provided, just write the C file and exit
+	if outputFile != "" {
+		if err := os.WriteFile(outputFile, []byte(cSrc), 0644); err != nil {
+			return fmt.Errorf("writing %s: %w", outputFile, err)
+		}
+		fmt.Fprintf(os.Stderr, "wrote %s\n", outputFile)
+		return nil
+	}
 
 	// Write to temp file
 	tmpDir, err := os.MkdirTemp("", "forge-test-*")

@@ -224,7 +224,7 @@ forge lir {
     high: LValue?
   }
 
-  struct LCallData {
+  class LCallData {
     func_name: string
     args: [LValue?]
     mut_args: [bool]
@@ -232,7 +232,7 @@ forge lir {
     is_exported: bool
   }
 
-  struct LMethodCallData {
+  class LMethodCallData {
     receiver: LValue?
     method: string
     args: [LValue?]
@@ -245,6 +245,8 @@ forge lir {
   struct LBuiltinData {
     name: string
     args: [LValue?]
+    file: string
+    line: i32
   }
 
   struct LFieldInit {

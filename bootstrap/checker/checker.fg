@@ -2029,10 +2029,10 @@ forge checker {
       Nil => { return make_nil_type() }
 
       Call(func_expr, type_args, args, _) => {
-        return self.check_call(func_expr, type_args, args)
+        return self.check_call(expr, func_expr, type_args, args)
       }
       MethodCall(receiver, method, type_args, args, _) => {
-        return self.check_method_call(receiver, method, type_args, args)
+        return self.check_method_call(expr, receiver, method, type_args, args)
       }
       FieldAccess(receiver, field_name) => {
         return self.check_field_access(receiver, field_name)
@@ -2345,7 +2345,7 @@ forge checker {
   // Call checking
   // =====================================================================
 
-  func Checker.check_call(self, func_expr: Expr, type_args: [TypeExpr], args: [Expr]) -> Type {
+  func Checker.check_call(self, call_expr: Expr, func_expr: Expr, type_args: [TypeExpr], args: [Expr]) -> Type {
     // Check all args first
     let mut arg_types: [Type] = []
     for a in args {
@@ -2378,6 +2378,17 @@ forge checker {
                 if len(type_args) < limit { limit = len(type_args) }
                 for i in range(0, limit) {
                   dict_set<Type>(bindings, tpnames[i], self.resolve_type_expr(type_args[i]))
+                }
+                // Store inferred type args on the call expression for the lowerer
+                if len(type_args) == 0 {
+                  let mut inferred: [TypeExpr] = []
+                  for tpn in tpnames {
+                    let bound = dict_get<Type>(bindings, tpn)
+                    if bound != nil {
+                      append(inferred, type_to_type_expr(bound!.value))
+                    }
+                  }
+                  call_expr.inferred_type_args = inferred
                 }
                 return substitute_type(ret, bindings)
               }
@@ -2546,7 +2557,7 @@ forge checker {
   // Method call checking
   // =====================================================================
 
-  func Checker.check_method_call(self, receiver: Expr, method: Sym, type_args: [TypeExpr], args: [Expr]) -> Type {
+  func Checker.check_method_call(self, call_expr: Expr, receiver: Expr, method: Sym, type_args: [TypeExpr], args: [Expr]) -> Type {
     let recv_type = self.check_expr(receiver)
     let mut arg_types: [Type] = []
     for a in args {
@@ -2569,6 +2580,17 @@ forge checker {
             Func(params, ret, tpnames) => {
               if len(tpnames) > 0 {
                 let bindings = self.infer_type_args(mt!.value, arg_types)
+                // Store inferred type args for lowerer
+                if len(type_args) == 0 {
+                  let mut inferred: [TypeExpr] = []
+                  for tpn in tpnames {
+                    let bound = dict_get<Type>(bindings, tpn)
+                    if bound != nil {
+                      append(inferred, type_to_type_expr(bound!.value))
+                    }
+                  }
+                  call_expr.inferred_type_args = inferred
+                }
                 return substitute_type(ret, bindings)
               }
               return ret
