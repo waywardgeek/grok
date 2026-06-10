@@ -120,6 +120,7 @@ func compile_pipeline(inputs: [string], output: string) -> bool {
 
   // Monomorphize
   monomorphize(prog)
+  validate_post_mono(prog)
 
   // Rewrite impl renames
   rewrite_impl_renames(prog)
@@ -261,6 +262,7 @@ func cmd_test(args: [string]) -> bool {
   // Optimize + mono
   optimize(prog!)
   monomorphize(prog)
+  validate_post_mono(prog)
   rewrite_impl_renames(prog)
 
   // Discover test_* functions

@@ -70,7 +70,132 @@ func new_mono_pass(prog: LProgram?) -> MonoPass? {
   }
 }
 
+
+// =========================================================================
+// Post-monomorphization validator
+// =========================================================================
+
+// validate_post_mono checks that no generic functions, classes, or type
+// variables remain after monomorphization. Panics on first violation.
+func validate_post_mono(prog: LProgram?) {
+  if isnull(prog) { return }
+
+  // Check no generic functions remain
+  for f in prog!.functions {
+    if len(f.type_params) > 0 {
+      eprintln(f"post-mono: function {f.name} still has type_params")
+      os_exit(1)
+    }
+    for p in f.params {
+      if p.typ != nil {
+        check_no_typevar(f.name, f"param {p.name}", p.typ!)
+      }
+    }
+    if f.return_type != nil {
+      check_no_typevar(f.name, "return", f.return_type!)
+    }
+    check_stmts_no_typevar(f.name, f.body)
+  }
+
+  // Check no generic classes remain
+  for c in prog!.classes {
+    if len(c.type_params) > 0 {
+      eprintln(f"post-mono: class {c.name} still has type_params")
+      os_exit(1)
+    }
+  }
+
+  // Check no generic structs remain
+  for s in prog!.structs {
+    if len(s.type_params) > 0 {
+      eprintln(f"post-mono: struct {s.name} still has type_params")
+      os_exit(1)
+    }
+  }
+}
+
+func check_no_typevar(func_name: string, context: string, t: LType) {
+  match t.kind {
+    TyTypeVar => {
+      eprintln(f"post-mono: {func_name} {context} has unresolved type var '{t.name}'")
+      os_exit(1)
+    }
+    TyOptional | TySlice | TyChannel | TyGenerator | TyErrorResult => {
+      if t.elem != nil { check_no_typevar(func_name, context, t.elem!) }
+    }
+    TyMap => {
+      if t.key != nil { check_no_typevar(func_name, context, t.key!) }
+      if t.elem != nil { check_no_typevar(func_name, context, t.elem!) }
+    }
+    TyFuncPtr => {
+      if t.ret != nil { check_no_typevar(func_name, context, t.ret!) }
+      for p in t.params {
+        if p != nil { check_no_typevar(func_name, context, p!) }
+      }
+    }
+    TyTuple => {
+      for field in t.fields {
+        if field.typ != nil { check_no_typevar(func_name, context, field.typ!) }
+      }
+    }
+    _ => {}
+  }
+  for ta in t.type_args {
+    if ta != nil { check_no_typevar(func_name, context, ta!) }
+  }
+}
+
+func check_stmts_no_typevar(func_name: string, stmts: [LStmt?]) {
+  for s in stmts {
+    if isnull(s) { continue }
+    match s!.kind {
+      StTempDef => {
+        if s!.temp_def != nil && s!.temp_def!.expr != nil {
+          if s!.temp_def!.expr!.typ != nil {
+            check_no_typevar(func_name, f"_t{itoa(s!.temp_def!.id as i64)}", s!.temp_def!.expr!.typ!)
+          }
+        }
+      }
+      StVarDecl => {
+        if s!.var_decl != nil && s!.var_decl!.typ != nil {
+          check_no_typevar(func_name, s!.var_decl!.name, s!.var_decl!.typ!)
+        }
+      }
+      StIf => {
+        if s!.if_data != nil {
+          check_stmts_no_typevar(func_name, s!.if_data!.then_body)
+          check_stmts_no_typevar(func_name, s!.if_data!.else_body)
+        }
+      }
+      StWhile => {
+        if s!.while_data != nil {
+          check_stmts_no_typevar(func_name, s!.while_data!.body)
+        }
+      }
+      StFor => {
+        if s!.for_data != nil {
+          check_stmts_no_typevar(func_name, s!.for_data!.body)
+        }
+      }
+      StBlock => {
+        if s!.block != nil {
+          check_stmts_no_typevar(func_name, s!.block!.stmts)
+        }
+      }
+      StSwitch => {
+        if s!.switch_data != nil {
+          for c in s!.switch_data!.cases {
+            check_stmts_no_typevar(func_name, c.body)
+          }
+        }
+      }
+      _ => {}
+    }
+  }
+}
+
 // func_key returns the lookup key for a function.
+
 func MonoPass.func_key(self, f: LFuncDecl) -> string {
   if f.receiver != "" {
     return f"{f.receiver}.{f.name}"
