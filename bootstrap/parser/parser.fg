@@ -188,18 +188,9 @@ forge parser {
         return (true, null)
       }
       KLet => {
-        // Top-level constant: let NAME: Type = value
-        // TODO: add ConstDecl to AST and store properly
-        self.next()  // consume 'let'
-        self.expect_ident()?  // name
-        if self.peek().kind == PColon {
-          self.next()
-          self.parse_type_expr()?
-        }
-        if self.peek().kind == OAssign {
-          self.next()
-          self.parse_expr()?
-        }
+        let decl = self.parse_const_decl()?
+        decl!.is_public = is_pub
+        array_append<ForgeBlock, ConstDecl>(block, decl!)
         return (true, null)
       }
       KStruct => {
@@ -252,10 +243,12 @@ forge parser {
       }
       ASource => {
         if is_pub { return (false, self.make_error(tok.span, "pub cannot be applied to source")) }
+        self.parse_source()?
         return (true, null)
       }
       AFake => {
         if is_pub { return (false, self.make_error(tok.span, "pub cannot be applied to fake")) }
+        self.parse_fake()?
         return (true, null)
       }
       _ => {
@@ -977,8 +970,9 @@ forge parser {
       self.skip_newlines()
     }
 
-    // Skip annotations for now
-    // TODO: parse annotations
+    // Annotations
+    let ann = self.parse_annotations()?
+    fn.annotations = ann
 
     // Optional body
     if self.peek().kind == PLBrace {
@@ -988,6 +982,146 @@ forge parser {
 
     fn.span = self.make_span(start)
     return (fn, null)
+  }
+
+  func Parser.parse_annotations(self) -> (Annotations?, error) {
+    let ann = Annotations {}
+    let mut found = false
+    while true {
+      match self.peek().kind {
+        AWhy => {
+          let why = self.parse_why()?
+          ann.why = why
+          found = true
+        }
+        AConcurrent => {
+          self.next()
+          self.expect(PColon)?
+          let val = self.next()
+          ann.concurrent = val.text == "true"
+          found = true
+        }
+        ARequiresLock => {
+          self.next()
+          self.expect(PLParen)?
+          let name = self.expect(LIdent)?
+          ann.requires_lock = append(ann.requires_lock, sym(name!.text))
+          self.expect(PRParen)?
+          found = true
+        }
+        AExcludesLock => {
+          self.next()
+          self.expect(PLParen)?
+          let name = self.expect(LIdent)?
+          ann.excludes_lock = append(ann.excludes_lock, sym(name!.text))
+          self.expect(PRParen)?
+          found = true
+        }
+        ARaises => {
+          self.next()
+          self.expect(PColon)?
+          while true {
+            let name = self.expect(LIdent)?
+            ann.raises = append(ann.raises, sym(name!.text))
+            if self.peek().kind == PComma {
+              self.next()
+            } else {
+              break
+            }
+          }
+          found = true
+        }
+        ARequires => {
+          self.next()
+          self.expect(PColon)?
+          ann.requires = append(ann.requires, self.parse_expr_text())
+          found = true
+        }
+        AEnsures => {
+          self.next()
+          self.expect(PColon)?
+          ann.ensures = append(ann.ensures, self.parse_expr_text())
+          found = true
+        }
+        ASpawns => {
+          self.next()
+          if self.peek().kind == PColon { self.next() }
+          ann.spawns = true
+          found = true
+        }
+        APure => {
+          self.next()
+          if self.peek().kind == PColon { self.next() }
+          ann.pure = true
+          found = true
+        }
+        _ => {
+          if found { return (ann, null) } else { return (null, null) }
+        }
+      }
+      self.skip_newlines()
+    }
+    return (null, null)
+  }
+
+  // Reads tokens until newline/EOF and returns them joined as text.
+  func Parser.parse_expr_text(self) -> string {
+    let mut result = ""
+    let mut first = true
+    while self.peek().kind != SNewline && self.peek().kind != SEOF {
+      let tok = self.next()
+      if !first { result = result + " " }
+      result = result + tok.text
+      first = false
+    }
+    return result
+  }
+
+  func Parser.parse_source(self) -> ([string], error) {
+    self.next()  // consume 'source'
+    self.expect(PColon)?
+    self.expect(PLBracket)?
+    let mut files: [string] = []
+    while self.peek().kind != PRBracket && self.peek().kind != SEOF {
+      let f = self.expect(LStringLit)?
+      files = append(files, f!.text)
+      if self.peek().kind == PComma {
+        self.next()
+      }
+    }
+    self.expect(PRBracket)?
+    return (files, null)
+  }
+
+  func Parser.parse_fake(self) -> (string, error) {
+    self.next()  // consume 'fake'
+    self.expect(PColon)?
+    let tok = self.expect(LStringLit)?
+    return (tok!.text, null)
+  }
+
+  func Parser.parse_const_decl(self) -> (ConstDecl?, error) {
+    let start = self.peek().span.start
+    self.next()  // consume 'let'
+    let name = self.expect_ident()?
+    let decl = ConstDecl {
+      name: sym(name!.text),
+      span: Span { start: start, end: start },
+    }
+
+    // Optional type annotation
+    if self.peek().kind == PColon {
+      self.next()
+      let typ = self.parse_type_expr()?
+      decl.type_expr = typ
+    }
+
+    // Required initializer
+    self.expect(OAssign)?
+    let val = self.parse_expr()?
+    decl.value = val
+    decl.span = self.make_span(start)
+    return (decl, null)
   }
 
   func Parser.parse_where_clause(self) -> (WhereClause?, error) {
