@@ -46,7 +46,8 @@ Once the bootstrap compiler replaces Go, these can be implemented in Forge itsel
 - [ ] **Sort** — generic sort function in stdlib
 - [ ] **Generic HashMap** — `map[K]V` with non-string keys (currently Dict is string-keyed only)
 - [ ] **Error stack traces** — currently errors are bare strings; add source location to error interface
-- [ ] **Operator overloading** — or at minimum, `==` for structs/classes (currently only deep `==` for structs)
+- [ ] **Deep `==` for structs and slices** — `==` should work on structs (field-by-field) and slices (element-by-element), not just primitives. Currently forces workarounds like `str_has_prefix`/`str_has_suffix` builtins instead of simple slice comparison. Design decision from pre-bootstrap says deep `==` for structs/tuples/slices, pointer comparison for classes/functions
+- [ ] **Operator overloading** — custom `==`, `<`, etc. for user types (lower priority than deep `==`)
 - [ ] **`not` keyword** — `not x` as alternative to `!x` (readability)
 
 ### Nice-to-Have (quality of life)

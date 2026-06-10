@@ -1349,6 +1349,23 @@ func (l *Lowerer) lowerAssignStmt(stmt *ast.Stmt) {
 		recv := l.lowerExpr(&fa.Receiver)
 		// Check if receiver is a class (use ClassSet) or struct (use StructSet)
 		if recv.Type != nil && recv.Type.Kind == LTyClassHandle {
+			// Auto-wrap non-optional value when field type is optional
+			if fields, ok := l.classFields[recv.Type.Name]; ok {
+				for _, f := range fields {
+					if f.Name == fa.Field && f.Type != nil && f.Type.Kind == LTyOptional {
+						if val.Type == nil || val.Type.Kind != LTyOptional {
+							if val.Kind != LValLitNull {
+								val = l.emitTemp(LExpr{
+									Kind: LExprWrapOptional,
+									Type: f.Type,
+									Data: &LWrapOptionalData{Value: val},
+								})
+							}
+						}
+						break
+					}
+				}
+			}
 			l.emit(LStmt{Kind: LStmtClassSet, Data: &LClassSet{
 				Handle: recv,
 				Class:  recv.Type.Name,

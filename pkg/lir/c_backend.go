@@ -124,6 +124,7 @@ func EmitC(prog *LProgram) string {
 		implMap:     map[string][]string{}, // class → []interface
 		funcByName:  map[string]*LFuncDecl{},
 		simpleEnums: map[string]bool{},
+		tupleTypes:  map[string]string{},
 	}
 	// Build interface lookup
 	for i := range prog.Interfaces {
@@ -190,6 +191,10 @@ type cGen struct {
 
 	// Simple enum tracking (all-unit-variant enums emitted as C enum, not tagged union)
 	simpleEnums map[string]bool
+
+	// Tuple type typedefs (like sliceTypes/optTypes pattern)
+	tupleTypes map[string]string // "fields_sig" → typedef name
+	tupleCount int
 }
 
 type cSpawnFunc struct {
@@ -430,6 +435,36 @@ func (g *cGen) generate() string {
 	// Auto-generate to_string functions for enums, structs, and classes (used by assert_eq)
 	g.emitToStringFunctions()
 
+	// Pre-scan function signatures to discover tuple types (needed before forward decls)
+	for _, f := range g.prog.Functions {
+		if len(f.TypeParams) > 0 {
+			continue
+		}
+		if f.ReturnType != nil && f.ReturnType.Kind == LTyTuple {
+			g.cTupleType(f.ReturnType)
+		}
+		for _, p := range f.Params {
+			if p.Type != nil && p.Type.Kind == LTyTuple {
+				g.cTupleType(p.Type)
+			}
+		}
+	}
+
+	// Emit tuple typedefs (before forward declarations that reference them)
+	for key, name := range g.tupleTypes {
+		fieldTypes := strings.Split(key, ",")
+		g.linef("typedef struct %s {", name)
+		g.indent++
+		for i, ft := range fieldTypes {
+			g.linef("%s _%d;", ft, i)
+		}
+		g.indent--
+		g.linef("} %s;", name)
+	}
+	if len(g.tupleTypes) > 0 {
+		g.line("")
+	}
+
 	// Forward-declare all functions (including methods)
 	// Skip unmonomorphized generic functions (still have TypeParams — dead code from stdlib merge)
 	for _, f := range g.prog.Functions {
@@ -569,12 +604,19 @@ func (g *cGen) cTupleType(t *LType) string {
 			return "forge_parse_float_result"
 		}
 	}
-	// Fallback: anonymous struct
-	var fields []string
-	for i, f := range t.Fields {
-		fields = append(fields, fmt.Sprintf("%s _%d", g.cType(f.Type), i))
+	// Fallback: register a named typedef (like sliceTypes/optTypes pattern)
+	var fieldTypes []string
+	for _, f := range t.Fields {
+		fieldTypes = append(fieldTypes, g.cType(f.Type))
 	}
-	return fmt.Sprintf("struct { %s; }", strings.Join(fields, "; "))
+	key := strings.Join(fieldTypes, ",")
+	if name, ok := g.tupleTypes[key]; ok {
+		return name
+	}
+	name := fmt.Sprintf("ForgeTuple_%d", g.tupleCount)
+	g.tupleCount++
+	g.tupleTypes[key] = name
+	return name
 }
 
 // ---------------------------------------------------------------------------
@@ -1300,7 +1342,17 @@ func (g *cGen) emitStmt(s *LStmt) {
 				g.linef("return forge_err(%s, %s);", g.emitValueAsCStr(&d.Values[1]), resultName)
 			}
 		} else {
-			g.linef("return %s;", g.emitValue(&d.Values[0]))
+			// Multi-value return for tuple types — construct tuple struct
+			if g.currentFunc != nil && g.currentFunc.ReturnType != nil && g.currentFunc.ReturnType.Kind == LTyTuple {
+				tupleName := g.cTupleType(g.currentFunc.ReturnType)
+				var fields []string
+				for i, v := range d.Values {
+					fields = append(fields, fmt.Sprintf("._%d = %s", i, g.emitValue(&v)))
+				}
+				g.linef("return (%s){ %s };", tupleName, strings.Join(fields, ", "))
+			} else {
+				g.linef("return %s;", g.emitValue(&d.Values[0]))
+			}
 		}
 
 	case LStmtIf:
