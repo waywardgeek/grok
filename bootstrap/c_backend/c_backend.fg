@@ -273,8 +273,24 @@ func escape_c(s: string) -> string {
       sb.write("\\\"")
     } else if c == '\n' as u8 {
       sb.write("\\n")
+    } else if c == '\r' as u8 {
+      sb.write("\\r")
     } else if c == '\t' as u8 {
       sb.write("\\t")
+    } else if c < 32 as u8 || c > 126 as u8 {
+      sb.write("\\x")
+      let hi = c / 16 as u8
+      let lo = c % 16 as u8
+      if hi < 10 as u8 {
+        sb.write_byte(hi + '0' as u8)
+      } else {
+        sb.write_byte(hi - 10 as u8 + 'a' as u8)
+      }
+      if lo < 10 as u8 {
+        sb.write_byte(lo + '0' as u8)
+      } else {
+        sb.write_byte(lo - 10 as u8 + 'a' as u8)
+      }
     } else {
       sb.write_byte(c)
     }
@@ -1029,6 +1045,10 @@ func CGen.printf_spec_and_arg(self, v: LValue?) -> (string, string) {
     TyBool => { return ("%s", f"forge_bool_str({val})") }
     TyString => { return ("%.*s", f"(int){val}.len, (const char*){val}.data") }
     TyError => { return ("%s", val) }
+    TyTaggedUnion => {
+      let to_str = f"{t!.name}_to_string({val})"
+      return ("%.*s", f"(int){to_str}.len, (const char*){to_str}.data")
+    }
     TyAny => { return ("%p", val) }
     _ => { return ("%d", val) }
   }

@@ -16,6 +16,7 @@ PATTERN=""
 for arg in "$@"; do
   case "$arg" in
     --verbose) VERBOSE=true ;;
+    --rebuild) ;; # accepted but no-op (always rebuilds now)
     *) PATTERN="$arg" ;;
   esac
 done

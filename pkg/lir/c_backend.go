@@ -3071,6 +3071,10 @@ func (g *cGen) printfSpecAndArg(v *LValue) (string, string) {
 		return "%.*s", fmt.Sprintf("(int)%s.len, (const char*)%s.data", g.emitValue(v), g.emitValue(v))
 	case LTyError:
 		return "%s", g.emitValue(v)
+	case LTyTaggedUnion:
+		name := g.structName(t.Name, false)
+		toStr := fmt.Sprintf("%s_to_string(%s)", name, g.emitValue(v))
+		return "%.*s", fmt.Sprintf("(int)%s.len, (const char*)%s.data", toStr, toStr)
 	case LTyAny:
 		return "%p", g.emitValue(v)
 	default:
