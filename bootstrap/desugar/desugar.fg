@@ -983,4 +983,241 @@ forge desugar {
     }
   }
 
+  // === Rich type parameter substitution (map[string]TypeExpr) ===
+  // Used by DesugarDestructors: when replacing type param P with Dict<V>,
+  // === Rich type parameter substitution (map[string]TypeExpr) ===
+  // Used by DesugarDestructors: when replacing type param P with Dict<V>,
+  // the replacement carries Args so generic instantiations are preserved.
+
+  func substitute_type_params_rich_in_block(block: Block, type_map: Dict<TypeExpr>) {
+    for stmt in block.bs_children() {
+      substitute_type_params_rich_in_stmt(stmt, type_map)
+    }
+  }
+
+  func substitute_type_params_rich_in_stmt(stmt: Stmt, type_map: Dict<TypeExpr>) {
+    match stmt.kind {
+      ExprStmt(expr) => {
+        substitute_type_params_rich_in_expr(expr, type_map)
+      }
+      Assign(target, value) => {
+        substitute_type_params_rich_in_expr(target, type_map)
+        substitute_type_params_rich_in_expr(value, type_map)
+      }
+      VarDecl(name, names, type_expr, is_mut, value) => {
+        if !isnull(value) { substitute_type_params_rich_in_expr(value!, type_map) }
+      }
+      Return(value) => {
+        if !isnull(value) { substitute_type_params_rich_in_expr(value!, type_map) }
+      }
+      If(condition, then_block, else_ifs, else_block) => {
+        substitute_type_params_rich_in_expr(condition, type_map)
+        substitute_type_params_rich_in_block(then_block, type_map)
+        for ei in else_ifs {
+          if !isnull(ei.condition) {
+            substitute_type_params_rich_in_expr(ei.condition!, type_map)
+          }
+          if !isnull(ei.body) {
+            substitute_type_params_rich_in_block(ei.body!, type_map)
+          }
+        }
+        if !isnull(else_block) { substitute_type_params_rich_in_block(else_block!, type_map) }
+      }
+      While(condition, body) => {
+        substitute_type_params_rich_in_expr(condition, type_map)
+        substitute_type_params_rich_in_block(body, type_map)
+      }
+      For(var_name, index_var, collection, body) => {
+        substitute_type_params_rich_in_expr(collection, type_map)
+        substitute_type_params_rich_in_block(body, type_map)
+      }
+      Match(value, arms) => {
+        substitute_type_params_rich_in_expr(value, type_map)
+        for arm in arms {
+          if !isnull(arm.body) { substitute_type_params_rich_in_block(arm.body!, type_map) }
+        }
+      }
+      BlockStmt(block) => {
+        substitute_type_params_rich_in_block(block, type_map)
+      }
+      _ => {}
+    }
+  }
+
+  func substitute_type_params_rich_in_expr(expr: Expr, type_map: Dict<TypeExpr>) {
+    match expr.kind {
+      Call(func_expr, type_args, args) => {
+        let mut i: i32 = 0
+        while i < len(type_args) {
+          substitute_type_params_rich_in_type_expr(type_args[i], type_map)
+          i = i + 1
+        }
+        substitute_type_params_rich_in_expr(func_expr, type_map)
+        i = 0
+        while i < len(args) {
+          substitute_type_params_rich_in_expr(args[i], type_map)
+          i = i + 1
+        }
+      }
+      MethodCall(receiver, method, type_args, args) => {
+        let mut i: i32 = 0
+        while i < len(type_args) {
+          substitute_type_params_rich_in_type_expr(type_args[i], type_map)
+          i = i + 1
+        }
+        substitute_type_params_rich_in_expr(receiver, type_map)
+        i = 0
+        while i < len(args) {
+          substitute_type_params_rich_in_expr(args[i], type_map)
+          i = i + 1
+        }
+      }
+      Unary(op, operand) => {
+        substitute_type_params_rich_in_expr(operand, type_map)
+      }
+      Binary(left, op, right) => {
+        substitute_type_params_rich_in_expr(left, type_map)
+        substitute_type_params_rich_in_expr(right, type_map)
+      }
+      FieldAccess(receiver, field_name) => {
+        substitute_type_params_rich_in_expr(receiver, type_map)
+      }
+      Index(receiver, index) => {
+        substitute_type_params_rich_in_expr(receiver, type_map)
+        substitute_type_params_rich_in_expr(index, type_map)
+      }
+      _ => {}
+    }
+  }
+
+  func substitute_type_params_rich_in_type_expr(te: TypeExpr, type_map: Dict<TypeExpr>) {
+    match te.kind {
+      Named(name, args) => {
+        let entry = dict_get<TypeExpr>(type_map, name.name)
+        if !isnull(entry) {
+          // Replace entirely with the rich TypeExpr (which carries Args)
+          let replacement = entry!.value
+          te.kind = replacement.kind
+          te.span = replacement.span
+          return
+        }
+        let mut i: i32 = 0
+        while i < len(args) {
+          substitute_type_params_rich_in_type_expr(args[i], type_map)
+          i = i + 1
+        }
+      }
+      Optional(inner) => {
+        substitute_type_params_rich_in_type_expr(inner, type_map)
+      }
+      Sequence(elem) => {
+        substitute_type_params_rich_in_type_expr(elem, type_map)
+      }
+      _ => {}
+    }
+  }
+
+  // === Method call renaming ===
+  // Used by DesugarDestructors to rewrite generic interface method names
+  // (e.g. "children") to label-prefixed concrete names (e.g. "fb_children").
+
+  func rename_method_calls_in_block(block: Block, renames: Dict<string>) {
+    for stmt in block.bs_children() {
+      rename_method_calls_in_stmt(stmt, renames)
+    }
+  }
+
+  func rename_method_calls_in_stmt(stmt: Stmt, renames: Dict<string>) {
+    match stmt.kind {
+      ExprStmt(expr) => {
+        rename_method_calls_in_expr(expr, renames)
+      }
+      Assign(target, value) => {
+        rename_method_calls_in_expr(target, renames)
+        rename_method_calls_in_expr(value, renames)
+      }
+      VarDecl(name, names, type_expr, is_mut, value) => {
+        if !isnull(value) { rename_method_calls_in_expr(value!, renames) }
+      }
+      If(condition, then_block, else_ifs, else_block) => {
+        rename_method_calls_in_expr(condition, renames)
+        rename_method_calls_in_block(then_block, renames)
+        for ei in else_ifs {
+          if !isnull(ei.condition) {
+            rename_method_calls_in_expr(ei.condition!, renames)
+          }
+          if !isnull(ei.body) {
+            rename_method_calls_in_block(ei.body!, renames)
+          }
+        }
+        if !isnull(else_block) { rename_method_calls_in_block(else_block!, renames) }
+      }
+      While(condition, body) => {
+        rename_method_calls_in_expr(condition, renames)
+        rename_method_calls_in_block(body, renames)
+      }
+      For(var_name, index_var, collection, body) => {
+        rename_method_calls_in_expr(collection, renames)
+        rename_method_calls_in_block(body, renames)
+      }
+      Match(value, arms) => {
+        rename_method_calls_in_expr(value, renames)
+        for arm in arms {
+          if !isnull(arm.body) { rename_method_calls_in_block(arm.body!, renames) }
+        }
+      }
+      Return(value) => {
+        if !isnull(value) { rename_method_calls_in_expr(value!, renames) }
+      }
+      BlockStmt(block) => {
+        rename_method_calls_in_block(block, renames)
+      }
+      _ => {}
+    }
+  }
+
+  func rename_method_calls_in_expr(expr: Expr, renames: Dict<string>) {
+    match expr.kind {
+      MethodCall(receiver, method, type_args, args) => {
+        let entry = dict_get<string>(renames, method.name)
+        if !isnull(entry) {
+          expr.kind = MethodCall(receiver, sym(entry!.value), type_args, args)
+        }
+        rename_method_calls_in_expr(receiver, renames)
+        let mut i: i32 = 0
+        while i < len(args) {
+          rename_method_calls_in_expr(args[i], renames)
+          i = i + 1
+        }
+      }
+      Call(func_expr, type_args, args) => {
+        rename_method_calls_in_expr(func_expr, renames)
+        let mut i: i32 = 0
+        while i < len(args) {
+          rename_method_calls_in_expr(args[i], renames)
+          i = i + 1
+        }
+      }
+      Binary(left, op, right) => {
+        rename_method_calls_in_expr(left, renames)
+        rename_method_calls_in_expr(right, renames)
+      }
+      Unary(op, operand) => {
+        rename_method_calls_in_expr(operand, renames)
+      }
+      FieldAccess(receiver, field_name) => {
+        rename_method_calls_in_expr(receiver, renames)
+      }
+      Index(receiver, index) => {
+        rename_method_calls_in_expr(receiver, renames)
+        rename_method_calls_in_expr(index, renames)
+      }
+      Unwrap(operand) => {
+        rename_method_calls_in_expr(operand, renames)
+      }
+      _ => {}
+    }
+  }
+
 }
+
