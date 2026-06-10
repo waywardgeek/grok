@@ -1303,10 +1303,10 @@ func CGen.emit_builtin(self, d: LBuiltinData?) -> string {
       return f"forge_char_to_string({self.emit_value(args[0])})"
     }
   }
-  if name == "println" || name == "Println" {
+  if name == "println" || name == "Println" || name == "fmt.Println" {
     return self.emit_println(args)
   }
-  if name == "print" || name == "Print" {
+  if name == "print" || name == "Print" || name == "fmt.Print" {
     return self.emit_fprint("stdout", args, false)
   }
   if name == "panic" {
@@ -1520,8 +1520,22 @@ func CGen.emit_call_expr(self, e: LExpr?) -> string {
   let d = e!.call!
   let name = c_safe_name(d.func_name)
   // Map known stdlib functions
-  if name == "println" {
+  if name == "println" || name == "fmt.Println" {
     return self.emit_println(d.args)
+  }
+  if name == "fmt.Printf" {
+    return self.emit_printf(d.args)
+  }
+  if name == "fmt.Sprintf" {
+    return self.emit_sprintf(d.args)
+  }
+  if name == "fmt.Errorf" || name == "errors.New" {
+    if len(d.args) > 0 {
+      return f"(const char*){self.emit_value(d.args[0])}"
+    }
+  }
+  if name == "fmt.Print" {
+    return self.emit_fprint("stdout", d.args, false)
   }
   if name == "panic" && len(d.args) > 0 {
     return f"forge_panic({self.emit_value(d.args[0])})"

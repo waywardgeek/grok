@@ -1025,6 +1025,23 @@ forge checker {
   // =====================================================================
 
   func Checker.func_decl_to_type(self, f: FuncDecl) -> Type {
+    // Collect type param names first and temporarily bind to scope
+    let mut tpnames: [string] = []
+    let tps = f.fp_children()
+    for tp in tps {
+      if tp.name != nil {
+        let tpname = sym_to_string(tp.name!)
+        append(tpnames, tpname)
+      }
+    }
+    // Push scope for type params so resolve_type_expr can find them
+    if len(tpnames) > 0 {
+      self.push_scope()
+      for tpname in tpnames {
+        self.scope.define(tpname, make_typevar_type(tpname))
+      }
+    }
+
     let mut param_types: [Type] = []
     let params = f.param_children()
     for p in params {
@@ -1040,15 +1057,9 @@ forge checker {
     if f.return_type != nil {
       ret = self.resolve_type_expr(f.return_type!)
     }
-    // Generator return type detection from annotations (not a field)
-    // TODO: detect generators from yield statements in body
 
-    let mut tpnames: [string] = []
-    let tps = f.fp_children()
-    for tp in tps {
-      if tp.name != nil {
-        append(tpnames, sym_to_string(tp.name!))
-      }
+    if len(tpnames) > 0 {
+      self.pop_scope()
     }
 
     return make_func_type(param_types, ret, tpnames)

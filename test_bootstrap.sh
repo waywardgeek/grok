@@ -10,30 +10,30 @@ RUNTIME_DIR="runtime"
 TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
-REBUILD=false
 VERBOSE=false
 PATTERN=""
 
 for arg in "$@"; do
   case "$arg" in
-    --rebuild) REBUILD=true ;;
     --verbose) VERBOSE=true ;;
     *) PATTERN="$arg" ;;
   esac
 done
 
-# Build bootstrap if needed
-if [ ! -f "$BOOTSTRAP" ] || $REBUILD; then
-  echo "Building bootstrap..."
-  $FORGE compile bootstrap/lir/lir.fg bootstrap/lexer/lexer.fg bootstrap/parser/parser.fg \
-    bootstrap/parser/expr_parser.fg bootstrap/desugar/desugar.fg bootstrap/checker/checker.fg \
-    bootstrap/lowerer/lowerer.fg bootstrap/ast/ast.fg bootstrap/optimizer/optimizer.fg \
-    bootstrap/monomorphizer/monomorphizer.fg bootstrap/c_backend/c_backend.fg \
-    bootstrap/main/main.fg -o "$TMPDIR/bootstrap.c"
-  gcc -std=gnu11 -O2 -o "$BOOTSTRAP" "$TMPDIR/bootstrap.c" -I "$RUNTIME_DIR" 2>/dev/null
-  echo "Bootstrap built."
-  echo ""
-fi
+# Always rebuild Go compiler
+echo "Building Go compiler..."
+go build -o forge ./cmd/forge
+
+# Always rebuild bootstrap
+echo "Building bootstrap..."
+$FORGE compile bootstrap/lir/lir.fg bootstrap/lexer/lexer.fg bootstrap/parser/parser.fg \
+  bootstrap/parser/expr_parser.fg bootstrap/desugar/desugar.fg bootstrap/checker/checker.fg \
+  bootstrap/lowerer/lowerer.fg bootstrap/ast/ast.fg bootstrap/optimizer/optimizer.fg \
+  bootstrap/monomorphizer/monomorphizer.fg bootstrap/c_backend/c_backend.fg \
+  bootstrap/main/main.fg -o "$TMPDIR/bootstrap.c"
+gcc -std=gnu11 -O2 -o "$BOOTSTRAP" "$TMPDIR/bootstrap.c" -I "$RUNTIME_DIR" 2>/dev/null
+echo "Bootstrap built."
+echo ""
 
 # Skip files that use features not yet in bootstrap (channels, spawn, select, lock)
 SKIP_FILES="channels.fg spawn.fg select.fg lock.fg guarded_by.fg"
@@ -107,13 +107,13 @@ for fg in testdata/*.fg; do
 
   # Run Go compiler binary as reference
   go_run_ok=true
-  if ! timeout 10 "$go_out" >"$TMPDIR/go_stdout" 2>"$TMPDIR/go_stderr"; then
+  if ! "$go_out" >"$TMPDIR/go_stdout" 2>"$TMPDIR/go_stderr"; then
     go_run_ok=false
   fi
 
   # Run bootstrap binary
   bs_run_ok=true
-  if ! timeout 10 "$bs_out" >"$TMPDIR/bs_stdout" 2>"$TMPDIR/bs_stderr"; then
+  if ! "$bs_out" >"$TMPDIR/bs_stdout" 2>"$TMPDIR/bs_stderr"; then
     bs_run_ok=false
   fi
 

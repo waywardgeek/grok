@@ -27,6 +27,7 @@ forge lowerer {
     enum_variant_tags: Dict<i32>?
     enum_variant_fields: Dict<[TupleField]>?
     current_func_return: LType?
+    import_aliases: Dict<string>?
   }
 
   func new_lowerer() -> Lowerer {
@@ -46,7 +47,8 @@ forge lowerer {
       unit_variants: Dict<bool> {},
       enum_variant_tags: Dict<i32> {},
       enum_variant_fields: Dict<[TupleField]> {},
-      current_func_return: LType { kind: TyUnit, name: "", bits: 0, is_exported: false }
+      current_func_return: LType { kind: TyUnit, name: "", bits: 0, is_exported: false },
+      import_aliases: Dict<string> {}
     }
   }
 
@@ -423,6 +425,9 @@ forge lowerer {
       for imp in block.imp_children() {
         let alias = if !isnull(imp.alias) { imp.alias!.name } else { "" }
         append(imports, LImport { alias: alias, path: imp.path })
+        if alias != "" {
+          dict_set<string>(self.import_aliases!, alias, imp.path)
+        }
       }
 
       // Structs
@@ -1887,11 +1892,40 @@ forge lowerer {
   func Lowerer.lower_method_call(
     self, orig: Expr?, receiver: Expr?, method: Sym, type_args: [TypeExpr], args: [Expr]
   ) -> LValue? {
+    // Check if receiver is an import package (e.g., fmt.Println, errors.New)
+    let method_name = method.name
+    if !isnull(receiver) && receiver!.kind is Ident {
+      match receiver!.kind {
+        Ident(id) => {
+          if dict_has<string>(self.import_aliases!, id.name) {
+            let func_name = id.name + "." + method_name
+            let mut call_args: [LValue?] = []
+            for a in args {
+              append(call_args, self.lower_expr(a))
+            }
+            let mut lta: [LType?] = []
+            for ta in type_args {
+              append(lta, self.lower_type(ta))
+            }
+            // Known void-returning functions get unit type
+            let mut rt = self.expr_type(orig)
+            if func_name == "fmt.Println" || func_name == "fmt.Print" || func_name == "fmt.Printf" {
+              rt = LType { kind: TyUnit, name: "", bits: 0, is_exported: false }
+            }
+            let call = LExpr {
+              kind: ExCall,
+              typ: rt,
+              call: LCallData { func_name: func_name, args: call_args, type_args: lta, is_exported: true }
+            }
+            return self.emit_temp(call)
+          }
+        }
+        _ => {}
+      }
+    }
+
     let recv = self.lower_expr(receiver)
     let recv_type = self.expr_type(receiver)
-
-    // Check builtin methods
-    let method_name = method.name
 
     // String methods
     if !isnull(recv_type) && recv_type!.kind is TyString {
