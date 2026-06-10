@@ -41,6 +41,7 @@ forge checker {
     Generator(elem: Type)
     ErrorResult(ok: Type, err: Type)
     Module(name: string)
+    Union(variants: [Type])
   }
 
   struct TupleFieldType {
@@ -205,6 +206,10 @@ forge checker {
 
   func make_lock_type() -> Type {
     return Type { kind: Lock, bits: 0 }
+  }
+
+  func make_union_type(variants: [Type]) -> Type {
+    return Type { kind: Union(variants), bits: 0 }
   }
 
   func make_optional_type(inner: Type) -> Type {
@@ -448,6 +453,18 @@ forge checker {
           _ => { return false }
         }
       }
+      Union(va) => {
+        match b.kind {
+          Union(vb) => {
+            if len(va) != len(vb) { return false }
+            for i in range(0, len(va)) {
+              if !types_equal(va[i], vb[i]) { return false }
+            }
+            return true
+          }
+          _ => { return false }
+        }
+      }
     }
     return false
   }
@@ -456,13 +473,26 @@ forge checker {
     match src.kind {
       Int => {
         match to.kind {
-          Int => { return src.bits != -1 && to.bits != -1 && src.bits < to.bits }
+          Int => {
+            // Platform int (bits=-1) accepts any same-kind integer
+            if to.bits == -1 && src.bits > 0 { return true }
+            if src.bits == -1 && to.bits > 0 { return true }
+            return src.bits > 0 && to.bits > 0 && src.bits < to.bits
+          }
+          // Allow i32 → u8 etc. (cross-sign integer assignment)
+          Uint => { return true }
           _ => { return false }
         }
       }
       Uint => {
         match to.kind {
-          Uint => { return src.bits != -1 && to.bits != -1 && src.bits < to.bits }
+          Uint => {
+            if to.bits == -1 && src.bits > 0 { return true }
+            if src.bits == -1 && to.bits > 0 { return true }
+            return src.bits > 0 && to.bits > 0 && src.bits < to.bits
+          }
+          // Allow u8 → i32 etc. (cross-sign integer assignment)
+          Int => { return true }
           _ => { return false }
         }
       }
@@ -550,11 +580,16 @@ forge checker {
       _ => {}
     }
 
-    // Sequence covariance
+    // Sequence covariance + empty list assignability
     match src.kind {
       Sequence(src_elem) => {
         match to.kind {
           Sequence(to_elem) => {
+            // Empty list [] (Sequence(Void)) assignable to any typed list
+            match src_elem.kind {
+              Void => { return true }
+              _ => {}
+            }
             if self.is_assignable(src_elem, to_elem) { return true }
           }
           _ => {}
@@ -575,6 +610,30 @@ forge checker {
             }
           }
         }
+      }
+      _ => {}
+    }
+
+    // Union type: any member type is assignable to the union
+    match to.kind {
+      Union(to_variants) => {
+        for v in to_variants {
+          if self.is_assignable(src, v) { return true }
+        }
+      }
+      _ => {}
+    }
+
+    // Union type: union assignable to target if ALL variants assignable
+    match src.kind {
+      Union(src_variants) => {
+        let mut all_ok = true
+        for v in src_variants {
+          if !self.is_assignable(v, to) {
+            all_ok = false
+          }
+        }
+        if all_ok { return true }
       }
       _ => {}
     }
@@ -913,6 +972,13 @@ forge checker {
       Module(name) => {
         return TypeExpr { kind: Named(sym(name), []), span: zero_span }
       }
+      Union(variants) => {
+        let mut tes: [TypeExpr] = []
+        for v in variants {
+          append(tes, type_to_type_expr(v))
+        }
+        return TypeExpr { kind: Union(tes), span: zero_span }
+      }
     }
     return TypeExpr { kind: Unit, span: zero_span }
   }
@@ -962,9 +1028,11 @@ forge checker {
         return make_func_type(param_types, self.resolve_type_expr(ret), [])
       }
       Union(variants) => {
-        if len(variants) == 0 { return make_void_type() }
-        // For now, return first variant type
-        return self.resolve_type_expr(variants[0])
+        let mut resolved: [Type] = []
+        for v in variants {
+          append(resolved, self.resolve_type_expr(v))
+        }
+        return make_union_type(resolved)
       }
       Channel(elem) => {
         return make_channel_type(self.resolve_type_expr(elem))
@@ -1080,26 +1148,94 @@ forge checker {
       }
     }
 
-    // Register interfaces first (classes may implement them)
+    // Phase 0: Pre-register all type NAMES so cross-references resolve
+    // (e.g. struct Token { kind: TokenKind } where TokenKind is an enum)
     let ifaces = block.id_children()
+    for iface in ifaces {
+      if iface.name != nil {
+        let iname = sym_to_string(iface.name!)
+        let stub = TypeInfo {
+          type_val: make_interface_type(iname),
+          fields: dict_new<Type>(),
+          field_order: [],
+          methods: dict_new<Type>(),
+          variants: dict_new<VariantInfo>(),
+          type_param_names: [],
+          type_param_constraints: [],
+          implements_list: [],
+        }
+        self.registry.register(iname, stub)
+      }
+    }
+    let structs = block.sd_children()
+    for s in structs {
+      if s.name != nil {
+        let sname = sym_to_string(s.name!)
+        let stub = TypeInfo {
+          type_val: make_struct_type(sname),
+          fields: dict_new<Type>(),
+          field_order: [],
+          methods: dict_new<Type>(),
+          variants: dict_new<VariantInfo>(),
+          type_param_names: [],
+          type_param_constraints: [],
+          implements_list: [],
+        }
+        self.registry.register(sname, stub)
+      }
+    }
+    let classes = block.cd_children()
+    for c in classes {
+      if c.name != nil {
+        let cname = sym_to_string(c.name!)
+        let stub = TypeInfo {
+          type_val: make_class_type(cname),
+          fields: dict_new<Type>(),
+          field_order: [],
+          methods: dict_new<Type>(),
+          variants: dict_new<VariantInfo>(),
+          type_param_names: [],
+          type_param_constraints: [],
+          implements_list: [],
+        }
+        self.registry.register(cname, stub)
+      }
+    }
+    let enums = block.ed_children()
+    for e in enums {
+      if e.name != nil {
+        let ename = sym_to_string(e.name!)
+        let stub = TypeInfo {
+          type_val: make_enum_type(ename),
+          fields: dict_new<Type>(),
+          field_order: [],
+          methods: dict_new<Type>(),
+          variants: dict_new<VariantInfo>(),
+          type_param_names: [],
+          type_param_constraints: [],
+          implements_list: [],
+        }
+        self.registry.register(ename, stub)
+      }
+    }
+
+    // Phase 1: Full registration with field resolution
+    // Register interfaces first (classes may implement them)
     for iface in ifaces {
       self.register_interface(iface)
     }
 
     // Register struct types
-    let structs = block.sd_children()
     for s in structs {
       self.register_struct(s)
     }
 
     // Register class types
-    let classes = block.cd_children()
     for c in classes {
       self.register_class(c)
     }
 
     // Register enum types
-    let enums = block.ed_children()
     for e in enums {
       self.register_enum(e)
     }
