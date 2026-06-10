@@ -1,10 +1,11 @@
 // checker.fg — Type checker for the Forge bootstrap compiler
-// Ported from pkg/checker/checker.go (~2879 lines)
+// Rewritten from scratch based on pkg/checker/checker.go (~4163 lines)
 //
 // Design:
 //   - Two-phase: register_forge_block (types/signatures) then check_forge_block_bodies (bodies)
 //   - Scope chain for variable resolution (parent pointers)
 //   - Dict<Type> for type registry and variable scopes
+//   - Internal Type representation for checking; converted to TypeExpr for annotation
 //   - ResolvedType annotation on Expr nodes is the checker→lowerer contract
 //   - Numeric widening: same-sign integers widen to larger bit widths; floats widen
 //   - No cross-kind coercion (int→float requires explicit cast)
@@ -22,13 +23,14 @@ forge checker {
     Float
     Bool
     String
-    Void
+    Void     // unit type (no value)
+    Nil      // nil literal — assignable to optional, class, interface, error
     Any
     Optional(inner: Type)
     Sequence(elem: Type)
     Map(key: Type, value: Type)
     Tuple(fields: [TupleFieldType])
-    Func(params: [Type], ret: Type)
+    Func(params: [Type], ret: Type, type_param_names: [Sym])
     Struct(name: Sym, fields: [FieldInfo], type_params: [Sym])
     Class(name: Sym, fields: [FieldInfo], type_params: [Sym])
     Enum(name: Sym, variants: [VariantInfo], type_params: [Sym])
@@ -37,8 +39,8 @@ forge checker {
     Channel(elem: Type)
     Generator(elem: Type)
     Lock
-    Error
-    Result(ok: Type, err: Type)
+    Error       // error interface — assignable to/from TyNil and classes that impl error
+    ErrorResult(ok: Type, err: Type) // (T, error) tuple for try operator
   }
 
   struct TupleFieldType {
@@ -104,8 +106,10 @@ forge checker {
     methods: Dict<Type>            // "TypeName.method" -> function Type
     impl_renames: Dict<Sym>        // "TypeName.interfaceMethod" -> "actualMethod"
     enum_variant_types: Dict<Type> // "EnumName.VariantName" -> enum Type
+    enum_variants_by_name: Dict<Type> // bare "VariantName" -> enum Type (last wins)
     errors: [string]
     current_func_return: Type?
+    scope: Scope?                  // current top-level scope for enum variant resolution
   }
 
   func new_checker() -> Checker {
@@ -115,8 +119,10 @@ forge checker {
       methods: dict_new<Type>(),
       impl_renames: dict_new<Sym>(),
       enum_variant_types: dict_new<Type>(),
+      enum_variants_by_name: dict_new<Type>(),
       errors: [],
       current_func_return: nil,
+      scope: nil,
     }
     // Register primitive types
     register_primitive(c, "bool", make_bool_type())
@@ -168,6 +174,10 @@ forge checker {
     return Type { kind: Void, bits: 0, is_class: false }
   }
 
+  func make_nil_type() -> Type {
+    return Type { kind: Nil, bits: 0, is_class: false }
+  }
+
   func make_any_type() -> Type {
     return Type { kind: Any, bits: 0, is_class: false }
   }
@@ -184,12 +194,20 @@ forge checker {
     return Type { kind: Sequence(elem), bits: 0, is_class: false }
   }
 
+  func make_map_type(key: Type, value: Type) -> Type {
+    return Type { kind: Map(key, value), bits: 0, is_class: false }
+  }
+
   func make_tuple_type(fields: [TupleFieldType]) -> Type {
     return Type { kind: Tuple(fields), bits: 0, is_class: false }
   }
 
   func make_func_type(params: [Type], ret: Type) -> Type {
-    return Type { kind: Func(params, ret), bits: 0, is_class: false }
+    return Type { kind: Func(params, ret, []), bits: 0, is_class: false }
+  }
+
+  func make_generic_func_type(params: [Type], ret: Type, type_params: [Sym]) -> Type {
+    return Type { kind: Func(params, ret, type_params), bits: 0, is_class: false }
   }
 
   func make_channel_type(elem: Type) -> Type {
@@ -200,8 +218,8 @@ forge checker {
     return Type { kind: Generator(elem), bits: 0, is_class: false }
   }
 
-  func make_result_type(ok: Type, err: Type) -> Type {
-    return Type { kind: Result(ok, err), bits: 0, is_class: false }
+  func make_error_result_type(ok: Type, err: Type) -> Type {
+    return Type { kind: ErrorResult(ok, err), bits: 0, is_class: false }
   }
 
   func make_typevar_type(name: Sym) -> Type {
@@ -213,59 +231,24 @@ forge checker {
   func types_equal(a: Type, b: Type) -> bool {
     match a.kind {
       Int => {
-        match b.kind {
-          Int => { return a.bits == b.bits }
-          _ => { return false }
-        }
+        if b.kind is Int { return a.bits == b.bits }
+        return false
       }
       Uint => {
-        match b.kind {
-          Uint => { return a.bits == b.bits }
-          _ => { return false }
-        }
+        if b.kind is Uint { return a.bits == b.bits }
+        return false
       }
       Float => {
-        match b.kind {
-          Float => { return a.bits == b.bits }
-          _ => { return false }
-        }
+        if b.kind is Float { return a.bits == b.bits }
+        return false
       }
-      Bool => {
-        match b.kind {
-          Bool => { return true }
-          _ => { return false }
-        }
-      }
-      String => {
-        match b.kind {
-          String => { return true }
-          _ => { return false }
-        }
-      }
-      Void => {
-        match b.kind {
-          Void => { return true }
-          _ => { return false }
-        }
-      }
-      Any => {
-        match b.kind {
-          Any => { return true }
-          _ => { return false }
-        }
-      }
-      Error => {
-        match b.kind {
-          Error => { return true }
-          _ => { return false }
-        }
-      }
-      Lock => {
-        match b.kind {
-          Lock => { return true }
-          _ => { return false }
-        }
-      }
+      Bool => { return b.kind is Bool }
+      String => { return b.kind is String }
+      Void => { return b.kind is Void }
+      Nil => { return b.kind is Nil }
+      Any => { return b.kind is Any }
+      Error => { return b.kind is Error }
+      Lock => { return b.kind is Lock }
       Optional(inner_a) => {
         match b.kind {
           Optional(inner_b) => { return types_equal(inner_a, inner_b) }
@@ -296,22 +279,18 @@ forge checker {
           _ => { return false }
         }
       }
-      Result(ok_a, err_a) => {
+      ErrorResult(ok_a, err_a) => {
         match b.kind {
-          Result(ok_b, err_b) => { return types_equal(ok_a, ok_b) && types_equal(err_a, err_b) }
+          ErrorResult(ok_b, err_b) => { return types_equal(ok_a, ok_b) && types_equal(err_a, err_b) }
           _ => { return false }
         }
       }
-      Func(params_a, ret_a) => {
+      Func(params_a, ret_a, _) => {
         match b.kind {
-          Func(params_b, ret_b) => {
-            if len(params_a) != len(params_b) {
-              return false
-            }
+          Func(params_b, ret_b, _) => {
+            if len(params_a) != len(params_b) { return false }
             for i in range(0, len(params_a)) {
-              if !types_equal(params_a[i], params_b[i]) {
-                return false
-              }
+              if !types_equal(params_a[i], params_b[i]) { return false }
             }
             return types_equal(ret_a, ret_b)
           }
@@ -321,14 +300,10 @@ forge checker {
       Tuple(fields_a) => {
         match b.kind {
           Tuple(fields_b) => {
-            if len(fields_a) != len(fields_b) {
-              return false
-            }
+            if len(fields_a) != len(fields_b) { return false }
             for i in range(0, len(fields_a)) {
               if fields_a[i].type_val != nil && fields_b[i].type_val != nil {
-                if !types_equal(fields_a[i].type_val!, fields_b[i].type_val!) {
-                  return false
-                }
+                if !types_equal(fields_a[i].type_val!, fields_b[i].type_val!) { return false }
               }
             }
             return true
@@ -399,47 +374,91 @@ forge checker {
 
   func is_assignable(src: Type, to: Type) -> bool {
     // Exact match
-    if types_equal(src, to) {
-      return true
+    if types_equal(src, to) { return true }
+
+    // TyNil assignable to optional, class, interface, error
+    match src.kind {
+      Nil => {
+        match to.kind {
+          Optional(_) => { return true }
+          Class(_, _, _) => { return true }
+          Interface(_, _, _) => { return true }
+          Error => { return true }
+          _ => { return true }  // Forge allows nil for all types currently
+        }
+      }
+      _ => {}
     }
+
     // Any accepts everything
     match to.kind {
       Any => { return true }
       _ => {}
     }
-    // nil → optional
+    // Any source goes to any target
     match src.kind {
-      Void => {
+      Any => { return true }
+      _ => {}
+    }
+
+    // T → T?
+    match to.kind {
+      Optional(inner) => {
+        if is_assignable(src, inner) { return true }
+      }
+      _ => {}
+    }
+
+    // T? → T? (covariant)
+    match src.kind {
+      Optional(src_inner) => {
         match to.kind {
-          Optional(_) => { return true }
+          Optional(to_inner) => {
+            if is_assignable(src_inner, to_inner) { return true }
+          }
           _ => {}
         }
       }
       _ => {}
     }
-    // T → T?
-    match to.kind {
-      Optional(inner) => {
-        if is_assignable(src, inner) {
-          return true
-        }
-      }
-      _ => {}
-    }
+
     // Numeric widening
-    if numeric_widens(src, to) {
-      return true
-    }
+    if numeric_widens(src, to) { return true }
+
     // error interface
     match to.kind {
       Error => {
         match src.kind {
-          Class(_, _, _) => { return true }  // simplified: any class can impl error
+          Class(_, _, _) => { return true }
           _ => {}
         }
       }
       _ => {}
     }
+
+    // TypeVar compatible with anything (generics)
+    match src.kind {
+      TypeVar(_) => { return true }
+      _ => {}
+    }
+    match to.kind {
+      TypeVar(_) => { return true }
+      _ => {}
+    }
+
+    // Sequence covariance
+    match src.kind {
+      Sequence(src_elem) => {
+        match to.kind {
+          Sequence(to_elem) => {
+            if is_assignable(src_elem, to_elem) { return true }
+          }
+          _ => {}
+        }
+      }
+      _ => {}
+    }
+
     return false
   }
 
@@ -468,7 +487,142 @@ forge checker {
     append(self.errors, loc + ": " + msg)
   }
 
-  // ---- Type resolution src AST TypeExpr ----
+  // ---- Type → TypeExpr conversion (for annotation) ----
+
+  func type_to_type_expr(t: Type) -> TypeExpr {
+    let zero_span = Span {
+      start: Pos { file: nil, line: 0, column: 0 },
+      end: Pos { file: nil, line: 0, column: 0 },
+    }
+    match t.kind {
+      Int => {
+        let mut name = "int"
+        if t.bits == 8 {
+          name = "i8"
+        } else if t.bits == 16 {
+          name = "i16"
+        } else if t.bits == 32 {
+          name = "i32"
+        } else if t.bits == 64 {
+          name = "i64"
+        }
+        return TypeExpr { kind: Named(sym(name), []), span: zero_span }
+      }
+      Uint => {
+        let mut name = "uint"
+        if t.bits == 8 {
+          name = "u8"
+        } else if t.bits == 16 {
+          name = "u16"
+        } else if t.bits == 32 {
+          name = "u32"
+        } else if t.bits == 64 {
+          name = "u64"
+        }
+        return TypeExpr { kind: Named(sym(name), []), span: zero_span }
+      }
+      Float => {
+        let mut name = "f64"
+        if t.bits == 32 {
+          name = "f32"
+        }
+        return TypeExpr { kind: Named(sym(name), []), span: zero_span }
+      }
+      Bool => {
+        return TypeExpr { kind: Named(sym("bool"), []), span: zero_span }
+      }
+      String => {
+        return TypeExpr { kind: Named(sym("string"), []), span: zero_span }
+      }
+      Void | Nil => {
+        return TypeExpr { kind: Unit, span: zero_span }
+      }
+      Any => {
+        return TypeExpr { kind: Named(sym("any"), []), span: zero_span }
+      }
+      Error => {
+        return TypeExpr { kind: Named(sym("error"), []), span: zero_span }
+      }
+      Optional(inner) => {
+        let inner_te = type_to_type_expr(inner)
+        return TypeExpr { kind: Optional(inner_te), span: zero_span }
+      }
+      Sequence(elem) => {
+        let elem_te = type_to_type_expr(elem)
+        return TypeExpr { kind: Sequence(elem_te), span: zero_span }
+      }
+      Map(key, value) => {
+        let key_te = type_to_type_expr(key)
+        let val_te = type_to_type_expr(value)
+        return TypeExpr { kind: Map(key_te, val_te), span: zero_span }
+      }
+      Tuple(fields) => {
+        let mut tfields: [TupleField] = []
+        for f in fields {
+          let mut te: TypeExpr? = nil
+          if f.type_val != nil {
+            te = type_to_type_expr(f.type_val!)
+          }
+          append(tfields, TupleField { name: f.name, type_expr: te })
+        }
+        return TypeExpr { kind: Tuple(tfields), span: zero_span }
+      }
+      Func(params, ret, _) => {
+        let mut param_tes: [TypeExpr] = []
+        for p in params {
+          append(param_tes, type_to_type_expr(p))
+        }
+        let ret_te = type_to_type_expr(ret)
+        return TypeExpr { kind: Func(param_tes, ret_te), span: zero_span }
+      }
+      Struct(name, _, type_params) => {
+        let mut args: [TypeExpr] = []
+        return TypeExpr { kind: Named(name, args), span: zero_span }
+      }
+      Class(name, _, type_params) => {
+        let mut args: [TypeExpr] = []
+        return TypeExpr { kind: Named(name, args), span: zero_span }
+      }
+      Enum(name, _, _) => {
+        return TypeExpr { kind: Named(name, []), span: zero_span }
+      }
+      Interface(name, _, _) => {
+        return TypeExpr { kind: Named(name, []), span: zero_span }
+      }
+      TypeVar(name) => {
+        return TypeExpr { kind: Named(name, []), span: zero_span }
+      }
+      Channel(elem) => {
+        let elem_te = type_to_type_expr(elem)
+        return TypeExpr { kind: Channel(elem_te), span: zero_span }
+      }
+      Generator(elem) => {
+        let elem_te = type_to_type_expr(elem)
+        return TypeExpr { kind: Generator(elem_te), span: zero_span }
+      }
+      Lock => {
+        return TypeExpr { kind: Lock, span: zero_span }
+      }
+      ErrorResult(ok, err) => {
+        let ok_te = type_to_type_expr(ok)
+        let err_te = type_to_type_expr(err)
+        let fields = [
+          TupleField { name: nil, type_expr: ok_te },
+          TupleField { name: nil, type_expr: err_te },
+        ]
+        return TypeExpr { kind: Tuple(fields), span: zero_span }
+      }
+    }
+    return TypeExpr { kind: Unit, span: zero_span }
+  }
+
+  // Annotate an expression with its resolved type
+  func annotate(expr: Expr, t: Type) -> Type {
+    expr.resolved_type = type_to_type_expr(t)
+    return t
+  }
+
+  // ---- Type resolution from AST TypeExpr ----
 
   func Checker.resolve_type_expr(self, te: TypeExpr) -> Type {
     match te.kind {
@@ -476,6 +630,16 @@ forge checker {
         let name_str = sym_to_string(name)
         let entry = dict_get<Type>(self.types, name_str)
         if entry == nil {
+          // Could be a type variable in scope
+          if self.scope != nil {
+            let sv = self.scope!.lookup(name_str)
+            if sv != nil {
+              match sv!.kind {
+                TypeVar(_) => { return sv! }
+                _ => {}
+              }
+            }
+          }
           self.error_at(te.span, "unknown type: " + name_str)
           return make_any_type()
         }
@@ -493,7 +657,7 @@ forge checker {
       Map(key, value) => {
         let key_t = self.resolve_type_expr(key)
         let val_t = self.resolve_type_expr(value)
-        return Type { kind: Map(key_t, val_t), bits: 0, is_class: false }
+        return make_map_type(key_t, val_t)
       }
       Tuple(fields) => {
         let mut tfields: [TupleFieldType] = []
@@ -515,10 +679,7 @@ forge checker {
         return make_func_type(param_types, ret_t)
       }
       Union(variants) => {
-        // For bootstrap, union types are simplified
-        if len(variants) == 0 {
-          return make_any_type()
-        }
+        if len(variants) == 0 { return make_any_type() }
         return self.resolve_type_expr(variants[0])
       }
       Channel(elem) => {
@@ -541,105 +702,8 @@ forge checker {
 
   // ---- Phase 1: Register all types and function signatures ----
 
-  func Checker.register_forge_block(self, block: ForgeBlock) {
-    // Register struct types
-    let structs = block.sd_children()
-    for s in structs {
-      let mut fields: [FieldInfo] = []
-      let sfields = s.sf_children()
-      for f in sfields {
-        let mut ft: Type? = nil
-        if f.type_expr != nil {
-          ft = self.resolve_type_expr(f.type_expr!)
-        }
-        append(fields, FieldInfo { name: f.name, type_val: ft, is_public: f.is_public })
-      }
-      let mut tparams: [Sym] = []
-      let stparams = s.stp_children()
-      for tp in stparams {
-        if tp.name != nil {
-          append(tparams, tp.name!)
-        }
-      }
-      let name_str = sym_to_string(s.name!)
-      let t = Type {
-        kind: Struct(s.name!, fields, tparams),
-        bits: 0,
-        is_class: false,
-      }
-      dict_set<Type>(self.types, name_str, t)
-    }
-
-    // Register class types
-    let classes = block.cd_children()
-    for c in classes {
-      let mut fields: [FieldInfo] = []
-      let cfields = c.cf_children()
-      for f in cfields {
-        let mut ft: Type? = nil
-        if f.type_expr != nil {
-          ft = self.resolve_type_expr(f.type_expr!)
-        }
-        append(fields, FieldInfo { name: f.name, type_val: ft, is_public: f.is_public })
-      }
-      let mut tparams: [Sym] = []
-      let ctparams = c.ctp_children()
-      for tp in ctparams {
-        if tp.name != nil {
-          append(tparams, tp.name!)
-        }
-      }
-      let name_str = sym_to_string(c.name!)
-      let t = Type {
-        kind: Class(c.name!, fields, tparams),
-        bits: 0,
-        is_class: true,
-      }
-      dict_set<Type>(self.types, name_str, t)
-    }
-
-    // Register enum types
-    let enums = block.ed_children()
-    for e in enums {
-      let mut variants: [VariantInfo] = []
-      let evs = e.ev_children()
-      for v in evs {
-        let mut vfields: [TupleFieldType] = []
-        let evfs = v.evf_children()
-        for f in evfs {
-          let mut ft: Type? = nil
-          if f.type_expr != nil {
-            ft = self.resolve_type_expr(f.type_expr!)
-          }
-          append(vfields, TupleFieldType { name: f.name, type_val: ft })
-        }
-        append(variants, VariantInfo { name: v.name, fields: vfields })
-      }
-      let mut tparams: [Sym] = []
-      let etparams = e.etp_children()
-      for tp in etparams {
-        if tp.name != nil {
-          append(tparams, tp.name!)
-        }
-      }
-      let name_str = sym_to_string(e.name!)
-      let t = Type {
-        kind: Enum(e.name!, variants, tparams),
-        bits: 0,
-        is_class: false,
-      }
-      dict_set<Type>(self.types, name_str, t)
-
-      // Register variant constructors
-      for v in evs {
-        if v.name != nil {
-          let vkey = name_str + "." + sym_to_string(v.name!)
-          dict_set<Type>(self.enum_variant_types, vkey, t)
-        }
-      }
-    }
-
-    // Register interface types
+  func Checker.register_forge_block(self, block: ForgeBlock, scope: Scope) {
+    // Register interfaces first (classes may implement them)
     let ifaces = block.id_children()
     for iface in ifaces {
       let mut methods: [MethodInfo] = []
@@ -661,31 +725,128 @@ forge checker {
         let mut mtparams: [Sym] = []
         let ftparams = m.fp_children()
         for tp in ftparams {
-          if tp.name != nil {
-            append(mtparams, tp.name!)
-          }
+          if tp.name != nil { append(mtparams, tp.name!) }
         }
         append(methods, MethodInfo {
-          name: m.name,
-          params: param_types,
-          ret: ret,
-          type_params: mtparams,
+          name: m.name, params: param_types, ret: ret, type_params: mtparams,
         })
       }
       let mut tparams: [Sym] = []
       let itparams = iface.itp_children()
       for tp in itparams {
-        if tp.name != nil {
-          append(tparams, tp.name!)
-        }
+        if tp.name != nil { append(tparams, tp.name!) }
       }
       let name_str = sym_to_string(iface.name!)
       let t = Type {
-        kind: Interface(iface.name!, methods, tparams),
-        bits: 0,
-        is_class: false,
+        kind: Interface(iface.name!, methods, tparams), bits: 0, is_class: false,
       }
       dict_set<Type>(self.types, name_str, t)
+    }
+
+    // Register struct types
+    let structs = block.sd_children()
+    for s in structs {
+      let mut fields: [FieldInfo] = []
+      let sfields = s.sf_children()
+      for f in sfields {
+        let mut ft: Type? = nil
+        if f.type_expr != nil { ft = self.resolve_type_expr(f.type_expr!) }
+        append(fields, FieldInfo { name: f.name, type_val: ft, is_public: f.is_public })
+      }
+      let mut tparams: [Sym] = []
+      let stparams = s.stp_children()
+      for tp in stparams {
+        if tp.name != nil { append(tparams, tp.name!) }
+      }
+      let name_str = sym_to_string(s.name!)
+      let t = Type { kind: Struct(s.name!, fields, tparams), bits: 0, is_class: false }
+      dict_set<Type>(self.types, name_str, t)
+    }
+
+    // Register class types
+    let classes = block.cd_children()
+    for c in classes {
+      let mut fields: [FieldInfo] = []
+      let cfields = c.cf_children()
+      for f in cfields {
+        let mut ft: Type? = nil
+        if f.type_expr != nil { ft = self.resolve_type_expr(f.type_expr!) }
+        append(fields, FieldInfo { name: f.name, type_val: ft, is_public: f.is_public })
+      }
+      let mut tparams: [Sym] = []
+      let ctparams = c.ctp_children()
+      for tp in ctparams {
+        if tp.name != nil { append(tparams, tp.name!) }
+      }
+      let name_str = sym_to_string(c.name!)
+      let t = Type { kind: Class(c.name!, fields, tparams), bits: 0, is_class: true }
+      dict_set<Type>(self.types, name_str, t)
+
+      // Register class name as constructor in scope: ClassName(...) → class type
+      let mut ctor_params: [Type] = []
+      for f in fields {
+        if f.type_val != nil {
+          append(ctor_params, f.type_val!)
+        } else {
+          append(ctor_params, make_any_type())
+        }
+      }
+      dict_set<Type>(self.funcs, name_str, make_func_type(ctor_params, t))
+    }
+
+    // Register enum types
+    let enums = block.ed_children()
+    for e in enums {
+      let mut variants: [VariantInfo] = []
+      let evs = e.ev_children()
+      for v in evs {
+        let mut vfields: [TupleFieldType] = []
+        let evfs = v.evf_children()
+        for f in evfs {
+          let mut ft: Type? = nil
+          if f.type_expr != nil { ft = self.resolve_type_expr(f.type_expr!) }
+          append(vfields, TupleFieldType { name: f.name, type_val: ft })
+        }
+        append(variants, VariantInfo { name: v.name, fields: vfields })
+      }
+      let mut tparams: [Sym] = []
+      let etparams = e.etp_children()
+      for tp in etparams {
+        if tp.name != nil { append(tparams, tp.name!) }
+      }
+      let name_str = sym_to_string(e.name!)
+      let t = Type { kind: Enum(e.name!, variants, tparams), bits: 0, is_class: false }
+      dict_set<Type>(self.types, name_str, t)
+
+      // Register variant constructors in scope and lookup tables
+      for v in evs {
+        if v.name != nil {
+          let vname = sym_to_string(v.name!)
+          let vkey = name_str + "." + vname
+          dict_set<Type>(self.enum_variant_types, vkey, t)
+
+          // Register bare variant name (last enum wins on collision)
+          dict_set<Type>(self.enum_variants_by_name, vname, t)
+
+          // Register variant as function/value in scope
+          let evfs = v.evf_children()
+          if len(evfs) > 0 {
+            // Field variant → constructor function
+            let mut param_types: [Type] = []
+            for f in evfs {
+              if f.type_expr != nil {
+                append(param_types, self.resolve_type_expr(f.type_expr!))
+              } else {
+                append(param_types, make_any_type())
+              }
+            }
+            scope.define(vname, make_func_type(param_types, t))
+          } else {
+            // Unit variant → enum value
+            scope.define(vname, t)
+          }
+        }
+      }
     }
 
     // Register type aliases
@@ -718,12 +879,22 @@ forge checker {
     for ib in impls {
       self.register_impl_block(ib)
     }
+
+    // Register constants
+    let consts = block.con_children()
+    for c in consts {
+      if c.name != nil {
+        let mut ct = make_any_type()
+        if c.type_expr != nil {
+          ct = self.resolve_type_expr(c.type_expr!)
+        }
+        scope.define(sym_to_string(c.name!), ct)
+      }
+    }
   }
 
   func Checker.register_func(self, f: FuncDecl) {
-    if f.name == nil {
-      return
-    }
+    if f.name == nil { return }
     let mut param_types: [Type] = []
     let params = f.param_children()
     for p in params {
@@ -738,19 +909,26 @@ forge checker {
       ret = self.resolve_type_expr(f.return_type!)
     }
 
+    // Collect type params
+    let mut tpnames: [Sym] = []
+    let tps = f.fp_children()
+    for tp in tps {
+      if tp.name != nil { append(tpnames, tp.name!) }
+    }
+
+    let ft = make_generic_func_type(param_types, ret, tpnames)
+
     if f.receiver_type != nil {
       // External method: func T.method(self, ...)
       let key = sym_to_string(f.receiver_type!) + "." + sym_to_string(f.name!)
-      dict_set<Type>(self.methods, key, make_func_type(param_types, ret))
+      dict_set<Type>(self.methods, key, ft)
     } else {
-      dict_set<Type>(self.funcs, sym_to_string(f.name!), make_func_type(param_types, ret))
+      dict_set<Type>(self.funcs, sym_to_string(f.name!), ft)
     }
   }
 
   func Checker.register_method(self, class_name: Sym, m: FuncDecl) {
-    if m.name == nil {
-      return
-    }
+    if m.name == nil { return }
     let mut param_types: [Type] = []
     let params = m.param_children()
     for p in params {
@@ -782,13 +960,11 @@ forge checker {
             }
           }
           FieldBind => {
-            // Field binds generate getters — registered as methods
             if m.target_member != nil {
               dict_set<Sym>(self.impl_renames, key, m.target_member!)
             }
           }
           Inline => {
-            // Inline func — register directly as method
             if m.inline_func != nil {
               self.register_method(m.type_param!, m.inline_func!)
             }
@@ -800,11 +976,11 @@ forge checker {
 
   // ---- Phase 2: Check function bodies ----
 
-  func Checker.check_forge_block_bodies(self, block: ForgeBlock) {
+  func Checker.check_forge_block_bodies(self, block: ForgeBlock, scope: Scope) {
     // Check free functions
     let funcs = block.fd_children()
     for f in funcs {
-      self.check_func_body(f, nil)
+      self.check_func_body(f, nil, scope)
     }
 
     // Check class methods
@@ -812,19 +988,17 @@ forge checker {
     for c in classes {
       let cmethods = c.cm_children()
       for m in cmethods {
-        self.check_func_body(m, c.name)
+        self.check_func_body(m, c.name, scope)
       }
     }
   }
 
-  func Checker.check_func_body(self, f: FuncDecl, class_name: Sym?) {
-    if f.body == nil {
-      return
-    }
+  func Checker.check_func_body(self, f: FuncDecl, class_name: Sym?, parent_scope: Scope) {
+    if f.body == nil { return }
 
-    let scope = new_scope(nil)
+    let scope = new_scope(parent_scope)
 
-    // Bind type params
+    // Bind type params as TyVar
     let tparams = f.fp_children()
     for tp in tparams {
       if tp.name != nil {
@@ -857,7 +1031,10 @@ forge checker {
       self.current_func_return = make_void_type()
     }
 
+    let prev_scope = self.scope
+    self.scope = scope
     self.check_block(f.body!, scope)
+    self.scope = prev_scope
 
     self.current_func_return = prev_ret
   }
@@ -886,7 +1063,6 @@ forge checker {
           if len(names) > 0 {
             match val_type.kind {
               Tuple(fields) => {
-                // Bind each name to its tuple field type
                 for i in range(0, len(names)) {
                   if i < len(fields) && fields[i].type_val != nil {
                     scope.define(sym_to_string(names[i]), fields[i].type_val!)
@@ -895,14 +1071,9 @@ forge checker {
                   }
                 }
               }
-              Result(ok, err) => {
-                // (val, err) = try_expr
-                if len(names) >= 1 {
-                  scope.define(sym_to_string(names[0]), ok)
-                }
-                if len(names) >= 2 {
-                  scope.define(sym_to_string(names[1]), err)
-                }
+              ErrorResult(ok, err) => {
+                if len(names) >= 1 { scope.define(sym_to_string(names[0]), ok) }
+                if len(names) >= 2 { scope.define(sym_to_string(names[1]), err) }
               }
               _ => {
                 for n in names {
@@ -969,7 +1140,13 @@ forge checker {
         // Determine element type from collection
         match coll_type.kind {
           Sequence(elem) => {
-            for_scope.define(sym_to_string(var_name), elem)
+            if index_var != nil {
+              // Go-style: for index, value in collection
+              for_scope.define(sym_to_string(var_name), make_int_type(32))
+              for_scope.define(sym_to_string(index_var!), elem)
+            } else {
+              for_scope.define(sym_to_string(var_name), elem)
+            }
           }
           String => {
             for_scope.define(sym_to_string(var_name), make_string_type())
@@ -982,14 +1159,16 @@ forge checker {
           }
           Map(key, value) => {
             for_scope.define(sym_to_string(var_name), key)
+            if index_var != nil {
+              for_scope.define(sym_to_string(index_var!), value)
+            }
           }
           _ => {
             for_scope.define(sym_to_string(var_name), make_any_type())
+            if index_var != nil {
+              for_scope.define(sym_to_string(index_var!), make_any_type())
+            }
           }
-        }
-
-        if index_var != nil {
-          for_scope.define(sym_to_string(index_var!), make_int_type(32))
         }
 
         self.check_block(body, for_scope)
@@ -1007,6 +1186,10 @@ forge checker {
           let arm_scope = new_scope(scope)
           if arm.pattern != nil {
             self.bind_pattern(arm.pattern!, val_type, arm_scope)
+          }
+          // Multi-pattern support
+          for p in arm.patterns {
+            self.bind_pattern(p, val_type, arm_scope)
           }
           if arm.guard != nil {
             self.check_expr(arm.guard!, arm_scope)
@@ -1038,7 +1221,6 @@ forge checker {
           if c.expr != nil {
             let ct = self.check_expr(c.expr!, scope)
             if c.bind_var != nil {
-              // Extract element type from channel
               match ct.kind {
                 Channel(elem) => {
                   case_scope.define(sym_to_string(c.bind_var!), elem)
@@ -1056,9 +1238,7 @@ forge checker {
       }
 
       Yield(value) => {
-        if value != nil {
-          self.check_expr(value!, scope)
-        }
+        if value != nil { self.check_expr(value!, scope) }
       }
 
       Lock(mutex, body) => {
@@ -1070,9 +1250,20 @@ forge checker {
       IfLet(pattern, value, then_block, else_block) => {
         let val_type = self.check_expr(value, scope)
         let then_scope = new_scope(scope)
-        self.bind_pattern(pattern, val_type, then_scope)
+        // For if-let, unwrap optional for the binding
+        let mut bind_type = val_type
+        match val_type.kind {
+          Optional(inner) => { bind_type = inner }
+          _ => {}
+        }
+        // For enum variant patterns, bind with enum type
+        match pattern.kind {
+          Variant(_, _) => { bind_type = val_type }
+          _ => {}
+        }
+        self.bind_pattern(pattern, bind_type, then_scope)
         self.check_block(then_block, then_scope)
-        if else_block != null {
+        if else_block != nil {
           let else_scope = new_scope(scope)
           self.check_block(else_block!, else_scope)
         }
@@ -1080,7 +1271,17 @@ forge checker {
 
       LetElse(pattern, value, else_block) => {
         let val_type = self.check_expr(value, scope)
-        self.bind_pattern(pattern, val_type, scope)
+        // Unwrap optional for binding
+        let mut bind_type = val_type
+        match val_type.kind {
+          Optional(inner) => { bind_type = inner }
+          _ => {}
+        }
+        match pattern.kind {
+          Variant(_, _) => { bind_type = val_type }
+          _ => {}
+        }
+        self.bind_pattern(pattern, bind_type, scope)
         let else_scope = new_scope(scope)
         self.check_block(else_block, else_scope)
       }
@@ -1097,12 +1298,10 @@ forge checker {
       Ident(name) => {
         scope.define(sym_to_string(name), val_type)
       }
-      Literal(_) => {
-        // No bindings
+      Literal(expr) => {
+        self.check_expr(expr, scope)
       }
-      Wildcard => {
-        // No bindings
-      }
+      Wildcard => {}
       Variant(name, bindings) => {
         // Look up variant in enum type
         match val_type.kind {
@@ -1110,7 +1309,6 @@ forge checker {
             let name_str = sym_to_string(name)
             for v in variants {
               if v.name != nil && sym_to_string(v.name!) == name_str {
-                // Bind each field
                 for i in range(0, len(bindings)) {
                   if i < len(v.fields) && v.fields[i].type_val != nil {
                     self.bind_pattern(bindings[i], v.fields[i].type_val!, scope)
@@ -1121,6 +1319,11 @@ forge checker {
                 return
               }
             }
+          }
+          Optional(inner) => {
+            // if let Some(x) = opt pattern
+            self.bind_pattern(pat, inner, scope)
+            return
           }
           _ => {}
         }
@@ -1150,112 +1353,97 @@ forge checker {
     }
   }
 
-  // ---- Expression checking ----
+  // ---- Expression checking (with annotation) ----
 
   func Checker.check_expr(self, expr: Expr, scope: Scope) -> Type {
-    let mut result = make_any_type()
+    let result = self.check_expr_inner(expr, scope)
+    annotate(expr, result)
+    return result
+  }
 
+  func Checker.check_expr_inner(self, expr: Expr, scope: Scope) -> Type {
     match expr.kind {
       Ident(name) => {
         let name_str = sym_to_string(name)
         // Check variables first
         let vt = scope.lookup(name_str)
-        if vt != nil {
-          result = vt!
-        } else {
-          // Check functions
-          let ft = dict_get<Type>(self.funcs, name_str)
-          if ft != nil {
-            result = ft!.value
-          } else {
-            // Check types (for enum variant constructors etc.)
-            let tt = dict_get<Type>(self.types, name_str)
-            if tt != nil {
-              result = tt!.value
-            } else {
-              // Could be an enum variant without prefix
-              // Scan all enums for this variant name
-              result = self.find_enum_variant(name_str)
-            }
-          }
-        }
+        if vt != nil { return vt! }
+        // Check functions
+        let ft = dict_get<Type>(self.funcs, name_str)
+        if ft != nil { return ft!.value }
+        // Check types (for enum variant constructors etc.)
+        let tt = dict_get<Type>(self.types, name_str)
+        if tt != nil { return tt!.value }
+        // Check bare enum variant names
+        let ev = dict_get<Type>(self.enum_variants_by_name, name_str)
+        if ev != nil { return ev!.value }
+        return make_any_type()
       }
 
       IntLit(_, type_hint) => {
         if type_hint != nil {
           let hint_str = sym_to_string(type_hint!)
           let ht = dict_get<Type>(self.types, hint_str)
-          if ht != nil {
-            result = ht!.value
-          } else {
-            result = make_int_type(32)
-          }
-        } else {
-          result = make_int_type(32)
+          if ht != nil { return ht!.value }
+          return make_int_type(32)
         }
+        return make_int_type(32)
       }
 
-      FloatLit(_) => {
-        result = make_float_type(64)
-      }
-
-      StringLit(_) => {
-        result = make_string_type()
-      }
-
+      FloatLit(_) => { return make_float_type(64) }
+      StringLit(_) => { return make_string_type() }
       StringInterp(_) => {
-        result = make_string_type()
+        // Check all interpolated parts
+        match expr.kind {
+          StringInterp(parts) => {
+            for p in parts {
+              self.check_expr(p, scope)
+            }
+          }
+          _ => {}
+        }
+        return make_string_type()
       }
+      BoolLit(_) => { return make_bool_type() }
 
-      BoolLit(_) => {
-        result = make_bool_type()
-      }
-
-      Nil => {
-        // Nil resolves to void; will be coerced to optional at assignment
-        result = make_void_type()
-      }
+      Nil => { return make_nil_type() }
 
       Call(func_expr, type_args, args) => {
-        result = self.check_call(func_expr, type_args, args, scope)
+        return self.check_call(func_expr, type_args, args, scope)
       }
 
       MethodCall(receiver, method, type_args, args) => {
-        result = self.check_method_call(receiver, method, type_args, args, scope)
+        return self.check_method_call(receiver, method, type_args, args, scope)
       }
 
       FieldAccess(receiver, field_name) => {
         let recv_type = self.check_expr(receiver, scope)
-        result = self.resolve_field_access(recv_type, field_name)
+        return self.resolve_field_access(recv_type, field_name)
       }
 
       Index(receiver, index) => {
         let recv_type = self.check_expr(receiver, scope)
         self.check_expr(index, scope)
         match recv_type.kind {
-          Sequence(elem) => { result = elem }
-          String => { result = make_string_type() }
-          Map(_, value) => { result = value }
-          _ => { result = make_any_type() }
+          Sequence(elem) => { return elem }
+          String => { return make_string_type() }
+          Map(_, value) => { return make_optional_type(value) }
+          _ => { return make_any_type() }
         }
       }
 
       Slice(receiver, low, high) => {
         let recv_type = self.check_expr(receiver, scope)
-        if low != nil {
-          self.check_expr(low!, scope)
-        }
-        if high != nil {
-          self.check_expr(high!, scope)
-        }
-        result = recv_type
+        if low != nil { self.check_expr(low!, scope) }
+        if high != nil { self.check_expr(high!, scope) }
+        return recv_type
       }
 
       Unary(op, operand) => {
         let operand_type = self.check_expr(operand, scope)
         match op {
-          Neg => { result = operand_type }
-          Not => { result = make_bool_type() }
+          Not => { return make_bool_type() }
+          _ => { return operand_type }
         }
       }
 
@@ -1263,16 +1451,9 @@ forge checker {
         let left_type = self.check_expr(left, scope)
         let right_type = self.check_expr(right, scope)
         match op {
-          Eq | Neq | Lt | Le | Gt | Ge => {
-            result = make_bool_type()
-          }
-          And | Or => {
-            result = make_bool_type()
-          }
-          _ => {
-            // Arithmetic/bitwise: coerce to wider type
-            result = self.coerce_numeric(left_type, right_type)
-          }
+          Eq | Neq | Lt | Le | Gt | Ge => { return make_bool_type() }
+          And | Or => { return make_bool_type() }
+          _ => { return self.coerce_numeric(left_type, right_type) }
         }
       }
 
@@ -1282,7 +1463,7 @@ forge checker {
           let et = self.check_expr(e, scope)
           append(fields, TupleFieldType { name: nil, type_val: et })
         }
-        result = make_tuple_type(fields)
+        return make_tuple_type(fields)
       }
 
       ListLit(elems) => {
@@ -1291,10 +1472,9 @@ forge checker {
           for i in range(1, len(elems)) {
             self.check_expr(elems[i], scope)
           }
-          result = make_sequence_type(elem_type)
-        } else {
-          result = make_sequence_type(make_any_type())
+          return make_sequence_type(elem_type)
         }
+        return make_sequence_type(make_any_type())
       }
 
       MapLit(keys, values) => {
@@ -1305,27 +1485,25 @@ forge checker {
             self.check_expr(keys[i], scope)
             self.check_expr(values[i], scope)
           }
-          result = Type { kind: Map(key_type, val_type), bits: 0, is_class: false }
-        } else {
-          result = Type { kind: Map(make_any_type(), make_any_type()), bits: 0, is_class: false }
+          return make_map_type(key_type, val_type)
         }
+        return make_map_type(make_any_type(), make_any_type())
       }
 
       StructLit(type_name, type_args, fields) => {
         let name_str = sym_to_string(type_name)
         let te = dict_get<Type>(self.types, name_str)
         if te != nil {
-          result = te!.value
-          // Check fields
+          // Check field values
           for f in fields {
             if f.value != nil {
               self.check_expr(f.value!, scope)
             }
           }
-        } else {
-          self.error_at(expr.span, "unknown type in struct literal: " + name_str)
-          result = make_any_type()
+          return te!.value
         }
+        self.error_at(expr.span, "unknown type in struct literal: " + name_str)
+        return make_any_type()
       }
 
       Lambda(params, return_type, body) => {
@@ -1346,16 +1524,19 @@ forge checker {
           ret = self.resolve_type_expr(return_type!)
         }
         self.check_block(body, lambda_scope)
-        result = make_func_type(param_types, ret)
+        return make_func_type(param_types, ret)
       }
 
       Match(value, arms) => {
         let val_type = self.check_expr(value, scope)
-        // Result type = first arm's body result (simplified)
+        let mut result_type = make_any_type()
         for arm in arms {
           let arm_scope = new_scope(scope)
           if arm.pattern != nil {
             self.bind_pattern(arm.pattern!, val_type, arm_scope)
+          }
+          for p in arm.patterns {
+            self.bind_pattern(p, val_type, arm_scope)
           }
           if arm.guard != nil {
             self.check_expr(arm.guard!, arm_scope)
@@ -1364,57 +1545,66 @@ forge checker {
             self.check_block(arm.body!, arm_scope)
           }
         }
-        result = make_any_type()
+        return result_type
       }
 
       Cast(target_type, operand) => {
         self.check_expr(operand, scope)
-        result = self.resolve_type_expr(target_type)
+        return self.resolve_type_expr(target_type)
       }
 
       Unwrap(operand) => {
         let operand_type = self.check_expr(operand, scope)
         match operand_type.kind {
-          Optional(inner) => { result = inner }
-          _ => { result = operand_type }
+          Optional(inner) => { return inner }
+          _ => { return operand_type }
         }
       }
 
       Try(operand) => {
         let operand_type = self.check_expr(operand, scope)
+        // Try extracts T from (T, error) or Result(ok, err)
         match operand_type.kind {
-          Result(ok, _) => { result = ok }
+          ErrorResult(ok, _) => { return ok }
           Tuple(fields) => {
-            // (T, error) pattern
             if len(fields) >= 1 && fields[0].type_val != nil {
-              result = fields[0].type_val!
-            } else {
-              result = make_any_type()
+              return fields[0].type_val!
             }
+            return make_any_type()
           }
-          _ => { result = operand_type }
+          _ => { return operand_type }
         }
       }
+
       Is(operand, variant) => {
         self.check_expr(operand, scope)
-        result = make_bool_type()
+        return make_bool_type()
       }
+
       IfElse(cond, then_block, else_ifs, else_block) => {
         self.check_expr(cond, scope)
-        self.check_block(then_block, scope)
-        self.check_block(else_block, scope)
-        result = make_any_type()
+        let then_scope = new_scope(scope)
+        self.check_block(then_block, then_scope)
+        for ei in else_ifs {
+          if ei.condition != nil { self.check_expr(ei.condition!, scope) }
+          if ei.body != nil {
+            let ei_scope = new_scope(scope)
+            self.check_block(ei.body!, ei_scope)
+          }
+        }
+        let else_scope = new_scope(scope)
+        self.check_block(else_block, else_scope)
+        // Result type — could infer from branches but for bootstrap return any
+        return make_any_type()
       }
     }
-
-    // TODO: Annotate ResolvedType — for bootstrap, lowerer re-derives types
-    return result
+    return make_any_type()
   }
 
   // ---- Call checking ----
 
   func Checker.check_call(self, func_expr: Expr, type_args: [TypeExpr], args: [Expr], scope: Scope) -> Type {
-    // Check all args
+    // Check all args first
     let mut arg_types: [Type] = []
     for a in args {
       append(arg_types, self.check_expr(a, scope))
@@ -1424,108 +1614,92 @@ forge checker {
       Ident(name) => {
         let name_str = sym_to_string(name)
 
-        // Builtins
-        if name_str == "len" {
-          return make_int_type(32)
-        }
+        // === Builtins ===
+        if name_str == "len" { return make_int_type(32) }
         if name_str == "append" {
-          if len(arg_types) > 0 {
-            return arg_types[0]
-          }
+          if len(arg_types) > 0 { return arg_types[0] }
           return make_void_type()
         }
         if name_str == "print" || name_str == "println" || name_str == "eprint" || name_str == "eprintln" {
           return make_void_type()
         }
-        if name_str == "itoa" {
-          return make_string_type()
-        }
+        if name_str == "itoa" { return make_string_type() }
         if name_str == "atoi" {
           return make_tuple_type([
             TupleFieldType { name: nil, type_val: make_int_type(64) },
             TupleFieldType { name: nil, type_val: make_bool_type() },
           ])
         }
-        if name_str == "char_to_string" {
-          return make_string_type()
+        if name_str == "parse_float" {
+          return make_tuple_type([
+            TupleFieldType { name: nil, type_val: make_float_type(64) },
+            TupleFieldType { name: nil, type_val: make_bool_type() },
+          ])
         }
-        if name_str == "string_to_bytes" {
-          return make_sequence_type(make_uint_type(8))
-        }
-        if name_str == "bytes_to_string" {
-          return make_string_type()
-        }
-        if name_str == "panic" {
-          return make_void_type()
-        }
-        if name_str == "range" {
-          return make_sequence_type(make_int_type(32))
-        }
+        if name_str == "char_to_string" { return make_string_type() }
+        if name_str == "string_to_bytes" { return make_sequence_type(make_uint_type(8)) }
+        if name_str == "bytes_to_string" { return make_string_type() }
+        if name_str == "panic" { return make_void_type() }
+        if name_str == "range" { return make_sequence_type(make_int_type(32)) }
         if name_str == "make_channel" {
           if len(type_args) > 0 {
             return make_channel_type(self.resolve_type_expr(type_args[0]))
           }
           return make_channel_type(make_any_type())
         }
-        if name_str == "sym" {
-          return dict_get_type(self, "Sym")
-        }
-        if name_str == "hash_string" {
-          return make_uint_type(64)
-        }
-        if name_str == "os_args" {
-          return make_sequence_type(make_string_type())
-        }
-        if name_str == "os_exit" {
-          return make_void_type()
-        }
+        if name_str == "sym" { return dict_get_type(self, "Sym") }
+        if name_str == "hash_string" { return make_uint_type(64) }
+        if name_str == "os_args" { return make_sequence_type(make_string_type()) }
+        if name_str == "os_exit" { return make_void_type() }
         if name_str == "read_file" {
           return make_tuple_type([
             TupleFieldType { name: nil, type_val: make_string_type() },
             TupleFieldType { name: nil, type_val: make_bool_type() },
           ])
         }
-        if name_str == "write_file" {
+        if name_str == "write_file" { return make_bool_type() }
+        if name_str == "isnull" { return make_bool_type() }
+        if name_str == "str_contains" { return make_bool_type() }
+        if name_str == "str_index" { return make_int_type(32) }
+        if name_str == "str_trim" { return make_string_type() }
+        if name_str == "str_replace" { return make_string_type() }
+        if name_str == "str_split" { return make_sequence_type(make_string_type()) }
+        if name_str == "str_starts_with" || name_str == "str_ends_with" { return make_bool_type() }
+        if name_str == "str_substr" { return make_string_type() }
+        if name_str == "str_len" { return make_int_type(32) }
+        if name_str == "str_char_at" { return make_string_type() }
+        if name_str == "char_is_digit" || name_str == "char_is_alpha" || name_str == "char_is_space" {
           return make_bool_type()
         }
+        if name_str == "new_string_builder" { return dict_get_type(self, "StringBuilder") }
+        if name_str == "to_string" { return make_string_type() }
 
         // Dict/ArrayList builtins with type args
-        if name_str == "dict_new" {
-          return dict_get_type(self, "Dict")
-        }
-        if name_str == "dict_set" {
-          return make_void_type()
-        }
-        if name_str == "dict_get" {
-          return make_optional_type(dict_get_type(self, "DictEntry"))
-        }
-        if name_str == "dict_has" {
-          return make_bool_type()
-        }
-        if name_str == "dict_remove" {
-          return make_bool_type()
-        }
-        if name_str == "array_append" {
-          return make_void_type()
-        }
-        if name_str == "array_remove" {
-          return make_void_type()
-        }
+        if name_str == "dict_new" { return dict_get_type(self, "Dict") }
+        if name_str == "dict_set" { return make_void_type() }
+        if name_str == "dict_get" { return make_optional_type(dict_get_type(self, "DictEntry")) }
+        if name_str == "dict_has" { return make_bool_type() }
+        if name_str == "dict_remove" { return make_bool_type() }
+        if name_str == "dict_keys" { return make_sequence_type(make_string_type()) }
+        if name_str == "array_append" { return make_void_type() }
+        if name_str == "array_remove" { return make_void_type() }
 
         // Look up registered function
         let ft = dict_get<Type>(self.funcs, name_str)
         if ft != nil {
           match ft!.value.kind {
-            Func(_, ret) => { return ret }
+            Func(_, ret, _) => { return ret }
             _ => { return ft!.value }
           }
         }
 
         // Could be a type constructor (struct/class literal as call)
         let tt = dict_get<Type>(self.types, name_str)
-        if tt != nil {
-          return tt!.value
-        }
+        if tt != nil { return tt!.value }
+
+        // Could be an enum variant constructor (bare name)
+        let ev = dict_get<Type>(self.enum_variants_by_name, name_str)
+        if ev != nil { return ev!.value }
 
         self.error_at(func_expr.span, "unknown function: " + name_str)
         return make_any_type()
@@ -1534,7 +1708,7 @@ forge checker {
         // Dynamic call — check the func expr
         let ft = self.check_expr(func_expr, scope)
         match ft.kind {
-          Func(_, ret) => { return ret }
+          Func(_, ret, _) => { return ret }
           _ => { return make_any_type() }
         }
       }
@@ -1553,46 +1727,38 @@ forge checker {
     // Built-in methods on sequences
     match recv_type.kind {
       Sequence(elem) => {
-        if method_str == "push" || method_str == "append" {
-          return make_void_type()
-        }
-        if method_str == "pop" {
-          return make_optional_type(elem)
-        }
-        if method_str == "length" || method_str == "len" {
-          return make_int_type(32)
-        }
-        if method_str == "contains" {
-          return make_bool_type()
-        }
+        if method_str == "push" || method_str == "append" { return make_void_type() }
+        if method_str == "pop" { return make_optional_type(elem) }
+        if method_str == "length" || method_str == "len" { return make_int_type(32) }
+        if method_str == "contains" { return make_bool_type() }
+        if method_str == "slice" { return recv_type }
+        if method_str == "sort" { return make_void_type() }
       }
       String => {
-        if method_str == "length" || method_str == "len" {
-          return make_int_type(32)
-        }
+        if method_str == "length" || method_str == "len" { return make_int_type(32) }
         if method_str == "contains" || method_str == "starts_with" || method_str == "ends_with" {
           return make_bool_type()
         }
         if method_str == "substring" || method_str == "trim" || method_str == "to_lower" || method_str == "to_upper" {
           return make_string_type()
         }
-        if method_str == "split" {
-          return make_sequence_type(make_string_type())
-        }
-        if method_str == "index_of" {
-          return make_int_type(32)
-        }
+        if method_str == "split" { return make_sequence_type(make_string_type()) }
+        if method_str == "index_of" { return make_int_type(32) }
+        if method_str == "replace" { return make_string_type() }
       }
       Channel(elem) => {
-        if method_str == "send" {
-          return make_void_type()
-        }
-        if method_str == "recv" || method_str == "receive" {
-          return elem
-        }
-        if method_str == "close" {
-          return make_void_type()
-        }
+        if method_str == "send" { return make_void_type() }
+        if method_str == "recv" || method_str == "receive" { return elem }
+        if method_str == "close" { return make_void_type() }
+      }
+      Map(key, value) => {
+        if method_str == "get" { return make_optional_type(value) }
+        if method_str == "set" || method_str == "put" { return make_void_type() }
+        if method_str == "has" || method_str == "contains" { return make_bool_type() }
+        if method_str == "delete" || method_str == "remove" { return make_bool_type() }
+        if method_str == "keys" { return make_sequence_type(key) }
+        if method_str == "values" { return make_sequence_type(value) }
+        if method_str == "len" || method_str == "length" { return make_int_type(32) }
       }
       _ => {}
     }
@@ -1604,7 +1770,7 @@ forge checker {
       let mt = dict_get<Type>(self.methods, key)
       if mt != nil {
         match mt!.value.kind {
-          Func(_, ret) => { return ret }
+          Func(_, ret, _) => { return ret }
           _ => { return mt!.value }
         }
       }
@@ -1616,7 +1782,7 @@ forge checker {
         let rmt = dict_get<Type>(self.methods, rkey)
         if rmt != nil {
           match rmt!.value.kind {
-            Func(_, ret) => { return ret }
+            Func(_, ret, _) => { return ret }
             _ => { return rmt!.value }
           }
         }
@@ -1626,25 +1792,44 @@ forge checker {
     // Auto-unwrap optional receivers
     match recv_type.kind {
       Optional(inner) => {
-        return self.check_method_call_on_type(inner, method_str, type_args, args, scope)
+        return self.check_method_call_on_type(inner, method_str)
       }
       _ => {}
     }
 
+    // to_string is universal
+    if method_str == "to_string" { return make_string_type() }
+
     return make_any_type()
   }
 
-  func Checker.check_method_call_on_type(self, recv_type: Type, method_str: string, type_args: [TypeExpr], args: [Expr], scope: Scope) -> Type {
+  func Checker.check_method_call_on_type(self, recv_type: Type, method_str: string) -> Type {
     let type_name = self.type_name(recv_type)
     if type_name != "" {
       let key = type_name + "." + method_str
       let mt = dict_get<Type>(self.methods, key)
       if mt != nil {
         match mt!.value.kind {
-          Func(_, ret) => { return ret }
+          Func(_, ret, _) => { return ret }
           _ => { return mt!.value }
         }
       }
+    }
+    // Built-in methods on inner type
+    match recv_type.kind {
+      Sequence(elem) => {
+        if method_str == "push" || method_str == "append" { return make_void_type() }
+        if method_str == "pop" { return make_optional_type(elem) }
+        if method_str == "length" || method_str == "len" { return make_int_type(32) }
+        if method_str == "contains" { return make_bool_type() }
+      }
+      String => {
+        if method_str == "length" || method_str == "len" { return make_int_type(32) }
+        if method_str == "contains" || method_str == "starts_with" || method_str == "ends_with" {
+          return make_bool_type()
+        }
+      }
+      _ => {}
     }
     return make_any_type()
   }
@@ -1658,47 +1843,32 @@ forge checker {
       Struct(_, fields, _) => {
         for f in fields {
           if f.name != nil && sym_to_string(f.name!) == field_str {
-            if f.type_val != nil {
-              return f.type_val!
-            }
+            if f.type_val != nil { return f.type_val! }
           }
         }
       }
       Class(_, fields, _) => {
         for f in fields {
           if f.name != nil && sym_to_string(f.name!) == field_str {
-            if f.type_val != nil {
-              return f.type_val!
-            }
+            if f.type_val != nil { return f.type_val! }
           }
         }
       }
       Tuple(fields) => {
-        // Numeric field access: t.0, t.1
-        // atoi returns (i64, bool) but we simplify for bootstrap
-        let mut idx: i32 = -1
-        let mut ok: bool = false
-        if field_str == "0" {
-          idx = 0
-          ok = true
-        } else if field_str == "1" {
-          idx = 1
-          ok = true
-        } else if field_str == "2" {
-          idx = 2
-          ok = true
+        // Numeric field access: t.0, t.1, t.2
+        if field_str == "0" && len(fields) > 0 && fields[0].type_val != nil {
+          return fields[0].type_val!
         }
-        if ok && idx >= 0 && idx < len(fields) {
-          if fields[idx].type_val != nil {
-            return fields[idx].type_val!
-          }
+        if field_str == "1" && len(fields) > 1 && fields[1].type_val != nil {
+          return fields[1].type_val!
+        }
+        if field_str == "2" && len(fields) > 2 && fields[2].type_val != nil {
+          return fields[2].type_val!
         }
         // Named field access
         for f in fields {
           if f.name != nil && sym_to_string(f.name!) == field_str {
-            if f.type_val != nil {
-              return f.type_val!
-            }
+            if f.type_val != nil { return f.type_val! }
           }
         }
       }
@@ -1707,8 +1877,7 @@ forge checker {
         return self.resolve_field_access(inner, field_name)
       }
       Enum(_, _, _) => {
-        // Enum variant access (e.g., MyEnum.Variant)
-        // Return the enum type itself
+        // Enum variant access (e.g., MyEnum.Variant) — return enum type
         return recv_type
       }
       _ => {}
@@ -1730,37 +1899,17 @@ forge checker {
     return ""
   }
 
-  func Checker.find_enum_variant(self, name: string) -> Type {
-    // Search all registered enum types for a variant with this name
-    // This handles the Forge pattern of referencing variants without prefix
-    // (e.g., `Named` instead of `TypeExprKind.Named`)
-    // For bootstrap, return Any — full variant resolution deferred
-    return make_any_type()
-  }
-
   func Checker.coerce_numeric(self, a: Type, b: Type) -> Type {
-    if types_equal(a, b) {
-      return a
-    }
-    // Widen to the larger type
-    if numeric_widens(a, b) {
-      return b
-    }
-    if numeric_widens(b, a) {
-      return a
-    }
-    // Default to the left operand type
-    if is_numeric(a) {
-      return a
-    }
+    if types_equal(a, b) { return a }
+    if numeric_widens(a, b) { return b }
+    if numeric_widens(b, a) { return a }
+    if is_numeric(a) { return a }
     return make_any_type()
   }
 
   func dict_get_type(c: Checker, name: string) -> Type {
     let entry = dict_get<Type>(c.types, name)
-    if entry != nil {
-      return entry!.value
-    }
+    if entry != nil { return entry!.value }
     return make_any_type()
   }
 
@@ -1776,16 +1925,17 @@ forge checker {
 
   func check_file(file: File) -> Checker {
     let c = new_checker()
+    let global_scope = new_scope(nil)
 
     // Phase 1: register all types and signatures
     let blocks = file.fb_children()
     for b in blocks {
-      c.register_forge_block(b)
+      c.register_forge_block(b, global_scope)
     }
 
     // Phase 2: check all function bodies
     for b in blocks {
-      c.check_forge_block_bodies(b)
+      c.check_forge_block_bodies(b, global_scope)
     }
 
     return c
