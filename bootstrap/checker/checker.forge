@@ -1,28 +1,34 @@
 // checker.forge — understanding doc for the bootstrap checker package
 forge checker {
-  why: "Two-phase type checker: Phase 1 registers all type/function declarations, Phase 2 checks function bodies. Scope chain for lexical scoping. All registries use Dict<V> with Sym keys."
+  why: "Two-phase type checker with expression annotation. Phase 1 registers all type/function declarations, Phase 2 checks function bodies and annotates every Expr.resolved_type with a TypeExpr for the lowerer. Internal Type representation for checking logic; type_to_type_expr converts back to AST TypeExpr for annotation."
 
   doc "Architecture": """
     The checker performs a two-phase pass over the AST:
 
-    Phase 1 (register_block): Walks all interfaces, structs, classes, enums,
+    Phase 1 (register_forge_block): Walks all interfaces, structs, classes, enums,
     and top-level functions, registering them into Dict registries. Interfaces
-    registered first (classes may implement them). Enum variants registered
-    as constructors in scope.
+    registered first (classes may implement them). Enum variants registered both
+    as qualified (EnumName.Variant) in enum_variant_types and as bare names in
+    enum_variants_by_name (last enum wins on collision). Class names registered
+    as constructor functions in scope (ClassName → TyFunc(fields → class)).
+    Constants registered in scope. Scope is passed through both phases.
 
-    Phase 2 (check_block): Walks function bodies performing type inference
-    and validation. Each expression returns its inferred type; each statement
-    is checked for consistency.
+    Phase 2 (check_forge_block_bodies): Walks function bodies performing type
+    inference and validation. Each expression returns its inferred Type AND
+    gets annotated via annotate(expr, type) which converts the internal Type
+    to a TypeExpr and sets expr.resolved_type. This is the checker→lowerer contract.
 
     State: scope (lexical variable bindings via nested Dict chain), registries
-    (named type definitions), errors (accumulated list).
+    (named type definitions), errors (accumulated list), enum_variants_by_name
+    (bare variant lookup), current_func_return (for return type checking).
   """
 
   doc "Invariants — Two-Phase Checking": """
     The checker MUST run in two phases:
-    1. register_block: register all struct/class/enum/interface/function
+    1. register_forge_block: register all struct/class/enum/interface/function
        signatures into Dict registries (no body checking)
-    2. check_block: walk function bodies, resolve types, check expressions
+    2. check_forge_block_bodies: walk function bodies, resolve types, check
+       expressions, ANNOTATE resolved_type on every Expr
 
     This ensures forward references resolve correctly — a function can
     reference a class declared later in the same file.
@@ -31,49 +37,77 @@ forge checker {
     ANY Phase 2 begins. Otherwise, cross-file references fail.
   """
 
+  doc "Invariants — Expression Annotation": """
+    Every Expr node MUST have its resolved_type set after check_expr.
+    The check_expr method calls check_expr_inner for type inference, then
+    annotate(expr, result) which converts the internal Type to a TypeExpr
+    via type_to_type_expr() and sets expr.resolved_type.
+
+    The lowerer's resolve_expr_type() reads expr.resolved_type and calls
+    lower_type() to convert to LType. If resolved_type is nil, the lowerer
+    falls back to null/LTyAny, producing void* in C output.
+
+    type_to_type_expr handles all TypeKind variants, producing Named/Optional/
+    Sequence/Map/Tuple/Func/Channel/Generator/Lock/Unit TypeExprKinds.
+    Int/Uint/Float map to named types (i8/i16/i32/i64/int, u8-u64/uint, f32/f64).
+    ErrorResult maps to a 2-element Tuple.
+  """
+
   doc "Invariants — Dict and Sym Usage": """
     All registries use Dict<V> (string-keyed hash table) with Sym keys:
-    structs, classes, enums, interfaces, type_aliases, func_sigs, scope,
-    class_fields. API: dict_get(d, sym(name)) -> V?
+    types, funcs, methods, impl_renames, enum_variant_types, enum_variants_by_name.
+    API: dict_get(d, sym_to_string(name)) -> DictEntry<V>?
 
-    Scope is a linked list of Dict levels. push_scope() creates a new
-    Dict with parent pointer; pop_scope() restores parent. Lookup walks
-    the parent chain.
+    Scope is a linked list of Dict<Type> levels. new_scope(parent) creates a
+    new Dict with parent pointer; lookup walks the parent chain.
   """
 
   doc "Invariants — Type Representation": """
-    Bootstrap uses a CheckerType class with kind field (enum) and nullable
-    fields for sub-types (elem, key, val, params, return_type, fields).
+    Internal Type class with TypeKind enum and bits field (for Int/Uint/Float width).
 
-    Primitive kinds: TyInt, TyUint, TyFloat (with bits for width), TyBool,
-    TyString. Composite: TyList, TyMap, TyTuple, TyOptional, TyChannel,
-    TyStruct, TyClass, TyEnum, TyInterface, TyFunc, TyVar, TyUnion.
-    Special: TyUnit, TyNil (nil literal — assignable to all types),
-    TyError (cascade suppressor), TyUnknown (legacy fallback).
-  """
+    Primitive kinds: Int, Uint, Float (with bits for width), Bool, String.
+    Special: Void (unit type), Nil (nil literal — assignable to ALL types),
+    Any (accepts/produces anything), Error (error interface),
+    ErrorResult(ok, err) for (T, error) tuples.
+    Composite: Optional(inner), Sequence(elem), Map(key, value),
+    Tuple([TupleFieldType]), Func(params, ret, type_param_names),
+    Channel(elem), Generator(elem), Lock.
+    Named: Struct, Class, Enum, Interface (with name, fields/variants/methods, type_params).
+    Generic: TypeVar(name) — type variable, compatible with anything in assignability.
 
-  doc "Invariants — Generic Functions": """
-    Generic functions declare type parameters <T: Constraint>. During
-    Phase 2, TypeParams are registered as TyVar in the function's scope.
-    Call-site type inference via match_type_vars (first-arg-wins).
-    substituteType replaces TyVar with concrete types recursively.
-
-    Constraint validation: Comparable → numeric/string/bool,
-    Equatable/Hashable → same set.
-  """
-
-  doc "Invariants — Error Handling": """
-    error is a built-in interface. Functions return (T, error) tuples.
-    Try operator (?) extracts T from (T, error), returns early on error.
-    nil is assignable to optional and interface types (including error).
+    TyNil is distinct from TyVoid: Nil = nil literal (assignable to optional,
+    class, interface, error, and currently all types); Void = unit/no-value.
   """
 
   doc "Invariants — Enum Variant Registration": """
     registerEnum stores variant info and defines variant names in scope:
     - Unit variants: defined as enum-typed values
     - Field variants: defined as TyFunc constructors (fields → enum type)
+
+    Two lookup paths for variants:
+    1. Qualified: enum_variant_types["EnumName.VariantName"] → enum Type
+    2. Bare: enum_variants_by_name["VariantName"] → enum Type (last registered wins)
+    3. Scope: variant names defined directly in scope for direct reference
+
     When multiple enums share variant names, the LAST registered wins
-    in scope — disambiguation must happen via checker type annotations.
+    in both enum_variants_by_name and scope — disambiguation must happen
+    via checker type annotations or qualified access.
+  """
+
+  doc "Invariants — Generic Functions": """
+    Generic functions declare type parameters <T: Constraint>. During
+    Phase 2, TypeParams are registered as TyVar in the function's scope.
+    Func type carries type_param_names: [Sym] alongside params and ret.
+
+    TypeVar is compatible with anything in assignability checks —
+    constraints not yet validated in bootstrap checker.
+  """
+
+  doc "Invariants — Numeric Widening": """
+    Same-sign integers widen to larger bit widths (i8 → i16 → i32 → i64).
+    Floats widen (f32 → f64). Platform-width (bits=-1) types don't widen.
+    No cross-kind coercion (int→float requires explicit cast).
+    coerce_numeric returns the wider type for binary operations.
   """
 
   source: ["checker.fg"]
