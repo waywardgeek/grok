@@ -73,14 +73,14 @@ func new_mono_pass(prog: LProgram?) -> MonoPass? {
 // func_key returns the lookup key for a function.
 func MonoPass.func_key(self, f: LFuncDecl) -> string {
   if f.receiver != "" {
-    return "{f.receiver}.{f.name}"
+    return f"{f.receiver}.{f.name}"
   }
   return f.name
 }
 
 // inst_key builds "name|typekey"
 func inst_key(name: string, type_key_str: string) -> string {
-  return "{name}|{type_key_str}"
+  return f"{name}|{type_key_str}"
 }
 
 // record_func_instance records a function instantiation.
@@ -98,7 +98,7 @@ func MonoPass.record_func_instance(self, name: string, types: [LType?]) {
   dict_set<i32>(self.func_inst_count!, key, count as i32)
   let mut i = 0
   while i < count {
-    dict_set<LType?>(self.func_inst_types!, "{key}|{i}", types[i])
+    dict_set<LType?>(self.func_inst_types!, f"{key}|{i}", types[i])
     i = i + 1
   }
   // Track name for iteration
@@ -121,7 +121,7 @@ func MonoPass.record_class_instance(self, name: string, types: [LType?]) {
   dict_set<i32>(self.class_inst_count!, key, count as i32)
   let mut i = 0
   while i < count {
-    dict_set<LType?>(self.class_inst_types!, "{key}|{i}", types[i])
+    dict_set<LType?>(self.class_inst_types!, f"{key}|{i}", types[i])
     i = i + 1
   }
   let has_name = has_inst_name(self.class_inst_names, name)
@@ -143,7 +143,7 @@ func MonoPass.record_struct_instance(self, name: string, types: [LType?]) {
   dict_set<i32>(self.struct_inst_count!, key, count as i32)
   let mut i = 0
   while i < count {
-    dict_set<LType?>(self.struct_inst_types!, "{key}|{i}", types[i])
+    dict_set<LType?>(self.struct_inst_types!, f"{key}|{i}", types[i])
     i = i + 1
   }
   let has_name = has_inst_name(self.struct_inst_names, name)
@@ -173,7 +173,7 @@ func get_inst_types(types_dict: Dict<LType?>?, count_dict: Dict<i32>?, key: stri
   let mut result: [LType?] = []
   let mut i: i32 = 0
   while i < count {
-    let t_entry = dict_get<LType?>(types_dict!, "{key}|{i}")
+    let t_entry = dict_get<LType?>(types_dict!, f"{key}|{i}")
     if !isnull(t_entry) {
       append(result, t_entry!.value)
     }
@@ -338,6 +338,7 @@ func MonoPass.collect_from_expr(self, e: LExpr) {
   match e.kind {
     ExCall => {
       if !isnull(e.call) {
+        eprintln(f"MONO COLLECT call {e.call!.func_name} type_args={len(e.call!.type_args)}")
         if len(e.call!.type_args) > 0 {
           if !has_type_vars(e.call!.type_args) {
             self.record_func_instance(e.call!.func_name, e.call!.type_args)
@@ -729,9 +730,12 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
   match e.kind {
     ExCall => {
       if !isnull(e.call) {
+        eprintln(f"MONO REWRITE call {e.call!.func_name} type_args={len(e.call!.type_args)}")
         if len(e.call!.type_args) > 0 {
           if !has_type_vars(e.call!.type_args) {
-            e.call!.func_name = mangle_name(e.call!.func_name, e.call!.type_args)
+            let mangled = mangle_name(e.call!.func_name, e.call!.type_args)
+            eprintln(f"MONO REWRITE: {e.call!.func_name} -> {mangled}")
+            e.call!.func_name = mangled
             e.call!.type_args = []
           }
         }
@@ -2251,9 +2255,9 @@ func mangle_name(base: string, type_args: [LType?]) -> string {
   let mut i = 0
   while i < len(type_args) {
     if i == 0 {
-      result = "{result}_{type_to_mangle(type_args[i])}"
+      result = f"{result}_{type_to_mangle(type_args[i])}"
     } else {
-      result = "{result}_{type_to_mangle(type_args[i])}"
+      result = f"{result}_{type_to_mangle(type_args[i])}"
     }
     i = i + 1
   }
@@ -2281,7 +2285,7 @@ func type_to_mangle(t: LType?) -> string {
       let mut name = "S{t!.name}"
       let mut i = 0
       while i < len(t!.params) {
-        name = "{name}_{type_to_mangle(t!.params[i])}"
+        name = f"{name}_{type_to_mangle(t!.params[i])}"
         i = i + 1
       }
       return name
@@ -2290,7 +2294,7 @@ func type_to_mangle(t: LType?) -> string {
       let mut name = "C{t!.name}"
       let mut i = 0
       while i < len(t!.params) {
-        name = "{name}_{type_to_mangle(t!.params[i])}"
+        name = f"{name}_{type_to_mangle(t!.params[i])}"
         i = i + 1
       }
       return name
@@ -2310,7 +2314,7 @@ func type_to_mangle(t: LType?) -> string {
       let mut s = "tup"
       let mut i = 0
       while i < len(t!.fields) {
-        s = "{s}_{type_to_mangle(t!.fields[i].typ)}"
+        s = f"{s}_{type_to_mangle(t!.fields[i].typ)}"
         i = i + 1
       }
       return s
@@ -2327,7 +2331,7 @@ func type_key(types: [LType?]) -> string {
   let mut i = 0
   while i < len(types) {
     if i > 0 {
-      result = "{result},{type_to_mangle(types[i])}"
+      result = f"{result},{type_to_mangle(types[i])}"
     } else {
       result = type_to_mangle(types[i])
     }
@@ -2641,7 +2645,7 @@ func monomorphize(prog: LProgram?) {
         let mut mi = 0
         while mi < len(methods) {
           let method = methods[mi]
-          let meth_key = "{key}.{method.name}"
+          let meth_key = f"{key}.{method.name}"
           let meth_gen = dict_get<bool>(generated_funcs, meth_key)
           if isnull(meth_gen) {
             dict_set<bool>(generated_funcs, meth_key, true)

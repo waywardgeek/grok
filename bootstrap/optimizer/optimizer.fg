@@ -85,7 +85,7 @@ func fuse_side_effect_temps(stmts: [LStmt?]) -> [LStmt?] {
       if stmt.kind == StTempDef {
         let td = stmt.temp_def
         if !isnull(td) {
-          let key = "{td!.id}"
+          let key = f"{td!.id}"
           let entry = dict_get<bool>(discarded, key)
           if !isnull(entry) && entry!.value {
             if !isnull(td!.expr) && is_side_effect_expr(td!.expr!) {
@@ -107,7 +107,7 @@ func fuse_side_effect_temps(stmts: [LStmt?]) -> [LStmt?] {
       } else if stmt.kind == StExpr {
         let es = stmt.expr_stmt
         if !isnull(es) {
-          let key = "{es!.temp_id}"
+          let key = f"{es!.temp_id}"
           let entry = dict_get<bool>(discarded, key)
           if !isnull(entry) && entry!.value {
             // Skip the discard — already fused above
@@ -280,7 +280,7 @@ func destructure_extract_pairs(stmts: [LStmt?]) -> [LStmt?] {
     }
 
     // Is this a source temp being extracted?
-    let src_key = "{td!.id}"
+    let src_key = f"{td!.id}"
     let src_entry = dict_get<bool>(sources, src_key)
     if !isnull(src_entry) {
       let val_name = "_t{td!.id}_val"
@@ -304,7 +304,7 @@ func destructure_extract_pairs(stmts: [LStmt?]) -> [LStmt?] {
       if expr.kind == ExExtractValue && !isnull(expr.extract_value) {
         let d = expr.extract_value!
         if !isnull(d.value) && d.value!.kind == ValTemp {
-          let ek = "{d.value!.temp_id}"
+          let ek = f"{d.value!.temp_id}"
           let ee = dict_get<bool>(sources, ek)
           if !isnull(ee) {
             let val_name = "_t{d.value!.temp_id}_val"
@@ -330,7 +330,7 @@ func destructure_extract_pairs(stmts: [LStmt?]) -> [LStmt?] {
       if expr.kind == ExExtractError && !isnull(expr.extract_error) {
         let d = expr.extract_error!
         if !isnull(d.value) && d.value!.kind == ValTemp {
-          let ek = "{d.value!.temp_id}"
+          let ek = f"{d.value!.temp_id}"
           let ee = dict_get<bool>(sources, ek)
           if !isnull(ee) {
             let err_name = "_t{d.value!.temp_id}_err"
@@ -516,7 +516,7 @@ func eliminate_unused_temps(
     if stmt.kind == StTempDef {
       let td = stmt.temp_def
       if !isnull(td) {
-        let key = "{td!.id}"
+        let key = f"{td!.id}"
         let entry = dict_get<bool>(used_temps, key)
         if isnull(entry) {
           // Temp is unused — emit as side effect if it has side effects

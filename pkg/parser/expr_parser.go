@@ -182,13 +182,13 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 			// Check for method call: obj.method(args) or obj.method<T>(args)
 			if p.peek().Kind == TLParen {
 				p.next()
-				args, end, err := p.parseArgList()
+				args, mutArgs, end, err := p.parseArgList()
 				if err != nil {
 					return nil, err
 				}
 				expr = &ast.Expr{
 					Kind: ast.ExprMethodCall,
-					Data: &ast.MethodCallExpr{Receiver: *expr, Method: name.Text, Args: args},
+					Data: &ast.MethodCallExpr{Receiver: *expr, Method: name.Text, Args: args, MutArgs: mutArgs},
 					Span: ast.Span{Start: expr.Span.Start, End: end},
 				}
 			} else if p.peek().Kind == TLt {
@@ -198,13 +198,13 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 				typeArgs, ok := p.tryParseTypeArgs()
 				if ok && p.peek().Kind == TLParen {
 					p.next()
-					args, end, err := p.parseArgList()
+					args, mutArgs, end, err := p.parseArgList()
 					if err != nil {
 						return nil, err
 					}
 					expr = &ast.Expr{
 						Kind: ast.ExprMethodCall,
-						Data: &ast.MethodCallExpr{Receiver: *expr, Method: name.Text, TypeArgs: typeArgs, Args: args},
+						Data: &ast.MethodCallExpr{Receiver: *expr, Method: name.Text, TypeArgs: typeArgs, Args: args, MutArgs: mutArgs},
 						Span: ast.Span{Start: expr.Span.Start, End: end},
 					}
 				} else {
@@ -240,13 +240,13 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 			typeArgs, ok := p.tryParseTypeArgs()
 			if ok && p.peek().Kind == TLParen {
 				p.next() // consume '('
-				args, end, err := p.parseArgList()
+				args, mutArgs, end, err := p.parseArgList()
 				if err != nil {
 					return nil, err
 				}
 				expr = &ast.Expr{
 					Kind: ast.ExprCall,
-					Data: &ast.CallExpr{Func: *expr, TypeArgs: typeArgs, Args: args},
+					Data: &ast.CallExpr{Func: *expr, TypeArgs: typeArgs, Args: args, MutArgs: mutArgs},
 					Span: ast.Span{Start: expr.Span.Start, End: end},
 				}
 			} else if ok && p.peek().Kind == TLBrace && expr.Kind == ast.ExprIdent && p.isStructLitAhead() {
@@ -269,13 +269,13 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 			}
 		case TLParen:
 			p.next()
-			args, end, err := p.parseArgList()
+			args, mutArgs, end, err := p.parseArgList()
 			if err != nil {
 				return nil, err
 			}
 			expr = &ast.Expr{
 				Kind: ast.ExprCall,
-				Data: &ast.CallExpr{Func: *expr, Args: args},
+				Data: &ast.CallExpr{Func: *expr, Args: args, MutArgs: mutArgs},
 				Span: ast.Span{Start: expr.Span.Start, End: end},
 			}
 		case TLBracket:
@@ -386,17 +386,26 @@ func (p *Parser) parsePostfixExpr() (*ast.Expr, error) {
 	}
 }
 
-func (p *Parser) parseArgList() ([]ast.Expr, ast.Pos, error) {
+func (p *Parser) parseArgList() ([]ast.Expr, []bool, ast.Pos, error) {
 	p.exprDepth++
 	defer func() { p.exprDepth-- }()
 	var args []ast.Expr
+	var mutArgs []bool
+	hasMut := false
 	for p.peek().Kind != TRParen && p.peek().Kind != TEOF {
 		p.skipNewlines()
+		isMut := false
+		if p.peek().Kind == TMut {
+			isMut = true
+			hasMut = true
+			p.next()
+		}
 		arg, err := p.parseExpr()
 		if err != nil {
-			return nil, ast.Pos{}, err
+			return nil, nil, ast.Pos{}, err
 		}
 		args = append(args, *arg)
+		mutArgs = append(mutArgs, isMut)
 		if p.peek().Kind == TComma {
 			p.next()
 		}
@@ -404,9 +413,12 @@ func (p *Parser) parseArgList() ([]ast.Expr, ast.Pos, error) {
 	}
 	end, err := p.expect(TRParen)
 	if err != nil {
-		return nil, ast.Pos{}, err
+		return nil, nil, ast.Pos{}, err
 	}
-	return args, end.Span.End, nil
+	if !hasMut {
+		mutArgs = nil // don't allocate for common case
+	}
+	return args, mutArgs, end.Span.End, nil
 }
 
 func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {

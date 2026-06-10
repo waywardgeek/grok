@@ -195,6 +195,9 @@ type cGen struct {
 	// Tuple type typedefs (like sliceTypes/optTypes pattern)
 	tupleTypes map[string]string // "fields_sig" → typedef name
 	tupleCount int
+
+	// mut param tracking (per-function)
+	mutParams map[string]bool // parameter names that are mut (passed as pointers)
 }
 
 type cSpawnFunc struct {
@@ -839,10 +842,14 @@ func (g *cGen) emitFuncDecl(f *LFuncDecl) {
 		g.linef("%s %s(%s) {", retType, name, params)
 	}
 	g.indent++
-	// Register param types for format specifier resolution
+	// Register param types and mut params for format specifier resolution
+	g.mutParams = map[string]bool{}
 	for _, p := range f.Params {
 		if p.Type != nil {
 			g.varTypes[p.Name] = p.Type
+		}
+		if p.Mutable {
+			g.mutParams[p.Name] = true
 		}
 	}
 	g.emitStmts(f.Body)
@@ -874,7 +881,12 @@ func (g *cGen) cParamList(f *LFuncDecl) string {
 		parts = append(parts, g.cFieldDecl(selfType, "self"))
 	}
 	for _, p := range f.Params {
-		parts = append(parts, g.cFieldDecl(p.Type, p.Name))
+		decl := g.cFieldDecl(p.Type, p.Name)
+		if p.Mutable {
+			// mut params are passed by pointer
+			decl = g.cType(p.Type) + "* " + p.Name
+		}
+		parts = append(parts, decl)
 	}
 	if len(parts) == 0 {
 		return "void"
@@ -1247,7 +1259,11 @@ func (g *cGen) emitStmt(s *LStmt) {
 
 	case LStmtStructSet:
 		d := s.Data.(*LStructSet)
-		g.linef("%s.%s = %s;", g.emitValue(&d.Receiver), d.Field, g.emitValue(&d.Value))
+		op := "."
+		if d.Receiver.Kind == LValVar && g.mutParams[d.Receiver.Name] {
+			op = "->"
+		}
+		g.linef("%s%s%s = %s;", g.emitValue(&d.Receiver), op, d.Field, g.emitValue(&d.Value))
 
 	case LStmtClassSet:
 		d := s.Data.(*LClassSet)
@@ -1895,7 +1911,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		if name == "strings.Contains" && len(d.Args) >= 2 {
 			return fmt.Sprintf("(strstr(%s, %s) != NULL)", g.emitValue(&d.Args[0]), g.emitValue(&d.Args[1]))
 		}
-		args := g.emitArgsBoxed(d.Func, d.Args)
+		args := g.emitArgsBoxed(d.Func, d.Args, d.MutArgs)
 		// If calling a generator function, redirect to its _init function
 		if g.isGenFuncByName(name) {
 			return fmt.Sprintf("%s_init(%s)", name, args)
@@ -1914,7 +1930,7 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 	case LExprMethodCall:
 		d := e.Data.(*LMethodCallData)
 		recv := g.emitValue(&d.Receiver)
-		args := g.emitArgs(d.Args)
+		args := g.emitArgs(d.Args, d.MutArgs)
 
 		// Check if receiver is interface-typed → vtable dispatch
 		recvType := d.Receiver.Type
@@ -2123,6 +2139,10 @@ func (g *cGen) emitExprStr(e *LExpr) string {
 		}
 		if recvType != nil && recvType.Kind == LTyClassHandle {
 			return fmt.Sprintf("%s->%s", g.emitValue(&d.Receiver), d.Field)
+		}
+		// mut params are pointers — use -> for field access
+		if d.Receiver.Kind == LValVar && g.mutParams[d.Receiver.Name] {
+			return fmt.Sprintf("%s->%s", d.Receiver.Name, d.Field)
 		}
 		// Map tuple field access ._0/._1 to .val/.err for ErrorResult types
 		if recvType != nil && recvType.Kind == LTyErrorResult {
@@ -3058,17 +3078,21 @@ func (g *cGen) printfSpecAndArg(v *LValue) (string, string) {
 	}
 }
 
-func (g *cGen) emitArgs(args []LValue) string {
+func (g *cGen) emitArgs(args []LValue, mutArgs []bool) string {
 	var parts []string
-	for _, a := range args {
-		parts = append(parts, g.emitValue(&a))
+	for i, a := range args {
+		s := g.emitValue(&a)
+		if i < len(mutArgs) && mutArgs[i] {
+			s = "&" + s
+		}
+		parts = append(parts, s)
 	}
 	return strings.Join(parts, ", ")
 }
 
 // emitArgsBoxed emits function call arguments, boxing concrete types when the
-// target function parameter is interface-typed.
-func (g *cGen) emitArgsBoxed(funcName string, args []LValue) string {
+// target function parameter is interface-typed. mutArgs marks which args are passed as `mut` (&x).
+func (g *cGen) emitArgsBoxed(funcName string, args []LValue, mutArgs []bool) string {
 	// Look up target function to find param types (use original name, not cSafeName)
 	fn := g.funcByName[funcName]
 	var parts []string
@@ -3097,6 +3121,10 @@ func (g *cGen) emitArgsBoxed(funcName string, args []LValue) string {
 					}
 				}
 			}
+		}
+		// mut args: pass by pointer
+		if i < len(mutArgs) && mutArgs[i] {
+			argStr = "&" + argStr
 		}
 		parts = append(parts, argStr)
 	}

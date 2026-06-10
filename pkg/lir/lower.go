@@ -1055,8 +1055,9 @@ func (l *Lowerer) lowerFuncDecl(fn *ast.FuncDecl, receiver string) LFuncDecl {
 			continue
 		}
 		params = append(params, LParam{
-			Name: p.Name,
-			Type: l.lowerTypeExpr(&p.Type),
+			Name:    p.Name,
+			Type:    l.lowerTypeExpr(&p.Type),
+			Mutable: p.IsMut,
 		})
 	}
 
@@ -2902,7 +2903,7 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 			return l.emitTemp(LExpr{
 				Kind: LExprCall,
 				Type: retType,
-				Data: &LCallData{Func: funcName, Args: args, TypeArgs: typeArgs, IsExported: true},
+				Data: &LCallData{Func: funcName, Args: args, MutArgs: ce.MutArgs, TypeArgs: typeArgs, IsExported: true},
 			})
 		}
 	}
@@ -3015,7 +3016,7 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 	return l.emitTemp(LExpr{
 		Kind: LExprCall,
 		Type: l.exprType(expr),
-		Data: &LCallData{Func: funcName, Args: args, TypeArgs: typeArgs, IsExported: l.exported[funcName]},
+		Data: &LCallData{Func: funcName, Args: args, MutArgs: ce.MutArgs, TypeArgs: typeArgs, IsExported: l.exported[funcName]},
 	})
 }
 
@@ -3068,7 +3069,7 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 			return l.emitTemp(LExpr{
 				Kind: LExprCall,
 				Type: retType,
-				Data: &LCallData{Func: funcName, Args: args, TypeArgs: typeArgs, IsExported: true},
+				Data: &LCallData{Func: funcName, Args: args, MutArgs: mc.MutArgs, TypeArgs: typeArgs, IsExported: true},
 			})
 		}
 	}
@@ -3107,6 +3108,7 @@ func (l *Lowerer) lowerMethodCall(expr *ast.Expr) LValue {
 			Receiver:   recv,
 			Method:     mc.Method,
 			Args:       args,
+			MutArgs:    mc.MutArgs,
 			TypeArgs:   typeArgs,
 			IsExported: l.exported[mc.Method],
 			ParamTypes: paramTypes,

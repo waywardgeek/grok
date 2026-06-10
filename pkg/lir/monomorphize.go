@@ -487,8 +487,9 @@ func (m *monoPass) specializeFunc(orig *LFuncDecl, subst map[string]*LType, newN
 	}
 	for i, p := range orig.Params {
 		spec.Params[i] = LParam{
-			Name: p.Name,
-			Type: substType(p.Type, subst),
+			Name:    p.Name,
+			Type:    substType(p.Type, subst),
+			Mutable: p.Mutable,
 		}
 	}
 
@@ -1601,6 +1602,7 @@ func cloneExpr(e *LExpr, subst map[string]*LType) LExpr {
 		out.Data = &LCallData{
 			Func:       d.Func,
 			Args:       cloneValues(d.Args, subst),
+			MutArgs:    d.MutArgs,
 			TypeArgs:   substTypes(d.TypeArgs, subst),
 			IsExported: d.IsExported,
 		}
@@ -1611,6 +1613,7 @@ func cloneExpr(e *LExpr, subst map[string]*LType) LExpr {
 			Receiver:   recv,
 			Method:     d.Method,
 			Args:       cloneValues(d.Args, subst),
+			MutArgs:    d.MutArgs,
 			TypeArgs:   substTypes(d.TypeArgs, subst),
 			IsExported: d.IsExported,
 		}
@@ -1648,7 +1651,7 @@ func cloneExpr(e *LExpr, subst map[string]*LType) LExpr {
 		d := e.Data.(*LFuncLitData)
 		params := make([]LParam, len(d.Params))
 		for i, p := range d.Params {
-			params[i] = LParam{Name: p.Name, Type: substType(p.Type, subst)}
+			params[i] = LParam{Name: p.Name, Type: substType(p.Type, subst), Mutable: p.Mutable}
 		}
 		out.Data = &LFuncLitData{
 			Params:     params,

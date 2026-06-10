@@ -245,6 +245,7 @@ type LSliceData struct {
 type LCallData struct {
 	Func       string
 	Args       []LValue
+	MutArgs    []bool   // parallel to Args: true if arg is passed as `mut`
 	TypeArgs   []*LType // generic type arguments (e.g. identity[int32](...))
 	IsExported bool
 }
@@ -253,6 +254,7 @@ type LMethodCallData struct {
 	Receiver   LValue
 	Method     string
 	Args       []LValue
+	MutArgs    []bool   // parallel to Args: true if arg is passed as `mut`
 	TypeArgs   []*LType // generic type arguments
 	IsExported bool
 	ParamTypes []*LType // parameter types from interface method signature (for nil arg handling)
@@ -677,8 +679,9 @@ type LFuncDecl struct {
 
 // LParam: a function parameter.
 type LParam struct {
-	Name string
-	Type *LType
+	Name    string
+	Type    *LType
+	Mutable bool // true for `mut` params — passed by pointer in C backend
 }
 
 // LTypeDef: type Name = Type (type alias)

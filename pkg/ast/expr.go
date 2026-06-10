@@ -74,6 +74,7 @@ type CallExpr struct {
 	TypeArgs          []TypeExpr // explicit type arguments, e.g. f<int>(x)
 	InferredTypeArgs  []any      // set by checker: []*checker.Type (avoids import cycle via any)
 	Args              []Expr
+	MutArgs           []bool     // parallel to Args: true if arg is passed as `mut`
 }
 
 type MethodCallExpr struct {
@@ -81,6 +82,7 @@ type MethodCallExpr struct {
 	Method   string
 	TypeArgs []TypeExpr
 	Args     []Expr
+	MutArgs  []bool // parallel to Args: true if arg is passed as `mut`
 }
 
 type FieldAccessExpr struct {
