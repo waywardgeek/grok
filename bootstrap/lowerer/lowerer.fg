@@ -2267,7 +2267,7 @@ forge lowerer {
     let mut i = 0
     for e in elems {
       let v = self.lower_expr(e)
-      let fname = "_{i}"
+      let fname = f"_{i}"
       let ft = if !isnull(v) && !isnull(v!.typ) { v!.typ } else { LType { kind: TyAny, name: "", bits: 0, is_exported: false } }
       append(fields, LFieldInit { name: fname, value: v })
       append(lfields, LField { name: fname, typ: ft })
@@ -2424,7 +2424,7 @@ forge lowerer {
     self, orig: Expr?, value: Expr?, arms: [MatchArm]
   ) -> LValue? {
     let rt = self.expr_type(orig)
-    let result_name = "__match_result_{self.next_temp()}"
+    let result_name = f"__match_result_{self.next_temp()}"
 
     self.emit(LStmt {
       kind: StVarDecl,
@@ -2631,7 +2631,7 @@ forge lowerer {
     self, orig: Expr?, cond: Expr?, then_block: Block?, else_ifs: [ElseIf], else_block: Block?
   ) -> LValue? {
     let rt = self.expr_type(orig)
-    let result_name = "__ifexpr_{self.next_temp()}"
+    let result_name = f"__ifexpr_{self.next_temp()}"
 
     self.emit(LStmt {
       kind: StVarDecl,
