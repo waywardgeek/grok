@@ -33,13 +33,44 @@ Commands:
   test     <file.fg> [...]            Compile, discover test_* functions, run tests
 `
 
+var commands = []string{"verify", "update", "gen", "fmt", "compile", "test", "help"}
+
+// resolveCommand matches a unique prefix of a command name.
+// Returns the full command name or an error if ambiguous/unknown.
+func resolveCommand(prefix string) (string, error) {
+	if prefix == "-h" || prefix == "--help" {
+		return "help", nil
+	}
+	var matches []string
+	for _, c := range commands {
+		if c == prefix {
+			return c, nil // exact match
+		}
+		if strings.HasPrefix(c, prefix) {
+			matches = append(matches, c)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("unknown command: %s", prefix)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("ambiguous command %q: matches %s", prefix, strings.Join(matches, ", "))
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(1)
 	}
 
-	cmd := os.Args[1]
+	cmd, cmdErr := resolveCommand(os.Args[1])
+	if cmdErr != nil {
+		fmt.Fprintf(os.Stderr, "%v\n\n%s", cmdErr, usage)
+		os.Exit(1)
+	}
 	args := os.Args[2:]
 
 	var err error
@@ -56,12 +87,9 @@ func main() {
 		err = cmdCompile(args)
 	case "test":
 		err = cmdTest(args)
-	case "help", "-h", "--help":
+	case "help":
 		fmt.Print(usage)
 		return
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n%s", cmd, usage)
-		os.Exit(1)
 	}
 
 	if err != nil {

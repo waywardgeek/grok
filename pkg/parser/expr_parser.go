@@ -1623,7 +1623,15 @@ func (p *Parser) parseFString(tok Token) (*ast.Expr, error) {
 	i := 0
 
 	for i < len(raw) {
-		if raw[i] == '{' {
+		if raw[i] == 0x01 {
+			// Sentinel for escaped {{ → literal {
+			buf.WriteByte('{')
+			i++
+		} else if raw[i] == 0x02 {
+			// Sentinel for escaped }} → literal }
+			buf.WriteByte('}')
+			i++
+		} else if raw[i] == '{' {
 			// Emit accumulated string part
 			parts = append(parts, ast.Expr{
 				Kind: ast.ExprStringLit,
@@ -1649,8 +1657,10 @@ func (p *Parser) parseFString(tok Token) (*ast.Expr, error) {
 			exprText := raw[exprStart:i]
 			i++ // skip closing }
 
-			// Parse the expression text
+			// Parse the expression text, preserving source position for error messages
 			exprParser := &Parser{lex: NewLexer(exprText, tok.Span.Start.File)}
+			exprParser.lex.line = tok.Span.Start.Line
+			exprParser.lex.column = tok.Span.Start.Column + exprStart
 			expr, err := exprParser.parseExpr()
 			if err != nil {
 				return nil, err

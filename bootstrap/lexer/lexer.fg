@@ -375,11 +375,23 @@ forge lexer {
     while self.pos < len(self.src) {
       let ch = self.advance()
       if ch == '{' {
-        depth = depth + 1
-        buf.write_byte(ch)
+        // {{ is an escaped literal brace — store as sentinel \x01
+        if depth == 0 && self.pos < len(self.src) && self.peek_char() == '{' {
+          self.advance()
+          buf.write_byte(1 as u8)
+        } else {
+          depth = depth + 1
+          buf.write_byte(ch)
+        }
       } else if ch == '}' {
-        depth = depth - 1
-        buf.write_byte(ch)
+        // }} is an escaped literal brace — store as sentinel \x02
+        if depth == 0 && self.pos < len(self.src) && self.peek_char() == '}' {
+          self.advance()
+          buf.write_byte(2 as u8)
+        } else {
+          depth = depth - 1
+          buf.write_byte(ch)
+        }
       } else if ch == '"' && depth == 0 {
         return make_token(LFString, buf.to_string(), start, self.current_pos())
       } else if ch == '\\' && depth == 0 {

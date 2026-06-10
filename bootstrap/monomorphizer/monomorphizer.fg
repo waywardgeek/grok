@@ -2766,3 +2766,175 @@ func monomorphize(prog: LProgram?) {
   // Export rename map
   prog!.class_renames = m.class_renames
 }
+
+
+// ---------------------------------------------------------------------------
+// Rewrite impl renames — called after monomorphize()
+// ---------------------------------------------------------------------------
+
+func mono_starts_with(s: string, prefix: string) -> bool {
+  if len(prefix) > len(s) { return false }
+  return s[0:len(prefix)] == prefix
+}
+
+func rewrite_impl_renames(prog: LProgram?) {
+  if isnull(prog) { return }
+  if isnull(prog!.impl_method_renames) { return }
+  let rename_keys = dict_keys<string>(prog!.impl_method_renames!)
+  if len(rename_keys) == 0 { return }
+
+  // Build flat (className + "\x00" + methodName) -> concreteName lookup
+  let renames = dict_new<string>()
+  let mut i = 0
+  while i < len(rename_keys) {
+    let key = rename_keys[i]
+    let new_name_entry = dict_get<string>(prog!.impl_method_renames!, key)
+    if !isnull(new_name_entry) {
+      // Key format: "Interface\x00TypeArg0\x00...\x00ClassName\x00MethodName"
+      let parts = str_split(key, "\x00")
+      if len(parts) >= 3 {
+        let class_name = parts[len(parts) - 2]
+        let method_name = parts[len(parts) - 1]
+        let flat_key = f"{class_name}\x00{method_name}"
+        dict_set<string>(renames, flat_key, new_name_entry!.value)
+      }
+    }
+    i = i + 1
+  }
+
+  let flat_keys = dict_keys<string>(renames)
+  if len(flat_keys) == 0 { return }
+
+  // Expand renames to cover monomorphized class names
+  // E.g., DictEntry.set_parent -> set_d_parent should also apply to
+  // DictEntry_CClassDecl.set_parent -> set_d_parent
+  i = 0
+  while i < len(prog!.functions) {
+    let f = prog!.functions[i]
+    if f.receiver != "" {
+      let mut j = 0
+      while j < len(flat_keys) {
+        let fk = flat_keys[j]
+        let fk_parts = str_split(fk, "\x00")
+        if len(fk_parts) == 2 {
+          let base_class = fk_parts[0]
+          let method = fk_parts[1]
+          if mono_starts_with(f.receiver, f"{base_class}_") {
+            let mono_key = f"{f.receiver}\x00{method}"
+            let existing = dict_get<string>(renames, mono_key)
+            if isnull(existing) {
+              let val = dict_get<string>(renames, fk)
+              if !isnull(val) {
+                dict_set<string>(renames, mono_key, val!.value)
+              }
+            }
+          }
+        }
+        j = j + 1
+      }
+    }
+    i = i + 1
+  }
+
+  // Also check class declarations
+  i = 0
+  while i < len(prog!.classes) {
+    let c = prog!.classes[i]
+    let mut j = 0
+    while j < len(flat_keys) {
+      let fk = flat_keys[j]
+      let fk_parts = str_split(fk, "\x00")
+      if len(fk_parts) == 2 {
+        let base_class = fk_parts[0]
+        let method = fk_parts[1]
+        if mono_starts_with(c.name, f"{base_class}_") {
+          let mono_key = f"{c.name}\x00{method}"
+          let existing = dict_get<string>(renames, mono_key)
+          if isnull(existing) {
+            let val = dict_get<string>(renames, fk)
+            if !isnull(val) {
+              dict_set<string>(renames, mono_key, val!.value)
+            }
+          }
+        }
+      }
+      j = j + 1
+    }
+    i = i + 1
+  }
+
+  // Walk all function bodies
+  i = 0
+  while i < len(prog!.functions) {
+    rewrite_impl_stmts(prog!.functions[i].body, renames)
+    i = i + 1
+  }
+}
+
+func rewrite_impl_stmts(stmts: [LStmt?], renames: Dict<string>?) {
+  let mut i = 0
+  while i < len(stmts) {
+    if !isnull(stmts[i]) {
+      rewrite_impl_stmt(stmts[i]!, renames)
+    }
+    i = i + 1
+  }
+}
+
+func rewrite_impl_stmt(s: LStmt, renames: Dict<string>?) {
+  match s.kind {
+    StTempDef => {
+      if !isnull(s.temp_def) {
+        rewrite_impl_expr(s.temp_def!.expr, renames)
+      }
+    }
+    StSideEffect => {
+      if !isnull(s.side_effect) {
+        rewrite_impl_expr(s.side_effect!.expr, renames)
+      }
+    }
+    StIf => {
+      if !isnull(s.if_data) {
+        rewrite_impl_stmts(s.if_data!.then_body, renames)
+        rewrite_impl_stmts(s.if_data!.else_body, renames)
+      }
+    }
+    StWhile => {
+      if !isnull(s.while_data) {
+        rewrite_impl_stmts(s.while_data!.cond_block, renames)
+        rewrite_impl_stmts(s.while_data!.body, renames)
+      }
+    }
+    StBlock => {
+      if !isnull(s.block) {
+        rewrite_impl_stmts(s.block!.stmts, renames)
+      }
+    }
+    StFor => {
+      if !isnull(s.for_data) {
+        rewrite_impl_stmts(s.for_data!.body, renames)
+      }
+    }
+    _ => {}
+  }
+}
+
+func rewrite_impl_expr(e: LExpr?, renames: Dict<string>?) {
+  if isnull(e) { return }
+  if e!.kind is ExMethodCall {
+    if !isnull(e!.method_call) {
+      let mc = e!.method_call!
+      if !isnull(mc.receiver) {
+        if !isnull(mc.receiver!.typ) {
+          if mc.receiver!.typ!.kind is TyClassHandle {
+            let key = f"{mc.receiver!.typ!.name}\x00{mc.method}"
+            let entry = dict_get<string>(renames!, key)
+            if !isnull(entry) {
+              mc.method = entry!.value
+            }
+          }
+        }
+      }
+    }
+  }
+}

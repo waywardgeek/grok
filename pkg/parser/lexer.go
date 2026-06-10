@@ -614,11 +614,23 @@ func (l *Lexer) scanFString(start ast.Pos) Token {
 	for l.pos < len(l.source) {
 		r := l.advance()
 		if r == '{' {
-			depth++
-			buf.WriteRune(r)
+			// {{ is an escaped literal brace — store as sentinel \x01
+			if depth == 0 && l.pos < len(l.source) && l.peek() == '{' {
+				l.advance() // consume second {
+				buf.WriteByte(0x01)
+			} else {
+				depth++
+				buf.WriteRune(r)
+			}
 		} else if r == '}' {
-			depth--
-			buf.WriteRune(r)
+			// }} is an escaped literal brace — store as sentinel \x02
+			if depth == 0 && l.pos < len(l.source) && l.peek() == '}' {
+				l.advance() // consume second }
+				buf.WriteByte(0x02)
+			} else {
+				depth--
+				buf.WriteRune(r)
+			}
 		} else if r == '"' && depth == 0 {
 			return Token{Kind: TFStringLit, Text: buf.String(), Span: ast.Span{Start: start, End: l.currentPos()}}
 		} else if r == '\\' && depth == 0 {

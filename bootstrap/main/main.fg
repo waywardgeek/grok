@@ -1,0 +1,997 @@
+// main.fg — Forge bootstrap compiler CLI
+// Commands: compile, test, fmt, help
+// Ports cmd/forge/main.go (compile, test) and cmd/forge/fmt.go
+
+let USAGE: string = "Usage: forge <command> [arguments]\n\nCommands:\n  compile  <file.fg> [...] [-o out]   Compile .fg files to C\n  test     <file.fg> [...]             Compile, discover test_* functions, run tests\n  fmt      <file.forge> [...]          Format .forge files\n  help                                Show this message\n"
+
+// ---------------------------------------------------------------------------
+// Command resolution — unique prefix matching
+// ---------------------------------------------------------------------------
+
+func resolve_command(prefix: string) -> (string, bool) {
+  if prefix == "-h" || prefix == "--help" {
+    return ("help", true)
+  }
+  let commands: [string] = ["compile", "test", "fmt", "help"]
+  // Exact match first
+  let mut i = 0
+  while i < len(commands) {
+    if commands[i] == prefix {
+      return (commands[i], true)
+    }
+    i = i + 1
+  }
+  // Prefix match
+  let mut matches: [string] = []
+  i = 0
+  while i < len(commands) {
+    if len(prefix) <= len(commands[i]) {
+      if commands[i][0:len(prefix)] == prefix {
+        matches = append(matches, commands[i])
+      }
+    }
+    i = i + 1
+  }
+  if len(matches) == 1 {
+    return (matches[0], true)
+  }
+  if len(matches) > 1 {
+    eprintln(f"ambiguous command \"{prefix}\": matches {str_join(matches, ", ")}")
+  } else {
+    eprintln(f"unknown command: {prefix}")
+  }
+  return ("", false)
+}
+
+func str_join(parts: [string], sep: string) -> string {
+  let sb = new_string_builder()
+  let mut i = 0
+  while i < len(parts) {
+    if i > 0 { sb.write(sep) }
+    sb.write(parts[i])
+    i = i + 1
+  }
+  return sb.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Shared: parse, merge, desugar, check, lower pipeline
+// ---------------------------------------------------------------------------
+
+func compile_pipeline(inputs: [string], output: string) -> bool {
+  // Parse all input files
+  let mut all_files: [File?] = []
+  let mut i = 0
+  while i < len(inputs) {
+    let result = read_file(inputs[i])
+    if !result._1 {
+      eprintln(f"error: cannot read {inputs[i]}")
+      return false
+    }
+    let parse_result = parse_file(result._0, inputs[i])
+    if isnull(parse_result._0) {
+      eprintln(f"error: parse failed for {inputs[i]}")
+      return false
+    }
+    all_files = append(all_files, parse_result._0)
+    i = i + 1
+  }
+
+  // Merge all files
+  let merged = merge_files(all_files)
+  if isnull(merged) {
+    eprintln("error: no files to compile")
+    return false
+  }
+
+  // Merge stdlib
+  let stdlib_dir = find_stdlib_dir()
+  if stdlib_dir != "" {
+    let std_file = load_stdlib(stdlib_dir)
+    if !isnull(std_file) {
+      merge_stdlib(merged!, std_file!)
+    }
+  }
+
+  // Desugar
+  desugar_all(merged!)
+
+  // Check
+  let checker = check_file(merged!)
+  if len(checker.errors) > 0 {
+    let mut j = 0
+    while j < len(checker.errors) {
+      eprintln(checker.errors[j])
+      j = j + 1
+    }
+  }
+
+  // Lower
+  let lowerer = new_lowerer()
+  let prog = lowerer.lower_file(merged)
+  if isnull(prog) {
+    eprintln("error: lowering failed")
+    return false
+  }
+
+  // Optimize
+  optimize(prog!)
+
+  // Monomorphize
+  monomorphize(prog)
+
+  // Rewrite impl renames
+  rewrite_impl_renames(prog)
+
+  // Emit C
+  let c_src = emit_c(prog)
+
+  // Write output
+  let ok = write_file(output, c_src)
+  if !ok {
+    eprintln(f"error: cannot write {output}")
+    return false
+  }
+  println(f"wrote {output}")
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// compile command
+// ---------------------------------------------------------------------------
+
+func cmd_compile(args: [string]) -> bool {
+  let mut inputs: [string] = []
+  let mut output = ""
+  let mut i = 0
+  while i < len(args) {
+    if args[i] == "-o" {
+      i = i + 1
+      if i < len(args) {
+        output = args[i]
+      }
+    } else if args[i] == "--c" {
+      // accepted for backwards compat
+    } else {
+      inputs = append(inputs, args[i])
+    }
+    i = i + 1
+  }
+
+  if len(inputs) == 0 {
+    eprintln("usage: forge compile <file.fg> [...] [-o output.c]")
+    return false
+  }
+
+  if output == "" {
+    // Default: first input with .c extension
+    let base = path_base(inputs[0])
+    let ext = path_ext(base)
+    if ext != "" {
+      output = base[0:len(base) - len(ext)] + ".c"
+    } else {
+      output = base + ".c"
+    }
+  }
+
+  return compile_pipeline(inputs, output)
+}
+
+// ---------------------------------------------------------------------------
+// test command
+// ---------------------------------------------------------------------------
+
+func cmd_test(args: [string]) -> bool {
+  let mut inputs: [string] = []
+  let mut i = 0
+  while i < len(args) {
+    inputs = append(inputs, args[i])
+    i = i + 1
+  }
+
+  if len(inputs) == 0 {
+    eprintln("usage: forge test <file.fg> [...]")
+    return false
+  }
+
+  // Parse all input files
+  let mut all_files: [File?] = []
+  i = 0
+  while i < len(inputs) {
+    let result = read_file(inputs[i])
+    if !result._1 {
+      eprintln(f"error: cannot read {inputs[i]}")
+      return false
+    }
+    let parse_result = parse_file(result._0, inputs[i])
+    if isnull(parse_result._0) {
+      eprintln("error: parse failed")
+      return false
+    }
+    all_files = append(all_files, parse_result._0)
+    i = i + 1
+  }
+
+  // Merge
+  let merged = merge_files(all_files)
+  if isnull(merged) {
+    eprintln("error: no files to compile")
+    return false
+  }
+
+  // Stdlib
+  let stdlib_dir = find_stdlib_dir()
+  if stdlib_dir != "" {
+    let std_file = load_stdlib(stdlib_dir)
+    if !isnull(std_file) {
+      merge_stdlib(merged!, std_file!)
+    }
+  }
+
+  // Desugar
+  desugar_all(merged!)
+
+  // Check
+  let checker = check_file(merged!)
+  if len(checker.errors) > 0 {
+    let mut j = 0
+    while j < len(checker.errors) {
+      eprintln(checker.errors[j])
+      j = j + 1
+    }
+  }
+
+  // Lower
+  let lowerer = new_lowerer()
+  let prog = lowerer.lower_file(merged)
+  if isnull(prog) {
+    eprintln("error: lowering failed")
+    return false
+  }
+
+  // Optimize + mono
+  optimize(prog!)
+  monomorphize(prog)
+  rewrite_impl_renames(prog)
+
+  // Discover test_* functions
+  let mut test_funcs: [string] = []
+  i = 0
+  while i < len(prog!.functions) {
+    let f = prog!.functions[i]
+    if f.receiver == "" {
+      if len(f.name) >= 5 {
+        if f.name[0:5] == "test_" {
+          test_funcs = append(test_funcs, f.name)
+        }
+      }
+    }
+    i = i + 1
+  }
+
+  if len(test_funcs) == 0 {
+    eprintln("no test_* functions found")
+    return true
+  }
+
+  // Generate C source + test runner
+  let c_src = emit_c(prog) + emit_test_runner(test_funcs)
+
+  // Write to temp dir
+  let tmp_dir = mkdtemp("forge-test")
+  let c_file = path_join([tmp_dir, "test.c"])
+  let bin_file = path_join([tmp_dir, "test"])
+
+  if !write_file(c_file, c_src) {
+    eprintln(f"error: cannot write {c_file}")
+    return false
+  }
+
+  // Copy runtime header
+  let runtime_dir = find_runtime_dir()
+  if runtime_dir != "" {
+    let rt_result = read_file(path_join([runtime_dir, "forge_runtime.h"]))
+    if rt_result._1 {
+      write_file(path_join([tmp_dir, "forge_runtime.h"]), rt_result._0)
+    }
+  }
+
+  // Compile with gcc
+  let gcc_result = exec_command("gcc", [
+    "-std=gnu11", "-O0", "-g",
+    "-o", bin_file,
+    c_file,
+    "-I", tmp_dir
+  ])
+  if !gcc_result._1 {
+    eprintln(f"gcc compilation failed:\n{gcc_result._0}")
+    return false
+  }
+
+  // Run tests
+  let test_result = exec_command(bin_file, [])
+  print(test_result._0)
+  return test_result._1
+}
+
+func find_runtime_dir() -> string {
+  let candidates: [string] = ["runtime", "../runtime", "../../runtime"]
+  let mut i = 0
+  while i < len(candidates) {
+    if file_exists(path_join([candidates[i], "forge_runtime.h"])) {
+      return candidates[i]
+    }
+    i = i + 1
+  }
+  return ""
+}
+
+// ---------------------------------------------------------------------------
+// fmt command — format .forge design files
+// ---------------------------------------------------------------------------
+
+func cmd_fmt(args: [string]) -> bool {
+  if len(args) == 0 {
+    eprintln("usage: forge fmt <file.forge> [...]")
+    return false
+  }
+  let mut i = 0
+  while i < len(args) {
+    if !fmt_file(args[i]) {
+      return false
+    }
+    println(f"formatted {args[i]}")
+    i = i + 1
+  }
+  return true
+}
+
+func fmt_file(path: string) -> bool {
+  let result = read_file(path)
+  if !result._1 {
+    eprintln(f"error: cannot read {path}")
+    return false
+  }
+
+  let split = split_at_marker(result._0, "// --- index ---")
+  let zone1 = split._0
+  let zones23 = split._1
+
+  let parse_result = parse_file(zone1, path)
+  if isnull(parse_result._0) {
+    eprintln("error: parse failed")
+    return false
+  }
+  let file = parse_result._0
+  if isnull(file) { return false }
+
+  let sb = new_string_builder()
+  let comments = file!.fc_children()
+  let mut comment_idx = 0
+  let blocks = file!.fb_children()
+
+  let mut bi = 0
+  while bi < len(blocks) {
+    comment_idx = emit_comments_before(sb, comments, comment_idx, blocks[bi].span.start.line, "")
+    fmt_block(sb, blocks[bi], comments, comment_idx)
+    // Update comment_idx after fmt_block (we can't return it from fmt_block easily,
+    // so we advance past all comments consumed by the block)
+    while comment_idx < len(comments) {
+      if comments[comment_idx].pos.line <= blocks[bi].span.end.line {
+        comment_idx = comment_idx + 1
+      } else {
+        break
+      }
+    }
+    if bi < len(blocks) - 1 {
+      sb.write("\n")
+    }
+    bi = bi + 1
+  }
+
+  // Trailing comments
+  while comment_idx < len(comments) {
+    sb.write(comments[comment_idx].text)
+    sb.write("\n")
+    comment_idx = comment_idx + 1
+  }
+
+  // Append zones 2+3
+  if zones23 != "" {
+    sb.write(zones23)
+  }
+
+  return write_file(path, sb.to_string())
+}
+
+func split_at_marker(text: string, marker: string) -> (string, string) {
+  let idx = str_index_of(text, marker)
+  if idx < 0 {
+    return (text, "")
+  }
+  return (text[0:idx], text[idx:len(text)])
+}
+
+func emit_comments_before(
+    sb: StringBuilder,
+    comments: [Comment],
+    idx: i32,
+    before_line: i32,
+    indent: string
+) -> i32 {
+  let mut i = idx
+  while i < len(comments) {
+    if comments[i].pos.line >= before_line { break }
+    sb.write(indent)
+    sb.write(comments[i].text)
+    sb.write("\n")
+    i = i + 1
+  }
+  return i
+}
+
+// ---------------------------------------------------------------------------
+// Forge block and declaration formatters
+// ---------------------------------------------------------------------------
+
+func fmt_block(sb: StringBuilder, block: ForgeBlock, comments: [Comment], comment_idx: i32) {
+  let name = if !isnull(block.name) { block.name!.get_name() } else { "unnamed" }
+  sb.write(f"forge {name} {{\n")
+
+  if block.why != "" {
+    sb.write(f"  why: \"{block.why}\"\n\n")
+  }
+
+  // Collect all declarations with source line for ordered emission
+  // We'll use a simple approach: emit each kind in source order
+  // Build a flat list of (line, kind_tag, index)
+  let imports = block.imp_children()
+  let docs = block.doc_children()
+  let invariants = block.inv_children()
+  let structs = block.sd_children()
+  let enums = block.ed_children()
+  let interfaces = block.id_children()
+  let classes = block.cd_children()
+  let funcs = block.fd_children()
+  let relations = block.rd_children()
+  let type_aliases = block.ta_children()
+
+  // Simple approach: collect all items as (line, tag) pairs, sort, then emit
+  // Since we can't easily sort heterogeneous items, we'll merge by line number
+  let mut items: [DeclItem] = []
+
+  let mut i = 0
+  while i < len(imports) {
+    items = append(items, DeclItem { line: imports[i].span.start.line, tag: 0, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(docs) {
+    items = append(items, DeclItem { line: docs[i].span.start.line, tag: 1, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(invariants) {
+    items = append(items, DeclItem { line: invariants[i].span.start.line, tag: 2, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(structs) {
+    items = append(items, DeclItem { line: structs[i].span.start.line, tag: 3, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(enums) {
+    items = append(items, DeclItem { line: enums[i].span.start.line, tag: 4, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(interfaces) {
+    items = append(items, DeclItem { line: interfaces[i].span.start.line, tag: 5, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(classes) {
+    items = append(items, DeclItem { line: classes[i].span.start.line, tag: 6, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(funcs) {
+    items = append(items, DeclItem { line: funcs[i].span.start.line, tag: 7, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(relations) {
+    items = append(items, DeclItem { line: relations[i].span.start.line, tag: 8, idx: i })
+    i = i + 1
+  }
+  i = 0
+  while i < len(type_aliases) {
+    items = append(items, DeclItem { line: type_aliases[i].span.start.line, tag: 9, idx: i })
+    i = i + 1
+  }
+
+  // Sort by line (insertion sort — good enough for small lists)
+  sort_decl_items(items)
+
+  let mut ci = comment_idx
+  i = 0
+  while i < len(items) {
+    let item = items[i]
+    ci = emit_comments_before(sb, comments, ci, item.line, "  ")
+
+    if item.tag == 0 { fmt_import(sb, imports[item.idx]) }
+    if item.tag == 1 { fmt_doc(sb, docs[item.idx]) }
+    if item.tag == 2 { fmt_invariant(sb, invariants[item.idx]) }
+    if item.tag == 3 { fmt_struct(sb, structs[item.idx]) }
+    if item.tag == 4 { fmt_enum(sb, enums[item.idx]) }
+    if item.tag == 5 { fmt_interface(sb, interfaces[item.idx]) }
+    if item.tag == 6 { fmt_class(sb, classes[item.idx]) }
+    if item.tag == 7 { fmt_func(sb, funcs[item.idx], "  ") }
+    if item.tag == 8 { fmt_relation(sb, relations[item.idx]) }
+    if item.tag == 9 { fmt_type_alias(sb, type_aliases[item.idx]) }
+
+    if i < len(items) - 1 {
+      sb.write("\n")
+    }
+    i = i + 1
+  }
+
+  // Emit comments before closing brace
+  ci = emit_comments_before(sb, comments, ci, block.span.end.line + 1, "  ")
+
+  sb.write("}\n")
+}
+
+struct DeclItem {
+  line: i32
+  tag: i32   // 0=import, 1=doc, 2=invariant, 3=struct, 4=enum, 5=interface,
+             // 6=class, 7=func, 8=relation, 9=type_alias
+  idx: i32
+}
+
+func sort_decl_items(items: [DeclItem]) {
+  // Insertion sort
+  let mut i = 1
+  while i < len(items) {
+    let key = items[i]
+    let mut j = i - 1
+    while j >= 0 {
+      if items[j].line <= key.line { break }
+      items[j + 1] = items[j]
+      j = j - 1
+    }
+    items[j + 1] = key
+    i = i + 1
+  }
+}
+
+// --- Declaration formatters ---
+
+func fmt_import(sb: StringBuilder, imp: ImportDecl) {
+  if !isnull(imp.alias) {
+    sb.write(f"  import {imp.alias!.get_name()} from \"{imp.path}\"\n")
+  } else {
+    sb.write(f"  import \"{imp.path}\"\n")
+  }
+}
+
+func fmt_doc(sb: StringBuilder, doc: DocBlock) {
+  sb.write(f"  doc \"{doc.section}\": \"\"\"\n")
+  // Split content by newlines and indent
+  let lines = str_split(doc.content, "\n")
+  let mut i = 0
+  while i < len(lines) {
+    let line = str_trim(lines[i])
+    if line == "" {
+      sb.write("\n")
+    } else {
+      sb.write("    ")
+      sb.write(line)
+      sb.write("\n")
+    }
+    i = i + 1
+  }
+  sb.write("  \"\"\"\n")
+}
+
+func fmt_invariant(sb: StringBuilder, inv: InvariantDecl) {
+  sb.write(f"  invariant \"{inv.claim}\"")
+  if inv.verified_at != "" {
+    sb.write(f" verified_at \"{inv.verified_at}\"")
+  }
+  sb.write("\n")
+}
+
+func fmt_struct(sb: StringBuilder, s: StructDecl) {
+  sb.write("  ")
+  if s.is_public { sb.write("pub ") }
+  let name = if !isnull(s.name) { s.name!.get_name() } else { "?" }
+  sb.write(f"struct {name}")
+  fmt_type_params(sb, s.stp_children())
+  sb.write(" {\n")
+  let fields = s.sf_children()
+  let mut i = 0
+  while i < len(fields) {
+    fmt_field(sb, fields[i])
+    i = i + 1
+  }
+  sb.write("  }\n")
+}
+
+func fmt_enum(sb: StringBuilder, e: EnumDecl) {
+  sb.write("  ")
+  if e.is_public { sb.write("pub ") }
+  let name = if !isnull(e.name) { e.name!.get_name() } else { "?" }
+  sb.write(f"enum {name}")
+  fmt_type_params(sb, e.etp_children())
+  sb.write(" {")
+
+  let variants = e.ev_children()
+
+  // Check if all simple (no fields)
+  let mut all_simple = true
+  let mut i = 0
+  while i < len(variants) {
+    if len(variants[i].evf_children()) > 0 {
+      all_simple = false
+    }
+    i = i + 1
+  }
+
+  if all_simple && len(variants) <= 5 {
+    sb.write(" ")
+    i = 0
+    while i < len(variants) {
+      if i > 0 { sb.write(" ") }
+      let vname = if !isnull(variants[i].name) { variants[i].name!.get_name() } else { "?" }
+      sb.write(vname)
+      i = i + 1
+    }
+    sb.write(" }\n")
+  } else {
+    sb.write("\n")
+    i = 0
+    while i < len(variants) {
+      let vname = if !isnull(variants[i].name) { variants[i].name!.get_name() } else { "?" }
+      sb.write(f"    {vname}")
+      let vfields = variants[i].evf_children()
+      if len(vfields) > 0 {
+        sb.write("(")
+        let mut j = 0
+        while j < len(vfields) {
+          if j > 0 { sb.write(", ") }
+          if !isnull(vfields[j].name) {
+            sb.write(f"{vfields[j].name!.get_name()}: ")
+          }
+          fmt_type_expr(sb, vfields[j].type_expr)
+          j = j + 1
+        }
+        sb.write(")")
+      }
+      sb.write("\n")
+      i = i + 1
+    }
+    sb.write("  }\n")
+  }
+}
+
+func fmt_interface(sb: StringBuilder, iface: InterfaceDecl) {
+  sb.write("  ")
+  if iface.is_public { sb.write("pub ") }
+  let name = if !isnull(iface.name) { iface.name!.get_name() } else { "?" }
+  sb.write(f"interface {name}")
+  fmt_type_params(sb, iface.itp_children())
+  sb.write(" {\n")
+
+  // Implements
+  let mut i = 0
+  while i < len(iface.implements) {
+    sb.write(f"    {iface.implements[i].get_name()}\n")
+    i = i + 1
+  }
+
+  // Embeds
+  let embeds = iface.ie_children()
+  i = 0
+  while i < len(embeds) {
+    let ename = if !isnull(embeds[i].name) { embeds[i].name!.get_name() } else { "?" }
+    sb.write(f"    embed {ename}")
+    let eargs = embeds[i].ie_arg_children()
+    if len(eargs) > 0 {
+      sb.write("<")
+      let mut j = 0
+      while j < len(eargs) {
+        if j > 0 { sb.write(", ") }
+        fmt_type_expr(sb, eargs[j])
+        j = j + 1
+      }
+      sb.write(">")
+    }
+    sb.write("\n")
+    i = i + 1
+  }
+
+  // Fields
+  let ifields = iface.ifd_children()
+  i = 0
+  while i < len(ifields) {
+    let tp = if !isnull(ifields[i].type_param) { ifields[i].type_param!.get_name() } else { "?" }
+    let fn_name = if !isnull(ifields[i].name) { ifields[i].name!.get_name() } else { "?" }
+    sb.write(f"    field {tp}.{fn_name}: ")
+    fmt_type_expr(sb, ifields[i].type_expr)
+    sb.write("\n")
+    i = i + 1
+  }
+
+  // Destructors
+  let dblocks = iface.idb_children()
+  i = 0
+  while i < len(dblocks) {
+    let dtp = if !isnull(dblocks[i].type_param) { dblocks[i].type_param!.get_name() } else { "?" }
+    sb.write(f"    destructor {dtp} {{ ... }}\n")
+    i = i + 1
+  }
+
+  // Methods
+  let methods = iface.im_children()
+  i = 0
+  while i < len(methods) {
+    fmt_func(sb, methods[i], "    ")
+    i = i + 1
+  }
+
+  sb.write("  }\n")
+}
+
+func fmt_class(sb: StringBuilder, c: ClassDecl) {
+  sb.write("  ")
+  if c.is_public { sb.write("pub ") }
+  let name = if !isnull(c.name) { c.name!.get_name() } else { "?" }
+  sb.write(f"class {name}")
+  fmt_type_params(sb, c.ctp_children())
+  if len(c.implements) > 0 {
+    sb.write(" implements ")
+    let mut i = 0
+    while i < len(c.implements) {
+      if i > 0 { sb.write(", ") }
+      sb.write(c.implements[i].get_name())
+      i = i + 1
+    }
+  }
+  sb.write(" {\n")
+  let fields = c.cf_children()
+  let mut i = 0
+  while i < len(fields) {
+    fmt_field(sb, fields[i])
+    i = i + 1
+  }
+  let methods = c.cm_children()
+  i = 0
+  while i < len(methods) {
+    fmt_func(sb, methods[i], "    ")
+    i = i + 1
+  }
+  sb.write("  }\n")
+}
+
+func fmt_func(sb: StringBuilder, fn: FuncDecl, indent: string) {
+  sb.write(indent)
+  if fn.is_public { sb.write("pub ") }
+  let name = if !isnull(fn.name) { fn.name!.get_name() } else { "?" }
+  sb.write(f"func {name}")
+  fmt_type_params(sb, fn.fp_children())
+  sb.write("(")
+  let params = fn.param_children()
+  let mut i = 0
+  while i < len(params) {
+    if i > 0 { sb.write(", ") }
+    if params[i].is_self {
+      if params[i].is_mut {
+        sb.write("mut self")
+      } else {
+        sb.write("self")
+      }
+    } else {
+      let pname = if !isnull(params[i].name) { params[i].name!.get_name() } else { "_" }
+      sb.write(f"{pname}: ")
+      fmt_type_expr(sb, params[i].type_expr)
+    }
+    i = i + 1
+  }
+  sb.write(")")
+  if !isnull(fn.return_type) {
+    sb.write(" -> ")
+    fmt_type_expr(sb, fn.return_type)
+  }
+  // Where clauses
+  let wheres = fn.where_children()
+  i = 0
+  while i < len(wheres) {
+    let wvar = if !isnull(wheres[i].variable) { wheres[i].variable!.get_name() } else { "?" }
+    let wcon = if !isnull(wheres[i].constraint) { wheres[i].constraint!.get_name() } else { "?" }
+    sb.write(f"\n{indent}  where {wvar}: {wcon}")
+    i = i + 1
+  }
+  sb.write("\n")
+}
+
+func fmt_relation(sb: StringBuilder, r: RelationDecl) {
+  sb.write("  ")
+  if !isnull(r.hint) {
+    sb.write(f"[{r.hint!.get_name()}] ")
+  }
+  let pname = if !isnull(r.parent.type_name) { r.parent.type_name!.get_name() } else { "?" }
+  sb.write(pname)
+  if !isnull(r.parent.label) {
+    sb.write(f".{r.parent.label!.get_name()}")
+  }
+  match r.kind {
+    Owns => { sb.write(" owns ") }
+    Refs => { sb.write(" refs ") }
+  }
+  if r.is_many { sb.write("[") }
+  let cname = if !isnull(r.child.type_name) { r.child.type_name!.get_name() } else { "?" }
+  sb.write(cname)
+  if !isnull(r.child.label) {
+    sb.write(f".{r.child.label!.get_name()}")
+  }
+  if r.is_many { sb.write("]") }
+  sb.write("\n")
+}
+
+func fmt_type_alias(sb: StringBuilder, t: TypeAliasDecl) {
+  sb.write("  ")
+  if t.is_public { sb.write("pub ") }
+  let name = if !isnull(t.name) { t.name!.get_name() } else { "?" }
+  sb.write(f"type {name} = ")
+  fmt_type_expr(sb, t.type_expr)
+  sb.write("\n")
+}
+
+// --- Helpers ---
+
+func fmt_field(sb: StringBuilder, f: Field) {
+  let name = if !isnull(f.name) { f.name!.get_name() } else { "?" }
+  sb.write(f"    {name}: ")
+  fmt_type_expr(sb, f.type_expr)
+  if !isnull(f.guarded_by) {
+    sb.write(f" guarded_by({f.guarded_by!.get_name()})")
+  }
+  sb.write("\n")
+}
+
+func fmt_type_params(sb: StringBuilder, tps: [TypeParam]) {
+  if len(tps) == 0 { return }
+  sb.write("<")
+  let mut i = 0
+  while i < len(tps) {
+    if i > 0 { sb.write(", ") }
+    let name = if !isnull(tps[i].name) { tps[i].name!.get_name() } else { "?" }
+    sb.write(name)
+    if !isnull(tps[i].constraint) {
+      sb.write(f": {tps[i].constraint!.get_name()}")
+    }
+    i = i + 1
+  }
+  sb.write(">")
+}
+
+func fmt_type_expr(sb: StringBuilder, te: TypeExpr?) {
+  if isnull(te) {
+    sb.write("?")
+    return
+  }
+  match te!.kind {
+    Named(name, args) => {
+      sb.write(name.get_name())
+      if len(args) > 0 {
+        sb.write("<")
+        let mut i = 0
+        while i < len(args) {
+          if i > 0 { sb.write(", ") }
+          fmt_type_expr(sb, args[i])
+          i = i + 1
+        }
+        sb.write(">")
+      }
+    }
+    Optional(inner) => {
+      fmt_type_expr(sb, inner)
+      sb.write("?")
+    }
+    Union(variants) => {
+      let mut i = 0
+      while i < len(variants) {
+        if i > 0 { sb.write(" | ") }
+        fmt_type_expr(sb, variants[i])
+        i = i + 1
+      }
+    }
+    Sequence(elem) => {
+      sb.write("[")
+      fmt_type_expr(sb, elem)
+      sb.write("]")
+    }
+    Map(key, value) => {
+      sb.write("map[")
+      fmt_type_expr(sb, key)
+      sb.write("]")
+      fmt_type_expr(sb, value)
+    }
+    Tuple(fields) => {
+      sb.write("(")
+      let mut i = 0
+      while i < len(fields) {
+        if i > 0 { sb.write(", ") }
+        if !isnull(fields[i].name) {
+          sb.write(f"{fields[i].name!.get_name()}: ")
+        }
+        fmt_type_expr(sb, fields[i].type_expr)
+        i = i + 1
+      }
+      sb.write(")")
+    }
+    Func(params, ret) => {
+      sb.write("(")
+      let mut i = 0
+      while i < len(params) {
+        if i > 0 { sb.write(", ") }
+        fmt_type_expr(sb, params[i])
+        i = i + 1
+      }
+      sb.write(") -> ")
+      fmt_type_expr(sb, ret)
+    }
+    Channel(elem) => {
+      sb.write("channel<")
+      fmt_type_expr(sb, elem)
+      sb.write(">")
+    }
+    Generator(elem) => {
+      sb.write("generator<")
+      fmt_type_expr(sb, elem)
+      sb.write(">")
+    }
+    Lock => { sb.write("lock") }
+    Unit => { sb.write("unit") }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+func main() {
+  let args = os_args()
+  if len(args) < 2 {
+    eprint(USAGE)
+    os_exit(1)
+  }
+
+  let resolved = resolve_command(args[1])
+  if !resolved._1 {
+    eprint(f"\n{USAGE}")
+    os_exit(1)
+  }
+  let cmd = resolved._0
+
+  // Build sub-args
+  let mut sub_args: [string] = []
+  let mut i = 2
+  while i < len(args) {
+    sub_args = append(sub_args, args[i])
+    i = i + 1
+  }
+
+  let mut ok = false
+  if cmd == "compile" { ok = cmd_compile(sub_args) }
+  if cmd == "test" { ok = cmd_test(sub_args) }
+  if cmd == "fmt" { ok = cmd_fmt(sub_args) }
+  if cmd == "help" {
+    print(USAGE)
+    ok = true
+  }
+
+  if !ok { os_exit(1) }
+}
