@@ -459,7 +459,7 @@ func CGen.c_tuple_type(self, t: LType?) -> string {
   }
   // Fallback: anonymous struct
   let sb = new_string_builder()
-  sb.write(f"struct { ")
+  sb.write("struct { ")
   let mut i = 0
   while i < len(t!.fields) {
     if i > 0 {
@@ -2737,13 +2737,13 @@ func CGen.to_string_expr(self, v: LValue?) -> string {
   }
   match t!.kind {
     TyBool => { return f"({val} ? FORGE_STR(\"true\") : FORGE_STR(\"false\"))" }
-    TyI8 | TyI16 | TyI32 | TyPlatformInt => { return f"forge_sprintf(\"%d\", {val})" }
-    TyI64 => { return f"forge_sprintf(\"%lld\", (long long){val})" }
-    TyU8 | TyU16 | TyU32 | TyPlatformUint => { return f"forge_sprintf(\"%u\", (unsigned){val})" }
-    TyU64 => { return f"forge_sprintf(\"%llu\", (unsigned long long){val})" }
-    TyF32 => { return f"forge_sprintf(\"%g\", (double){val})" }
-    TyF64 => { return f"forge_sprintf(\"%g\", {val})" }
-    TyString => { return f"forge_sprintf(\"\\\"%.*s\\\"\", (int){val}.len, (const char*){val}.data)" }
+    TyI8 | TyI16 | TyI32 | TyPlatformInt => { return f"forge_sprintf(\"%%d\", {val})" }
+    TyI64 => { return f"forge_sprintf(\"%%lld\", (long long){val})" }
+    TyU8 | TyU16 | TyU32 | TyPlatformUint => { return f"forge_sprintf(\"%%u\", (unsigned){val})" }
+    TyU64 => { return f"forge_sprintf(\"%%llu\", (unsigned long long){val})" }
+    TyF32 => { return f"forge_sprintf(\"%%g\", (double){val})" }
+    TyF64 => { return f"forge_sprintf(\"%%g\", {val})" }
+    TyString => { return f"forge_sprintf(\"\\\"%%.*s\\\"\", (int){val}.len, (const char*){val}.data)" }
     TyTaggedUnion => { return f"{t!.name}_to_string({val})" }
     TyStruct => { return f"{t!.name}_to_string({val})" }
     TyClassHandle => { return f"({val} == NULL ? FORGE_STR(\"null\") : {t!.name}_to_string({val}))" }
@@ -2775,13 +2775,13 @@ func CGen.field_to_string_expr(self, t: LType?, val: string) -> string {
   }
   match t!.kind {
     TyBool => { return f"({val} ? FORGE_STR(\"true\") : FORGE_STR(\"false\"))" }
-    TyI8 | TyI16 | TyI32 | TyPlatformInt => { return f"forge_sprintf(\"%d\", {val})" }
-    TyI64 => { return f"forge_sprintf(\"%lld\", (long long){val})" }
-    TyU8 | TyU16 | TyU32 | TyPlatformUint => { return f"forge_sprintf(\"%u\", (unsigned){val})" }
-    TyU64 => { return f"forge_sprintf(\"%llu\", (unsigned long long){val})" }
-    TyF32 => { return f"forge_sprintf(\"%g\", (double){val})" }
-    TyF64 => { return f"forge_sprintf(\"%g\", {val})" }
-    TyString => { return f"forge_sprintf(\"\\\"%.*s\\\"\", (int){val}.len, (const char*){val}.data)" }
+    TyI8 | TyI16 | TyI32 | TyPlatformInt => { return f"forge_sprintf(\"%%d\", {val})" }
+    TyI64 => { return f"forge_sprintf(\"%%lld\", (long long){val})" }
+    TyU8 | TyU16 | TyU32 | TyPlatformUint => { return f"forge_sprintf(\"%%u\", (unsigned){val})" }
+    TyU64 => { return f"forge_sprintf(\"%%llu\", (unsigned long long){val})" }
+    TyF32 => { return f"forge_sprintf(\"%%g\", (double){val})" }
+    TyF64 => { return f"forge_sprintf(\"%%g\", {val})" }
+    TyString => { return f"forge_sprintf(\"\\\"%%.*s\\\"\", (int){val}.len, (const char*){val}.data)" }
     TyTaggedUnion => { return f"{t!.name}_to_string({val})" }
     TyStruct => { return f"{t!.name}_to_string({val})" }
     TyClassHandle => { return f"({val} == NULL ? FORGE_STR(\"null\") : {t!.name}_to_string({val}))" }
