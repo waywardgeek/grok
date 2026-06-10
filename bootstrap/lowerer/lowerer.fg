@@ -827,11 +827,7 @@ forge lowerer {
   func Lowerer.lower_func_with_receiver(self, fd: FuncDecl?, receiver: string) -> LFuncDecl? {
     if isnull(fd) || isnull(fd!.name) { return nil }
 
-    let fname = if receiver != "" {
-      receiver + "." + fd!.name!.name
-    } else {
-      fd!.name!.name
-    }
+    let fname = fd!.name!.name
 
     // Type params
     let mut tps: [LTypeParam] = []

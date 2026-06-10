@@ -2917,8 +2917,239 @@ forge checker {
   // validateAllExprsResolved walks every Expr in the file and panics if
   // any has a nil resolved_type. Only runs when checker has zero errors.
   func Checker.validate_all_exprs_resolved(self, file: File) {
-    // TODO: implement once C backend supports lambda captures
-    // The Go compiler's validator covers this for bootstrap files
+    if len(self.errors) > 0 { return }
+
+    let blocks = file.fb_children()
+    for block in blocks {
+      let funcs = block.fd_children()
+      for f in funcs {
+        if f.body == nil { continue }
+        // Skip generic functions — they aren't fully resolved
+        let tps = f.fp_children()
+        if len(tps) > 0 { continue }
+
+        let ctx = f.name!.name
+        self.vwalk_block(f.body!, ctx)
+      }
+
+      let classes = block.cd_children()
+      for cls in classes {
+        let cmethods = cls.cm_children()
+        for m in cmethods {
+          if m.body == nil { continue }
+          let tps = m.fp_children()
+          if len(tps) > 0 { continue }
+
+          let ctx = sym_to_string(cls.name!) + "." + m.name!.name
+          self.vwalk_block(m.body!, ctx)
+        }
+      }
+    }
+  }
+
+  func Checker.vwalk_block(self, block: Block, ctx: string) {
+    let stmts = block.bs_children()
+    for s in stmts {
+      self.vwalk_stmt(s, ctx)
+    }
+  }
+
+  func Checker.vwalk_stmt(self, stmt: Stmt, ctx: string) {
+    match stmt.kind {
+      VarDecl(_, _, _, _, value) => {
+        if value != nil { self.vwalk_expr(value!, ctx) }
+      }
+      Assign(target, value) => {
+        self.vwalk_expr(target, ctx)
+        self.vwalk_expr(value, ctx)
+      }
+      Return(value) => {
+        if value != nil { self.vwalk_expr(value!, ctx) }
+      }
+      ExprStmt(expr) => {
+        self.vwalk_expr(expr, ctx)
+      }
+      If(condition, then_block, else_ifs, else_block) => {
+        self.vwalk_expr(condition, ctx)
+        self.vwalk_block(then_block, ctx)
+        for ei in else_ifs {
+          if ei.condition != nil { self.vwalk_expr(ei.condition!, ctx) }
+          if ei.body != nil { self.vwalk_block(ei.body!, ctx) }
+        }
+        if else_block != nil { self.vwalk_block(else_block!, ctx) }
+      }
+      For(_, _, collection, body) => {
+        self.vwalk_expr(collection, ctx)
+        self.vwalk_block(body, ctx)
+      }
+      While(condition, body) => {
+        self.vwalk_expr(condition, ctx)
+        self.vwalk_block(body, ctx)
+      }
+      Match(value, arms) => {
+        self.vwalk_expr(value, ctx)
+        for arm in arms {
+          if arm.pattern != nil { self.vwalk_pattern(arm.pattern!, ctx) }
+          for p in arm.patterns { self.vwalk_pattern(p, ctx) }
+          if arm.guard != nil { self.vwalk_expr(arm.guard!, ctx) }
+          if arm.body != nil { self.vwalk_block(arm.body!, ctx) }
+        }
+      }
+      BlockStmt(block) => {
+        self.vwalk_block(block, ctx)
+      }
+      Cascade(body) => {
+        self.vwalk_block(body, ctx)
+      }
+      Spawn(body) => {
+        self.vwalk_block(body, ctx)
+      }
+      Select(cases) => {
+        for c in cases {
+          if c.expr != nil { self.vwalk_expr(c.expr!, ctx) }
+          if c.body != nil { self.vwalk_block(c.body!, ctx) }
+        }
+      }
+      Yield(value) => {
+        if value != nil { self.vwalk_expr(value!, ctx) }
+      }
+      Lock(mutex, body) => {
+        self.vwalk_expr(mutex, ctx)
+        self.vwalk_block(body, ctx)
+      }
+      IfLet(pattern, value, then_block, else_block) => {
+        self.vwalk_expr(value, ctx)
+        self.vwalk_pattern(pattern, ctx)
+        self.vwalk_block(then_block, ctx)
+        if else_block != nil { self.vwalk_block(else_block!, ctx) }
+      }
+      LetElse(pattern, value, else_block) => {
+        self.vwalk_expr(value, ctx)
+        self.vwalk_pattern(pattern, ctx)
+        self.vwalk_block(else_block, ctx)
+      }
+      Break | Continue => {}
+    }
+  }
+
+  func Checker.vwalk_pattern(self, pat: Pattern, ctx: string) {
+    match pat.kind {
+      Literal(expr) => {
+        self.vwalk_expr(expr, ctx)
+      }
+      Variant(_, bindings) => {
+        for b in bindings { self.vwalk_pattern(b, ctx) }
+      }
+      Tuple(elems) => {
+        for e in elems { self.vwalk_pattern(e, ctx) }
+      }
+      Ident(_) | Wildcard => {}
+    }
+  }
+
+  func Checker.vwalk_expr(self, expr: Expr, ctx: string) {
+    if isnull(expr.resolved_type) {
+      eprintln(f"checker: validateAllExprsResolved: nil resolved_type in {ctx} at {expr.span.start.file}:{itoa(expr.span.start.line as i64)}:{itoa(expr.span.start.column as i64)}")
+      os_exit(1)
+    }
+    // Detect void* leaks — any in resolved_type means the checker silently
+    // failed to resolve the actual type.
+    match expr.resolved_type!.kind {
+      Named(name, _) => {
+        if name.name == "any" {
+          eprintln(f"checker: validateAllExprsResolved: void* (any) type in {ctx} at {expr.span.start.file}:{itoa(expr.span.start.line as i64)}:{itoa(expr.span.start.column as i64)}")
+          os_exit(1)
+        }
+      }
+      _ => {}
+    }
+
+    match expr.kind {
+      // Leaf nodes
+      Ident(_) | IntLit(_, _) | FloatLit(_) | StringLit(_) | BoolLit(_) | Nil => {}
+
+      StringInterp(parts) => {
+        for p in parts { self.vwalk_expr(p, ctx) }
+      }
+      Call(func_expr, _, args) => {
+        self.vwalk_expr(func_expr, ctx)
+        for a in args { self.vwalk_expr(a, ctx) }
+      }
+      MethodCall(receiver, _, _, args) => {
+        self.vwalk_expr(receiver, ctx)
+        for a in args { self.vwalk_expr(a, ctx) }
+      }
+      FieldAccess(receiver, _) => {
+        self.vwalk_expr(receiver, ctx)
+      }
+      Index(receiver, index) => {
+        self.vwalk_expr(receiver, ctx)
+        self.vwalk_expr(index, ctx)
+      }
+      Slice(receiver, low, high) => {
+        self.vwalk_expr(receiver, ctx)
+        if low != nil { self.vwalk_expr(low!, ctx) }
+        if high != nil { self.vwalk_expr(high!, ctx) }
+      }
+      Unary(_, operand) => {
+        self.vwalk_expr(operand, ctx)
+      }
+      Binary(left, _, right) => {
+        self.vwalk_expr(left, ctx)
+        self.vwalk_expr(right, ctx)
+      }
+      TupleLit(elems) => {
+        for e in elems { self.vwalk_expr(e, ctx) }
+      }
+      ListLit(elems) => {
+        for e in elems { self.vwalk_expr(e, ctx) }
+      }
+      MapLit(keys, values) => {
+        for k in keys { self.vwalk_expr(k, ctx) }
+        for v in values { self.vwalk_expr(v, ctx) }
+      }
+      StructLit(_, _, fields) => {
+        for f in fields {
+          if f.value != nil { self.vwalk_expr(f.value!, ctx) }
+        }
+      }
+      Lambda(_, _, body) => {
+        // TODO: lambda capture conversion — convert captured locals into
+        // explicit parameters and pass them at call sites (C++ style).
+        // For now we validate types inside lambda bodies.
+        self.vwalk_block(body, ctx + ".<lambda>")
+      }
+      Match(value, arms) => {
+        self.vwalk_expr(value, ctx)
+        for arm in arms {
+          if arm.pattern != nil { self.vwalk_pattern(arm.pattern!, ctx) }
+          for p in arm.patterns { self.vwalk_pattern(p, ctx) }
+          if arm.guard != nil { self.vwalk_expr(arm.guard!, ctx) }
+          if arm.body != nil { self.vwalk_block(arm.body!, ctx) }
+        }
+      }
+      Cast(_, operand) => {
+        self.vwalk_expr(operand, ctx)
+      }
+      Unwrap(operand) => {
+        self.vwalk_expr(operand, ctx)
+      }
+      Try(operand) => {
+        self.vwalk_expr(operand, ctx)
+      }
+      Is(operand, _) => {
+        self.vwalk_expr(operand, ctx)
+      }
+      IfElse(cond, then_block, else_ifs, else_block) => {
+        self.vwalk_expr(cond, ctx)
+        self.vwalk_block(then_block, ctx)
+        for ei in else_ifs {
+          if ei.condition != nil { self.vwalk_expr(ei.condition!, ctx) }
+          if ei.body != nil { self.vwalk_block(ei.body!, ctx) }
+        }
+        self.vwalk_block(else_block, ctx)
+      }
+    }
   }
 
   // validateFieldAndMethodAccess walks all FieldAccess and MethodCall exprs
