@@ -806,15 +806,15 @@ forge desugar {
       resolved_type: e.resolved_type,
     }
     match e.kind {
-      Call(func_expr, type_args, args) => {
+      Call(func_expr, type_args, args, _) => {
         let new_ta = deep_copy_type_args(type_args)
         let new_args = deep_copy_expr_list(args)
-        result.kind = Call(deep_copy_expr(func_expr), new_ta, new_args)
+        result.kind = Call(deep_copy_expr(func_expr), new_ta, new_args, [])
       }
-      MethodCall(receiver, method, type_args, args) => {
+      MethodCall(receiver, method, type_args, args, _) => {
         let new_ta = deep_copy_type_args(type_args)
         let new_args = deep_copy_expr_list(args)
-        result.kind = MethodCall(deep_copy_expr(receiver), method, new_ta, new_args)
+        result.kind = MethodCall(deep_copy_expr(receiver), method, new_ta, new_args, [])
       }
       FieldAccess(receiver, field_name) => {
         result.kind = FieldAccess(deep_copy_expr(receiver), field_name)
@@ -980,7 +980,7 @@ forge desugar {
 
   func substitute_type_params_in_expr(expr: Expr, type_map: Dict<string>) {
     match expr.kind {
-      Call(func_expr, type_args, args) => {
+      Call(func_expr, type_args, args, _) => {
         let mut i: i32 = 0
         while i < len(type_args) {
           substitute_type_params_in_type_expr(type_args[i], type_map)
@@ -993,7 +993,7 @@ forge desugar {
           i = i + 1
         }
       }
-      MethodCall(receiver, method, type_args, args) => {
+      MethodCall(receiver, method, type_args, args, _) => {
         let mut i: i32 = 0
         while i < len(type_args) {
           substitute_type_params_in_type_expr(type_args[i], type_map)
@@ -1087,7 +1087,7 @@ forge desugar {
 
   func substitute_type_params_rich_in_expr(expr: Expr, type_map: Dict<TypeExpr>) {
     match expr.kind {
-      Call(func_expr, type_args, args) => {
+      Call(func_expr, type_args, args, _) => {
         let mut i: i32 = 0
         while i < len(type_args) {
           substitute_type_params_rich_in_type_expr(type_args[i], type_map)
@@ -1100,7 +1100,7 @@ forge desugar {
           i = i + 1
         }
       }
-      MethodCall(receiver, method, type_args, args) => {
+      MethodCall(receiver, method, type_args, args, _) => {
         let mut i: i32 = 0
         while i < len(type_args) {
           substitute_type_params_rich_in_type_expr(type_args[i], type_map)
@@ -1219,10 +1219,10 @@ forge desugar {
 
   func rename_method_calls_in_expr(expr: Expr, renames: Dict<string>) {
     match expr.kind {
-      MethodCall(receiver, method, type_args, args) => {
+      MethodCall(receiver, method, type_args, args, _) => {
         let entry = dict_get<string>(renames, method.name)
         if !isnull(entry) {
-          expr.kind = MethodCall(receiver, sym(entry!.value), type_args, args)
+          expr.kind = MethodCall(receiver, sym(entry!.value), type_args, args, [])
         }
         rename_method_calls_in_expr(receiver, renames)
         let mut i: i32 = 0
@@ -1231,7 +1231,7 @@ forge desugar {
           i = i + 1
         }
       }
-      Call(func_expr, type_args, args) => {
+      Call(func_expr, type_args, args, _) => {
         rename_method_calls_in_expr(func_expr, renames)
         let mut i: i32 = 0
         while i < len(args) {

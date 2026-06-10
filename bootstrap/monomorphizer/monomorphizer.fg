@@ -392,7 +392,7 @@ func MonoPass.specialize_func(self, orig: LFuncDecl, subst: Dict<LType?>?, new_n
   let mut params: [LParam] = []
   let mut i = 0
   while i < len(orig.params) {
-    append(params, LParam { name: orig.params[i].name, typ: subst_type(orig.params[i].typ, subst) })
+    append(params, LParam { name: orig.params[i].name, typ: subst_type(orig.params[i].typ, subst), mutable: orig.params[i].mutable })
     i = i + 1
   }
 
@@ -1653,7 +1653,7 @@ func clone_expr(e: LExpr?, subst: Dict<LType?>?) -> LExpr? {
         return LExpr {
           kind: ExCall,
           typ: typ,
-          call: LCallData { func_name: e!.call!.func_name, args: args, type_args: ta, is_exported: e!.call!.is_exported },
+          call: LCallData { func_name: e!.call!.func_name, args: args, mut_args: e!.call!.mut_args, type_args: ta, is_exported: e!.call!.is_exported },
           bin_op: nil, un_op: nil, cast: nil, struct_field: nil, class_get: nil,
           index_get: nil, slice_data: nil, method_call: nil, builtin: nil,
           struct_lit: nil, class_alloc: nil, make_channel: nil, wrap_opt: nil,
@@ -1690,7 +1690,7 @@ func clone_expr(e: LExpr?, subst: Dict<LType?>?) -> LExpr? {
           kind: ExMethodCall,
           typ: typ,
           method_call: LMethodCallData {
-            receiver: recv, method: mc.method, args: args, type_args: ta,
+            receiver: recv, method: mc.method, args: args, mut_args: mc.mut_args, type_args: ta,
             is_exported: mc.is_exported, param_types: mc.param_types,
           },
           bin_op: nil, un_op: nil, cast: nil, struct_field: nil, class_get: nil,
@@ -2160,7 +2160,7 @@ func clone_expr(e: LExpr?, subst: Dict<LType?>?) -> LExpr? {
         let mut params: [LParam] = []
         let mut i = 0
         while i < len(e!.func_lit!.params) {
-          append(params, LParam { name: e!.func_lit!.params[i].name, typ: subst_type(e!.func_lit!.params[i].typ, subst) })
+          append(params, LParam { name: e!.func_lit!.params[i].name, typ: subst_type(e!.func_lit!.params[i].typ, subst), mutable: e!.func_lit!.params[i].mutable })
           i = i + 1
         }
         return LExpr {

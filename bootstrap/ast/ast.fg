@@ -283,8 +283,8 @@ forge ast {
     StringInterp(parts: [Expr])
     BoolLit(value: bool)
     Nil
-    Call(func_expr: Expr, type_args: [TypeExpr], args: [Expr])
-    MethodCall(receiver: Expr, method: Sym, type_args: [TypeExpr], args: [Expr])
+    Call(func_expr: Expr, type_args: [TypeExpr], args: [Expr], mut_args: [bool])
+    MethodCall(receiver: Expr, method: Sym, type_args: [TypeExpr], args: [Expr], mut_args: [bool])
     FieldAccess(receiver: Expr, field_name: Sym)
     Index(receiver: Expr, index: Expr)
     Slice(receiver: Expr, low: Expr?, high: Expr?)
@@ -609,7 +609,7 @@ func ast_collect_call_names_expr(expr: Expr?, names: Dict<bool>) {
         return
     }
     match expr!.kind {
-        Call(func_expr, type_args, args) => {
+        Call(func_expr, type_args, args, mut_args) => {
             match func_expr.kind {
                 Ident(id_name) => {
                     dict_set<bool>(names, id_name.name, true)
@@ -631,7 +631,7 @@ func ast_collect_call_names_expr(expr: Expr?, names: Dict<bool>) {
         FieldAccess(receiver, field_name) => {
             ast_collect_call_names_expr(receiver, names)
         }
-        MethodCall(receiver, method, type_args, args) => {
+        MethodCall(receiver, method, type_args, args, mut_args) => {
             ast_collect_call_names_expr(receiver, names)
             for i in range(0, len(args)) {
                 ast_collect_call_names_expr(args[i], names)

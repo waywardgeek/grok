@@ -606,7 +606,7 @@ forge lowerer {
           let mut params: [LParam] = []
           for p in m.param_children() {
             if !isnull(p.name) {
-              append(params, LParam { name: p.name!.name, typ: self.lower_type(p.type_expr) })
+              append(params, LParam { name: p.name!.name, typ: self.lower_type(p.type_expr), mutable: p.is_mut })
             }
           }
           let rt = self.lower_type(m.return_type)
@@ -681,12 +681,12 @@ forge lowerer {
 
           // Build params (substitute type vars)
           let mut params: [LParam] = []
-          append(params, LParam { name: "self", typ: LType { kind: TyClassHandle, name: for_type, bits: 0, is_exported: false } })
+          append(params, LParam { name: "self", typ: LType { kind: TyClassHandle, name: for_type, bits: 0, is_exported: false }, mutable: false })
           for p in iface_sig.param_children() {
             if !isnull(p.name) && !p.is_self {
               let pt = self.lower_type(p.type_expr)
               let subst = self.subst_impl_type(pt, type_arg_map)
-              append(params, LParam { name: p.name!.name, typ: subst })
+              append(params, LParam { name: p.name!.name, typ: subst, mutable: p.is_mut })
             }
           }
 
@@ -703,7 +703,7 @@ forge lowerer {
           let call_expr = LExpr {
             kind: ExCall,
             typ: rt,
-            call: LCallData { func_name: target_name, args: call_args, type_args: [], is_exported: false }
+            call: LCallData { func_name: target_name, args: call_args, mut_args: [], type_args: [], is_exported: false }
           }
 
           if rt!.kind is TyUnit {
@@ -758,7 +758,7 @@ forge lowerer {
             field_type = LType { kind: TyAny, name: "", bits: 0, is_exported: false }
           }
 
-          let self_param = LParam { name: "self", typ: LType { kind: TyClassHandle, name: for_type, bits: 0, is_exported: false } }
+          let self_param = LParam { name: "self", typ: LType { kind: TyClassHandle, name: for_type, bits: 0, is_exported: false }, mutable: false }
 
           self.temp_id = 0
           let saved = self.save_stmts()
@@ -852,14 +852,14 @@ forge lowerer {
     // Add self param for methods
     if receiver != "" {
       let self_type = LType { kind: TyClassHandle, name: receiver, bits: 0, is_exported: false }
-      append(params, LParam { name: "self", typ: self_type })
+      append(params, LParam { name: "self", typ: self_type, mutable: false })
       self.define_var("self", self_type)
     }
 
     for p in fd!.param_children() {
       if !isnull(p.name) && !p.is_self {
         let pt = self.lower_type(p.type_expr)
-        append(params, LParam { name: p.name!.name, typ: pt })
+        append(params, LParam { name: p.name!.name, typ: pt, mutable: p.is_mut })
         self.define_var(p.name!.name, pt)
       }
     }
@@ -1654,8 +1654,8 @@ forge lowerer {
       StringInterp(parts) => { return self.lower_string_interp(e, parts) }
       BoolLit(value) => { return make_bool_val(value) }
       Nil => { return make_null_val(self.expr_type(e)) }
-      Call(func_expr, type_args, args) => { return self.lower_call(e, func_expr, type_args, args) }
-      MethodCall(receiver, method, type_args, args) => { return self.lower_method_call(e, receiver, method, type_args, args) }
+      Call(func_expr, type_args, args, call_mut_args) => { return self.lower_call(e, func_expr, type_args, args, call_mut_args) }
+      MethodCall(receiver, method, type_args, args, mc_mut_args) => { return self.lower_method_call(e, receiver, method, type_args, args, mc_mut_args) }
       FieldAccess(receiver, field_name) => { return self.lower_field_access(e, receiver, field_name) }
       Index(receiver, index) => { return self.lower_index(e, receiver, index) }
       Slice(receiver, low, high) => { return self.lower_slice(e, receiver, low, high) }
@@ -1782,7 +1782,7 @@ forge lowerer {
 
   // ---------- Call ----------
 
-  func Lowerer.lower_call(self, orig: Expr?, func_expr: Expr?, type_args: [TypeExpr], args: [Expr]) -> LValue? {
+  func Lowerer.lower_call(self, orig: Expr?, func_expr: Expr?, type_args: [TypeExpr], args: [Expr], call_mut_args: [bool]) -> LValue? {
     // Check if it's a variant constructor or class constructor
     let func_name = match func_expr!.kind {
       Ident(n) => { n.name }
@@ -1882,7 +1882,7 @@ forge lowerer {
     let call = LExpr {
       kind: ExCall,
       typ: rt,
-      call: LCallData { func_name: actual_name, args: call_args, type_args: lta, is_exported: false }
+      call: LCallData { func_name: actual_name, args: call_args, mut_args: call_mut_args, type_args: lta, is_exported: false }
     }
     return self.emit_temp(call)
   }
@@ -1890,7 +1890,7 @@ forge lowerer {
   // ---------- Method call ----------
 
   func Lowerer.lower_method_call(
-    self, orig: Expr?, receiver: Expr?, method: Sym, type_args: [TypeExpr], args: [Expr]
+    self, orig: Expr?, receiver: Expr?, method: Sym, type_args: [TypeExpr], args: [Expr], mc_mut_args: [bool]
   ) -> LValue? {
     // Check if receiver is an import package (e.g., fmt.Println, errors.New)
     let method_name = method.name
@@ -1915,7 +1915,7 @@ forge lowerer {
             let call = LExpr {
               kind: ExCall,
               typ: rt,
-              call: LCallData { func_name: func_name, args: call_args, type_args: lta, is_exported: true }
+              call: LCallData { func_name: func_name, args: call_args, mut_args: [], type_args: lta, is_exported: true }
             }
             return self.emit_temp(call)
           }
@@ -2023,6 +2023,7 @@ forge lowerer {
         receiver: recv,
         method: method_name,
         args: call_args,
+        mut_args: mc_mut_args,
         type_args: lta,
         is_exported: false,
         param_types: ptypes
@@ -2363,7 +2364,7 @@ forge lowerer {
     for p in params {
       if !isnull(p.name) {
         let pt = self.lower_type(p.type_expr)
-        append(lparams, LParam { name: p.name!.name, typ: pt })
+        append(lparams, LParam { name: p.name!.name, typ: pt, mutable: p.is_mut })
         self.define_var(p.name!.name, pt)
       }
     }

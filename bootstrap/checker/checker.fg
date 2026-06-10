@@ -2028,10 +2028,10 @@ forge checker {
       BoolLit(_) => { return make_bool_type() }
       Nil => { return make_nil_type() }
 
-      Call(func_expr, type_args, args) => {
+      Call(func_expr, type_args, args, _) => {
         return self.check_call(func_expr, type_args, args)
       }
-      MethodCall(receiver, method, type_args, args) => {
+      MethodCall(receiver, method, type_args, args, _) => {
         return self.check_method_call(receiver, method, type_args, args)
       }
       FieldAccess(receiver, field_name) => {
@@ -2774,11 +2774,11 @@ forge checker {
       StringInterp(parts) => {
         for p in parts { self.walk_expr(p, callback) }
       }
-      Call(func_expr, _, args) => {
+      Call(func_expr, _, args, _) => {
         self.walk_expr(func_expr, callback)
         for a in args { self.walk_expr(a, callback) }
       }
-      MethodCall(receiver, _, _, args) => {
+      MethodCall(receiver, _, _, args, _) => {
         self.walk_expr(receiver, callback)
         for a in args { self.walk_expr(a, callback) }
       }
@@ -3103,11 +3103,11 @@ forge checker {
       StringInterp(parts) => {
         for p in parts { self.vwalk_expr(p, ctx) }
       }
-      Call(func_expr, _, args) => {
+      Call(func_expr, _, args, _) => {
         self.vwalk_expr(func_expr, ctx)
         for a in args { self.vwalk_expr(a, ctx) }
       }
-      MethodCall(receiver, _, _, args) => {
+      MethodCall(receiver, _, _, args, _) => {
         self.vwalk_expr(receiver, ctx)
         for a in args { self.vwalk_expr(a, ctx) }
       }
@@ -3295,12 +3295,12 @@ forge checker {
         self.validate_access_expr(receiver)
         self.validate_field_access(receiver, field_name)
       }
-      MethodCall(receiver, method, _, args) => {
+      MethodCall(receiver, method, _, args, _) => {
         self.validate_access_expr(receiver)
         for a in args { self.validate_access_expr(a) }
         self.validate_method_access(receiver, method)
       }
-      Call(func_expr, _, args) => {
+      Call(func_expr, _, args, _) => {
         self.validate_access_expr(func_expr)
         for a in args { self.validate_access_expr(a) }
       }

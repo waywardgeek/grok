@@ -44,6 +44,9 @@ class CGen {
 
   // Simple enum tracking
   simple_enums: Dict<bool>?
+
+  // Mut param tracking
+  mut_params: Dict<bool>?
 }
 
 struct CLambda {
@@ -616,6 +619,7 @@ func CGen.func_name(self, f: LFuncDecl) -> string {
 }
 
 func CGen.c_param_list(self, f: LFuncDecl) -> string {
+  self.mut_params = dict_new<bool>()
   let sb = new_string_builder()
   let mut count = 0
   // For methods, ensure self is the first parameter
@@ -630,7 +634,13 @@ func CGen.c_param_list(self, f: LFuncDecl) -> string {
     if count > 0 {
       sb.write(", ")
     }
-    sb.write(self.c_field_decl(f.params[i].typ, f.params[i].name))
+    if f.params[i].mutable {
+      // Mut param: emit as pointer type
+      sb.write(self.c_type(f.params[i].typ) + "* " + c_safe_name(f.params[i].name))
+      dict_set<bool>(self.mut_params!, f.params[i].name, true)
+    } else {
+      sb.write(self.c_field_decl(f.params[i].typ, f.params[i].name))
+    }
     count = count + 1
     i = i + 1
   }
@@ -662,6 +672,12 @@ func CGen.emit_value(self, v: LValue?) -> string {
         let entry = dict_get<bool>(self.spawn_captures!, v!.name)
         if !isnull(entry) {
           return f"(*_ctx->{name})"
+        }
+      }
+      if !isnull(self.mut_params) {
+        let mp = dict_get<bool>(self.mut_params!, v!.name)
+        if !isnull(mp) {
+          return f"(*{name})"
         }
       }
       return name
@@ -737,6 +753,23 @@ func CGen.emit_args(self, args: [LValue?]) -> string {
       sb.write(", ")
     }
     sb.write(self.emit_value(args[i]))
+    i = i + 1
+  }
+  return sb.to_string()
+}
+
+func CGen.emit_args_with_mut(self, args: [LValue?], mut_args: [bool]) -> string {
+  let sb = new_string_builder()
+  let mut i = 0
+  while i < len(args) {
+    if i > 0 {
+      sb.write(", ")
+    }
+    if len(mut_args) > i && mut_args[i] {
+      sb.write("&" + self.emit_value(args[i]))
+    } else {
+      sb.write(self.emit_value(args[i]))
+    }
     i = i + 1
   }
   return sb.to_string()
@@ -1555,14 +1588,14 @@ func CGen.emit_call_expr(self, e: LExpr?) -> string {
   if name == "itoa" {
     return f"forge_itoa({self.emit_args(d.args)})"
   }
-  let args_str = self.emit_args_boxed(d.func_name, d.args)
+  let args_str = self.emit_args_boxed_mut(d.func_name, d.args, d.mut_args)
   return f"{name}({args_str})"
 }
 
 func CGen.emit_method_call_expr(self, e: LExpr?) -> string {
   let d = e!.method_call!
   let recv = self.emit_value(d.receiver)
-  let args_str = self.emit_args(d.args)
+  let args_str = self.emit_args_with_mut(d.args, d.mut_args)
 
   // Check for interface vtable dispatch
   let recv_type = self.resolve_value_type(d.receiver)
@@ -1858,6 +1891,37 @@ func CGen.emit_args_boxed(self, func_name: string, args: [LValue?]) -> string {
     let mut arg_str = self.emit_value(args[i])
     // Check if arg needs boxing (concrete → interface)
     if !isnull(fn_entry) && i < len(fn_entry!.value.params) {
+      let pt = fn_entry!.value.params[i].typ
+      if !isnull(pt) && pt!.kind is TyAny && pt!.name != "" {
+        let iface_e = dict_get<LInterfaceDecl>(self.iface_by_name!, pt!.name)
+        if !isnull(iface_e) {
+          let concrete_class = self.resolve_concrete_class(args[i])
+          if concrete_class != "" {
+            arg_str = f"({pt!.name}){{._data = {arg_str}, ._vtable = &{concrete_class}_as_{pt!.name}}}"
+          }
+        }
+      }
+    }
+    sb.write(arg_str)
+    i = i + 1
+  }
+  return sb.to_string()
+}
+
+func CGen.emit_args_boxed_mut(self, func_name: string, args: [LValue?], mut_args: [bool]) -> string {
+  let fn_entry = dict_get<LFuncDecl>(self.func_by_name!, func_name)
+  let sb = new_string_builder()
+  let mut i = 0
+  while i < len(args) {
+    if i > 0 {
+      sb.write(", ")
+    }
+    let mut arg_str = self.emit_value(args[i])
+    // Check if arg is mut — prefix with &
+    if len(mut_args) > i && mut_args[i] {
+      arg_str = "&" + arg_str
+    } else if !isnull(fn_entry) && i < len(fn_entry!.value.params) {
+      // Check if arg needs boxing (concrete → interface)
       let pt = fn_entry!.value.params[i].typ
       if !isnull(pt) && pt!.kind is TyAny && pt!.name != "" {
         let iface_e = dict_get<LInterfaceDecl>(self.iface_by_name!, pt!.name)

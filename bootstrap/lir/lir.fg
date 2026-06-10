@@ -227,6 +227,7 @@ forge lir {
   struct LCallData {
     func_name: string
     args: [LValue?]
+    mut_args: [bool]
     type_args: [LType?]
     is_exported: bool
   }
@@ -235,6 +236,7 @@ forge lir {
     receiver: LValue?
     method: string
     args: [LValue?]
+    mut_args: [bool]
     type_args: [LType?]
     is_exported: bool
     param_types: [LType?]
@@ -542,6 +544,7 @@ forge lir {
   struct LParam {
     name: string
     typ: LType?
+    mutable: bool
   }
 
   struct LTypeParam {
