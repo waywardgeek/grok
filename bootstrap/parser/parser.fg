@@ -878,8 +878,7 @@ forge parser {
       }
       match self.peek().kind {
         ASource => {
-          // TODO: parse source
-          self.next()
+          self.parse_source()?
         }
         KPub => {
           self.next()
