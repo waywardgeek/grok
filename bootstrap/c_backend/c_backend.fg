@@ -725,6 +725,11 @@ func CGen.emit_value(self, v: LValue?) -> string {
     ValLitNull => {
       return self.zero_value(v!.typ)
     }
+    ValIndexRef => {
+      let coll = self.emit_value(v!.collection)
+      let idx = self.emit_value(v!.index)
+      return f"{coll}.data[{idx}]"
+    }
   }
 }
 

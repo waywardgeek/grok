@@ -77,6 +77,7 @@ forge lir {
     ValLitString
     ValLitBool
     ValLitNull
+    ValIndexRef
   }
 
   class LValue {
@@ -89,6 +90,8 @@ forge lir {
     str_val: string
     bool_val: bool
     typ: LType?
+    collection: LValue?
+    index: LValue?
   }
 
   // ==========================================================================

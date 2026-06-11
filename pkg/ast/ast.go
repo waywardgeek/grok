@@ -2,6 +2,8 @@
 // Both .forge (declaration-only) and .fg (full code) files parse into these types.
 package ast
 
+import "fmt"
+
 // Pos is a position in source code.
 type Pos struct {
 	File   string
@@ -37,6 +39,18 @@ const (
 	TypeLock                         // lock
 	TypeUnit                         // unit
 )
+
+var typeExprKindNames = [...]string{
+	"Named", "Optional", "Union", "Sequence", "Map", "Tuple",
+	"Func", "Channel", "Generator", "Lock", "Unit",
+}
+
+func (k TypeExprKind) String() string {
+	if int(k) >= 0 && int(k) < len(typeExprKindNames) {
+		return typeExprKindNames[k]
+	}
+	return fmt.Sprintf("TypeExprKind(%d)", int(k))
+}
 
 // NamedType holds the name and optional type arguments for TypeNamed.
 type NamedType struct {

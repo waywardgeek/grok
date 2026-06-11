@@ -1,0 +1,25 @@
+forge mut_slice {
+    struct Point {
+        x: i32
+        y: i32
+    }
+
+    func double_x(mut p: Point) {
+        p.x = p.x * 2
+    }
+
+    func main() {
+        let mut points: [Point] = [
+            Point { x: 1, y: 2 },
+            Point { x: 3, y: 4 },
+            Point { x: 5, y: 6 }
+        ]
+
+        // Mutate a slice element in-place
+        double_x(mut points[1])
+
+        println(points[0].x)  // 1 (unchanged)
+        println(points[1].x)  // 6 (doubled)
+        println(points[2].x)  // 5 (unchanged)
+    }
+}

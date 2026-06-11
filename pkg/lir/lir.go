@@ -86,15 +86,17 @@ type LVariant struct {
 // LValue is an operand — a reference to a variable, temporary, or literal.
 // LIR expressions are flat; they reference only LValues, never nested expressions.
 type LValue struct {
-	Kind     LValueKind
-	Name     string  // for Var, Global
-	TempID   int     // for Temp
-	IntVal   int64   // for LitInt
-	UintVal  uint64  // for LitUint
-	FloatVal float64 // for LitFloat
-	StrVal   string  // for LitString
-	BoolVal  bool    // for LitBool
-	Type     *LType  // type of this value (always set)
+	Kind       LValueKind
+	Name       string  // for Var, Global
+	TempID     int     // for Temp
+	IntVal     int64   // for LitInt
+	UintVal    uint64  // for LitUint
+	FloatVal   float64 // for LitFloat
+	StrVal     string  // for LitString
+	BoolVal    bool    // for LitBool
+	Type       *LType  // type of this value (always set)
+	Collection *LValue // for IndexRef: the slice/array being indexed
+	Index      *LValue // for IndexRef: the index expression
 }
 
 type LValueKind int
@@ -109,6 +111,7 @@ const (
 	LValLitString                  // string literal
 	LValLitBool                    // boolean literal
 	LValLitNull                    // null/nil/zero value
+	LValIndexRef                   // reference to a slice element (for mut args)
 )
 
 // ---------------------------------------------------------------------------

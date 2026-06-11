@@ -349,11 +349,24 @@ translate(mut pt, 5, 3)
 assert_eq(pt.x, 15)   // mutation visible to caller
 ```
 
+Slice elements can also be passed as `mut`, enabling in-place mutation:
+
+```forge
+func double_x(mut p: Point) {
+    p.x = p.x * 2
+}
+
+let mut points = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+double_x(mut points[0])   // mutates the element in-place
+assert_eq(points[0].x, 2) // doubled
+assert_eq(points[1].x, 3) // unchanged
+```
+
 Rules:
 - `mut` required on both parameter and call site (prevents accidental mutation)
-- Only variables can be passed as `mut` (not literals or expressions)
+- Variables and slice element accesses can be passed as `mut`
 - For classes (already heap-allocated), `mut` is a no-op
-- In C backend: `mut` params become `T*`, call sites emit `&x`, field access uses `->`
+- In C backend: `mut` params become `T*`, call sites emit `&x` or `&slice.data[i]`, field access uses `->`
 
 ## Try Operator and Error Handling
 

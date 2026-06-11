@@ -1,5 +1,7 @@
 package ast
 
+import "fmt"
+
 // --- Expressions ---
 
 // ExprKind discriminates expression types.
@@ -32,6 +34,21 @@ const (
 	ExprIs                        // expr is Variant — variant type check, returns bool
 	ExprIfElse                    // if cond { a } else { b } — if as expression
 )
+
+var exprKindNames = [...]string{
+	"Ident", "IntLit", "FloatLit", "StringLit", "StringInterp",
+	"BoolLit", "Nil", "Call", "MethodCall", "FieldAccess",
+	"Index", "Unary", "Binary", "TupleLit", "ListLit",
+	"MapLit", "Lambda", "Match", "StructLit", "Cast",
+	"Unwrap", "Slice", "Try", "Is", "IfElse",
+}
+
+func (k ExprKind) String() string {
+	if int(k) >= 0 && int(k) < len(exprKindNames) {
+		return exprKindNames[k]
+	}
+	return fmt.Sprintf("ExprKind(%d)", int(k))
+}
 
 // Expr is any expression node.
 type Expr struct {
@@ -238,6 +255,19 @@ const (
 	StmtLock                     // lock(mu) { ... }
 )
 
+var stmtKindNames = [...]string{
+	"VarDecl", "Assign", "Return", "Expr", "If", "For", "While",
+	"Match", "Block", "Cascade", "Break", "Continue", "Spawn",
+	"Select", "Yield", "Lock",
+}
+
+func (k StmtKind) String() string {
+	if int(k) >= 0 && int(k) < len(stmtKindNames) {
+		return stmtKindNames[k]
+	}
+	return fmt.Sprintf("StmtKind(%d)", int(k))
+}
+
 // Stmt is any statement node.
 type Stmt struct {
 	Kind StmtKind
@@ -352,6 +382,15 @@ const (
 	PatWildcard                    // _
 	PatTuple                       // (x, y)
 )
+
+var patternKindNames = [...]string{"Ident", "Literal", "Variant", "Wildcard", "Tuple"}
+
+func (k PatternKind) String() string {
+	if int(k) >= 0 && int(k) < len(patternKindNames) {
+		return patternKindNames[k]
+	}
+	return fmt.Sprintf("PatternKind(%d)", int(k))
+}
 
 type Pattern struct {
 	Kind         PatternKind

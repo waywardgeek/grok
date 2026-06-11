@@ -2845,7 +2845,11 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 	// Lower arguments
 	var args []LValue
 	for i := range ce.Args {
-		args = append(args, l.lowerExpr(&ce.Args[i]))
+		if i < len(ce.MutArgs) && ce.MutArgs[i] {
+			args = append(args, l.lowerMutArg(&ce.Args[i]))
+		} else {
+			args = append(args, l.lowerExpr(&ce.Args[i]))
+		}
 	}
 
 	// Check for built-in functions
@@ -3256,6 +3260,32 @@ func (l *Lowerer) lowerFieldAccess(expr *ast.Expr) LValue {
 		Type: resultType,
 		Data: &LStructFieldData{Receiver: recv, Field: fa.Field},
 	})
+}
+
+// lowerMutArg lowers an expression that will be passed as a mut argument.
+// For index expressions (e.g., slice[i]), it produces an LValIndexRef that
+// preserves the collection and index so the C backend can emit &collection.data[index].
+// For simple variables, it returns the variable directly (no temp copy).
+// For other expressions, it falls back to lowerExpr (the & will apply to the temp).
+func (l *Lowerer) lowerMutArg(expr *ast.Expr) LValue {
+	switch expr.Kind {
+	case ast.ExprIndex:
+		ie := dataAs[ast.IndexExpr](expr.Data)
+		coll := l.lowerExpr(&ie.Receiver)
+		idx := l.lowerExpr(&ie.Index)
+		return LValue{
+			Kind:       LValIndexRef,
+			Type:       l.exprType(expr),
+			Collection: &coll,
+			Index:      &idx,
+		}
+	case ast.ExprIdent:
+		// Simple variable — return as LValVar so &var works correctly
+		return l.lowerExpr(expr)
+	default:
+		// Other expressions — fall back to normal lowering
+		return l.lowerExpr(expr)
+	}
 }
 
 func (l *Lowerer) lowerIndex(expr *ast.Expr) LValue {

@@ -2402,6 +2402,10 @@ func (g *cGen) emitValue(v *LValue) string {
 		return "false"
 	case LValLitNull:
 		return "NULL"
+	case LValIndexRef:
+		coll := g.emitValue(v.Collection)
+		idx := g.emitValue(v.Index)
+		return fmt.Sprintf("%s.data[%s]", coll, idx)
 	default:
 		return "/* unknown value */"
 	}

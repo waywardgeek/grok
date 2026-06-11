@@ -836,6 +836,10 @@ func collectUsedTempsInValue(v *LValue, used map[int]bool) {
 	if v.Kind == LValTemp {
 		used[v.TempID] = true
 	}
+	if v.Kind == LValIndexRef {
+		collectUsedTempsInValue(v.Collection, used)
+		collectUsedTempsInValue(v.Index, used)
+	}
 }
 
 
@@ -1051,5 +1055,9 @@ func collectUsedVarNamesInValue(v *LValue, used map[string]bool) {
 	}
 	if v.Kind == LValVar {
 		used[v.Name] = true
+	}
+	if v.Kind == LValIndexRef {
+		collectUsedVarNamesInValue(v.Collection, used)
+		collectUsedVarNamesInValue(v.Index, used)
 	}
 }

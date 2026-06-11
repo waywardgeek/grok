@@ -1105,28 +1105,12 @@ forge lowerer {
         } else {
           LType { kind: TyAny, name: "", bits: 0, is_exported: false }
         }
-        let extract_kind = if !isnull(v) && v!.typ!.kind is TyErrorResult && i == 1 {
-          ExExtractError
-        } else {
-          ExExtractValue
-        }
-        let extract = if extract_kind is ExExtractError {
-          LExpr {
-            kind: ExExtractError,
-            typ: ft,
-            extract_error: LExtractErrorData { value: v }
-          }
-        } else {
-          LExpr {
-            kind: ExExtractValue,
-            typ: ft,
-            extract_value: LExtractValueData { value: v }
-          }
-        }
-        let tv = self.emit_temp(extract)
+        // Match Go lowerer: emit VarDecl with Init = original value directly.
+        // The optimizer's destructure_multi_return pass will coalesce
+        // consecutive VarDecls referencing the same temp into StMultiAssign.
         self.emit(LStmt {
           kind: StVarDecl,
-          var_decl: LVarDeclData { name: n.name, typ: ft, init: tv, mutable: is_mut }
+          var_decl: LVarDeclData { name: n.name, typ: ft, init: v, mutable: is_mut }
         })
         self.define_var(n.name, ft)
         i = i + 1
@@ -2042,8 +2026,14 @@ forge lowerer {
 
     // Regular function call
     let mut call_args: [LValue?] = []
+    let mut ai = 0
     for a in args {
-      append(call_args, self.lower_expr(a))
+      if ai < len(call_mut_args) && call_mut_args[ai] {
+        append(call_args, self.lower_mut_arg(a))
+      } else {
+        append(call_args, self.lower_expr(a))
+      }
+      ai = ai + 1
     }
     let mut lta: [LType?] = []
     for ta in type_args {
@@ -2245,6 +2235,29 @@ forge lowerer {
   }
 
   // ---------- Index ----------
+
+  // lower_mut_arg lowers an expression that will be passed as a mut argument.
+  // For index expressions, produces an LValIndexRef so the C backend can emit
+  // &collection.data[index]. For other expressions, falls back to lower_expr.
+  func Lowerer.lower_mut_arg(self, e: Expr?) -> LValue? {
+    if isnull(e) { return nil }
+    match e!.kind {
+      Index(receiver, index) => {
+        let recv = self.lower_expr(receiver)
+        let idx = self.lower_expr(index)
+        let rt = self.expr_type(e)
+        return LValue {
+          kind: ValIndexRef,
+          typ: rt,
+          collection: recv,
+          index: idx
+        }
+      }
+      _ => {
+        return self.lower_expr(e)
+      }
+    }
+  }
 
   func Lowerer.lower_index(self, orig: Expr?, receiver: Expr?, index: Expr?) -> LValue? {
     let recv = self.lower_expr(receiver)
