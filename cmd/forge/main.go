@@ -274,7 +274,7 @@ func cmdCompile(args []string) error {
 			fmt.Fprintf(os.Stderr, "INVARIANT: %s\n", v)
 		}
 		if len(violations) > 0 {
-			fmt.Fprintf(os.Stderr, "  %d void* violations (LTyAny in LIR)\n", len(violations))
+			panic(fmt.Sprintf("%d void* violations (LTyAny in LIR)", len(violations)))
 		}
 	}
 
@@ -288,7 +288,7 @@ func cmdCompile(args []string) error {
 			fmt.Fprintf(os.Stderr, "INVARIANT: %s\n", v)
 		}
 		if len(violations) > 0 {
-			fmt.Fprintf(os.Stderr, "  %d post-mono violations\n", len(violations))
+			panic(fmt.Sprintf("%d post-mono violations", len(violations)))
 		}
 	}
 
