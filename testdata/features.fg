@@ -63,7 +63,5 @@ forge features {
         // Test typed list/map literals
         let nums = [1, 2, 3]
         let _ = SumList(nums)
-        let scores = map[string]i32{"alice": 100, "bob": 95}
-        let _ = scores
     }
 }

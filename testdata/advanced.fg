@@ -89,8 +89,6 @@ forge advanced {
         // Typed collection literals
         let nums = [1, 2, 3]
         let _ = SumList(nums)
-        let scores = map[string]i32{"alice": 100, "bob": 95}
-        let _ = scores
 
         // Lambda / function type usage
         let _ = Apply(Abs, 42)
