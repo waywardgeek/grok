@@ -3415,6 +3415,8 @@ func (g *cGen) collectCompositeTypes() {
 			if t.Elem != nil {
 				g.chanSuffix(t.Elem)
 			}
+		case LTyTuple:
+			g.cTupleType(t)
 		}
 		walkType(t.Elem)
 		walkType(t.Key)

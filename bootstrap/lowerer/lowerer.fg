@@ -26,6 +26,7 @@ forge lowerer {
     unit_variants: Dict<bool>?
     enum_variant_tags: Dict<i32>?
     enum_variant_fields: Dict<[TupleField]>?
+    variant_to_enum: Dict<string>?
     current_func_return: LType?
     import_aliases: Dict<string>?
     lowered_ifaces: Dict<LInterfaceDecl>?
@@ -48,6 +49,7 @@ forge lowerer {
       unit_variants: Dict<bool> {},
       enum_variant_tags: Dict<i32> {},
       enum_variant_fields: Dict<[TupleField]> {},
+      variant_to_enum: Dict<string> {},
       current_func_return: LType { kind: TyUnit, name: "", bits: 0, is_exported: false },
       import_aliases: Dict<string> {},
       lowered_ifaces: Dict<LInterfaceDecl> {}
@@ -363,6 +365,7 @@ forge lowerer {
             let vname = v.name!.name
             let key = ename + "." + vname
             dict_set<i32>(self.enum_variant_tags!, key, tag)
+            dict_set<string>(self.variant_to_enum!, vname, ename)
             let vfields = v.evf_children()
             let mut tfs: [TupleField] = []
             for tf in vfields {
@@ -1600,6 +1603,12 @@ forge lowerer {
   }
 
   func Lowerer.lower_enum_match(self, val: LValue?, enum_name: string, arms: [MatchArm]) {
+    // Check for nested variant patterns like Some(Circle(r))
+    if self.has_nested_variant_patterns(arms) {
+      self.emit_nested_enum_match(val, enum_name, arms, "", nil)
+      return
+    }
+
     // Get tag value
     let tag_expr = LExpr {
       kind: ExVariantTag,
@@ -1683,6 +1692,210 @@ forge lowerer {
         }
         _ => {}
       }
+    }
+
+    self.emit(LStmt {
+      kind: StSwitch,
+      switch_data: LSwitchData { tag: tag_val, cases: cases, enum_name: enum_name }
+    })
+  }
+
+  func Lowerer.has_nested_variant_patterns(self, arms: [MatchArm]) -> bool {
+    for arm in arms {
+      if isnull(arm.pattern) { continue }
+      match arm.pattern!.kind {
+        Variant(vname, bindings) => {
+          for b in bindings {
+            if b.kind is Variant { return true }
+          }
+        }
+        _ => {}
+      }
+    }
+    return false
+  }
+
+  func Lowerer.arm_has_nested_variant(self, arm: MatchArm) -> bool {
+    if isnull(arm.pattern) { return false }
+    match arm.pattern!.kind {
+      Variant(vname, bindings) => {
+        for b in bindings {
+          if b.kind is Variant { return true }
+        }
+      }
+      _ => {}
+    }
+    return false
+  }
+
+  func Lowerer.emit_nested_enum_match(self, val: LValue?, enum_name: string, arms: [MatchArm], result_name: string, result_type: LType?) {
+    // Emit outer tag extraction
+    let tag_expr = LExpr {
+      kind: ExVariantTag,
+      typ: lir_int_type(32),
+      variant_tag: LVariantTagData { value: val }
+    }
+    let tag_val = self.emit_temp(tag_expr)
+
+    // Group arms by outer variant name
+    let group_keys: [string] = []
+    let group_arms = dict_new<[MatchArm]>()
+    for arm in arms {
+      let mut key = ""
+      if !isnull(arm.pattern) {
+        match arm.pattern!.kind {
+          Variant(vname, bindings) => { key = vname.name }
+          Ident(iname) => {
+            let t = self.find_variant_tag(enum_name, iname.name)
+            if t >= 0 { key = iname.name }
+          }
+          _ => {}
+        }
+      }
+      let existing = dict_get<[MatchArm]>(group_arms, key)
+      if existing != nil {
+        append(existing!.value, arm)
+        dict_set<[MatchArm]>(group_arms, key, existing!.value)
+      } else {
+        append(group_keys, key)
+        dict_set<[MatchArm]>(group_arms, key, [arm])
+      }
+    }
+
+    let mut cases: [LSwitchCase] = []
+    for gk in group_keys {
+      let g_arms = dict_get<[MatchArm]>(group_arms, gk)!.value
+
+      // Simple arm with no nesting — use normal lowering
+      if len(g_arms) == 1 && !self.arm_has_nested_variant(g_arms[0]) {
+        let arm = g_arms[0]
+        if isnull(arm.pattern) { continue }
+        match arm.pattern!.kind {
+          Variant(vname, bindings) => {
+            let tag = self.find_variant_tag(enum_name, vname.name)
+            let saved = self.save_stmts()
+            self.emit_variant_bindings(val, enum_name, vname.name, bindings)
+            self.lower_arm_body(arm.body, result_name, result_type)
+            let body = self.stmts
+            self.restore_stmts(saved)
+            append(cases, LSwitchCase { tag: tag, binding: "", body: body })
+          }
+          Ident(iname) => {
+            let tag = self.find_variant_tag(enum_name, iname.name)
+            let saved = self.save_stmts()
+            self.lower_arm_body(arm.body, result_name, result_type)
+            let body = self.stmts
+            self.restore_stmts(saved)
+            if tag >= 0 {
+              append(cases, LSwitchCase { tag: tag, binding: "", body: body })
+            } else {
+              append(cases, LSwitchCase { tag: -1, binding: iname.name, body: body })
+            }
+          }
+          Wildcard => {
+            let saved = self.save_stmts()
+            self.lower_arm_body(arm.body, result_name, result_type)
+            let body = self.stmts
+            self.restore_stmts(saved)
+            append(cases, LSwitchCase { tag: -1, binding: "_", body: body })
+          }
+          _ => {}
+        }
+        continue
+      }
+
+      // Nested variant arms — emit outer case with nested switch inside
+      let outer_arm = g_arms[0]
+      if isnull(outer_arm.pattern) { continue }
+      let outer_vp = match outer_arm.pattern!.kind {
+        Variant(vn, _) => { vn.name }
+        _ => { continue }
+      }
+      let outer_tag = self.find_variant_tag(enum_name, outer_vp)
+
+      let saved_outer = self.save_stmts()
+
+      // Extract inner value (first field of outer variant)
+      let inner_field_name = self.find_variant_field_name(enum_name, outer_vp, 0)
+      let inner_field_type = self.get_variant_field_type(enum_name, outer_vp, 0)
+      let inner_val = self.emit_temp(LExpr {
+        kind: ExVariantData,
+        typ: inner_field_type,
+        variant_data: LVariantDataData { value: val, enum_name: enum_name, variant: outer_vp, field: inner_field_name }
+      })
+
+      // Determine inner enum name from first nested variant
+      let mut inner_enum_name = ""
+      for ga in g_arms {
+        if isnull(ga.pattern) { continue }
+        match ga.pattern!.kind {
+          Variant(vn, bindings) => {
+            for b in bindings {
+              match b.kind {
+                Variant(inner_vn, _) => {
+                  let info = self.find_variant_enum(inner_vn.name)
+                  if info != "" { inner_enum_name = info }
+                }
+                _ => {}
+              }
+              if inner_enum_name != "" { break }
+            }
+          }
+          _ => {}
+        }
+        if inner_enum_name != "" { break }
+      }
+
+      // Inner tag + switch
+      let inner_tag_val = self.emit_temp(LExpr {
+        kind: ExVariantTag,
+        typ: lir_int_type(32),
+        variant_tag: LVariantTagData { value: inner_val }
+      })
+
+      let mut inner_cases: [LSwitchCase] = []
+      for ga in g_arms {
+        if isnull(ga.pattern) { continue }
+        match ga.pattern!.kind {
+          Variant(vn, bindings) => {
+            if len(bindings) == 1 && bindings[0].kind is Variant {
+              // Nested variant: Some(Circle(r))
+              let inner_vp = match bindings[0].kind {
+                Variant(ivn, ibindings) => { (ivn.name, ibindings) }
+                _ => { continue }
+              }
+              let inner_tag = self.find_variant_tag(inner_enum_name, inner_vp._0)
+              let saved_inner = self.save_stmts()
+              // Extract inner variant fields
+              self.emit_variant_bindings(inner_val, inner_enum_name, inner_vp._0, inner_vp._1)
+              self.lower_arm_body(ga.body, result_name, result_type)
+              let inner_body = self.stmts
+              self.restore_stmts(saved_inner)
+              append(inner_cases, LSwitchCase { tag: inner_tag, binding: "", body: inner_body })
+            } else {
+              // Non-nested bindings in a grouped arm — extract fields normally
+              let tag = self.find_variant_tag(enum_name, vn.name)
+              let saved_b = self.save_stmts()
+              self.emit_variant_bindings(val, enum_name, vn.name, bindings)
+              self.lower_arm_body(ga.body, result_name, result_type)
+              let b_body = self.stmts
+              self.restore_stmts(saved_b)
+              append(inner_cases, LSwitchCase { tag: -1, binding: "", body: b_body })
+            }
+          }
+          _ => {}
+        }
+      }
+
+      self.emit(LStmt {
+        kind: StSwitch,
+        switch_data: LSwitchData { tag: inner_tag_val, cases: inner_cases, enum_name: inner_enum_name }
+      })
+
+      let outer_body = self.stmts
+      self.restore_stmts(saved_outer)
+      append(cases, LSwitchCase { tag: outer_tag, binding: "", body: outer_body })
+
     }
 
     self.emit(LStmt {
@@ -2705,60 +2918,64 @@ forge lowerer {
     let val_type = self.expr_type(value)
 
     if !isnull(val_type) && val_type!.kind is TyTaggedUnion {
-      // Enum match expression
-      let tag_expr = LExpr {
-        kind: ExVariantTag,
-        typ: lir_int_type(32),
-        variant_tag: LVariantTagData { value: v }
-      }
-      let tag_val = self.emit_temp(tag_expr)
+      // Enum match expression — check for nested patterns first
+      if self.has_nested_variant_patterns(arms) {
+        self.emit_nested_enum_match(v, val_type!.name, arms, result_name, rt)
+      } else {
+        let tag_expr = LExpr {
+          kind: ExVariantTag,
+          typ: lir_int_type(32),
+          variant_tag: LVariantTagData { value: v }
+        }
+        let tag_val = self.emit_temp(tag_expr)
 
-      let mut cases: [LSwitchCase] = []
-      for arm in arms {
-        if isnull(arm.pattern) { continue }
-        let saved = self.save_stmts()
-        match arm.pattern!.kind {
-          Variant(vname, bindings) => {
-            let tag = self.find_variant_tag(val_type!.name, vname.name)
-            self.emit_variant_bindings(v, val_type!.name, vname.name, bindings)
-            self.lower_arm_body(arm.body, result_name, rt)
-            let body = self.stmts
-            self.restore_stmts(saved)
-            append(cases, LSwitchCase { tag: tag, binding: "", body: body })
-          }
-          Ident(name) => {
-            let tag = self.find_variant_tag(val_type!.name, name.name)
-            if tag >= 0 {
+        let mut cases: [LSwitchCase] = []
+        for arm in arms {
+          if isnull(arm.pattern) { continue }
+          let saved = self.save_stmts()
+          match arm.pattern!.kind {
+            Variant(vname, bindings) => {
+              let tag = self.find_variant_tag(val_type!.name, vname.name)
+              self.emit_variant_bindings(v, val_type!.name, vname.name, bindings)
               self.lower_arm_body(arm.body, result_name, rt)
               let body = self.stmts
               self.restore_stmts(saved)
               append(cases, LSwitchCase { tag: tag, binding: "", body: body })
-            } else {
-              self.emit(LStmt { kind: StVarDecl, var_decl: LVarDeclData { name: name.name, typ: v!.typ, init: v, mutable: false } })
-              self.define_var(name.name, v!.typ)
+            }
+            Ident(name) => {
+              let tag = self.find_variant_tag(val_type!.name, name.name)
+              if tag >= 0 {
+                self.lower_arm_body(arm.body, result_name, rt)
+                let body = self.stmts
+                self.restore_stmts(saved)
+                append(cases, LSwitchCase { tag: tag, binding: "", body: body })
+              } else {
+                self.emit(LStmt { kind: StVarDecl, var_decl: LVarDeclData { name: name.name, typ: v!.typ, init: v, mutable: false } })
+                self.define_var(name.name, v!.typ)
+                self.lower_arm_body(arm.body, result_name, rt)
+                let body = self.stmts
+                self.restore_stmts(saved)
+                append(cases, LSwitchCase { tag: -1, binding: name.name, body: body })
+              }
+            }
+            Wildcard => {
               self.lower_arm_body(arm.body, result_name, rt)
               let body = self.stmts
               self.restore_stmts(saved)
-              append(cases, LSwitchCase { tag: -1, binding: name.name, body: body })
+              append(cases, LSwitchCase { tag: -1, binding: "_", body: body })
+            }
+            _ => {
+              self.restore_stmts(saved)
             }
           }
-          Wildcard => {
-            self.lower_arm_body(arm.body, result_name, rt)
-            let body = self.stmts
-            self.restore_stmts(saved)
-            append(cases, LSwitchCase { tag: -1, binding: "_", body: body })
-          }
-          _ => {
-            self.restore_stmts(saved)
-          }
         }
+
+        self.emit(LStmt {
+          kind: StSwitch,
+          switch_data: LSwitchData { tag: tag_val, cases: cases, enum_name: val_type!.name }
+        })
       }
 
-      self.emit(LStmt {
-
-        kind: StSwitch,
-        switch_data: LSwitchData { tag: tag_val, cases: cases, enum_name: val_type!.name }
-      })
     } else {
       // Non-enum: if-else chain with result assignment
       self.lower_match_as_if_else(v, val_type, arms, result_name, rt)
@@ -2968,6 +3185,12 @@ forge lowerer {
       }
     }
     return LType { kind: TyAny, name: "", bits: 0, is_exported: false }
+  }
+
+  func Lowerer.find_variant_enum(self, variant_name: string) -> string {
+    let e = dict_get<string>(self.variant_to_enum!, variant_name)
+    if !isnull(e) { return e!.value }
+    return ""
   }
 
 }
