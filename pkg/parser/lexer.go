@@ -68,6 +68,7 @@ const (
 	TTripleStringLit // """..."""
 	TFStringLit      // f"...{expr}..." — interpolated string (raw content stored in Text)
 	TCharLit         // 'c' — character literal (u8 value)
+	TBacktickSym     // `name` — symbol literal, desugars to sym("name")
 
 	// Punctuation
 	TLParen    // (
@@ -226,7 +227,7 @@ var tokenNames = map[TokenKind]string{
 	TBreak: "break", TContinue: "continue", TCascadeKw: "cascade",
 	TSpawn: "spawn", TSelect: "select", TCase: "case", TLock: "lock", TPub: "pub", TYield: "yield",
 	TIdent: "ident", TIntLit: "int", TFloatLit: "float",
-	TStringLit: "string", TTripleStringLit: "triple_string", TFStringLit: "fstring", TCharLit: "char",
+	TStringLit: "string", TTripleStringLit: "triple_string", TFStringLit: "fstring", TCharLit: "char", TBacktickSym: "backtick_sym",
 	TLParen: "(", TRParen: ")", TLBrace: "{", TRBrace: "}",
 	TLBracket: "[", TRBracket: "]", TComma: ",", TColon: ":",
 	TDot: ".", TArrow: "->", TFatArrow: "=>", TBiArrow: "<->", TPipe: "|",
@@ -387,6 +388,11 @@ func (l *Lexer) scan() Token {
 	// Character literal
 	if r == '\'' {
 		return l.scanCharLit(start)
+	}
+
+	// Backtick symbol literal: `name` → sym("name")
+	if r == '`' {
+		return l.scanBacktickSym(start)
 	}
 
 	// Number
@@ -577,6 +583,23 @@ func (l *Lexer) scanCharLit(start ast.Pos) Token {
 	}
 	// Store the byte value as the text
 	return Token{Kind: TCharLit, Text: buf.String(), Span: ast.Span{Start: start, End: l.currentPos()}}
+}
+
+func (l *Lexer) scanBacktickSym(start ast.Pos) Token {
+	l.advance() // opening `
+	var buf strings.Builder
+	for l.pos < len(l.source) {
+		r := l.peek()
+		if r == '`' {
+			l.advance() // closing `
+			break
+		}
+		if r == '\n' || r == 0 {
+			break // unterminated
+		}
+		buf.WriteRune(l.advance())
+	}
+	return Token{Kind: TBacktickSym, Text: buf.String(), Span: ast.Span{Start: start, End: l.currentPos()}}
 }
 
 func (l *Lexer) scanString(start ast.Pos) Token {

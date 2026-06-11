@@ -3,22 +3,22 @@ forge dict_test {
     // Create a Dict<Sym, i32> using constructor syntax
     let d = Dict<Sym, i32>()
 
-    // Insert values using method syntax
-    d.set(sym("x"), 10)
-    d.set(sym("y"), 20)
-    d.set(sym("z"), 30)
+    // Insert values using backtick sym syntax
+    d.set(`x`, 10)
+    d.set(`y`, 20)
+    d.set(`z`, 30)
 
     // Lookup
-    let ex = d.get(sym("x"))
+    let ex = d.get(`x`)
     if !isnull(ex) {
       println(itoa(ex!.value))
     }
 
     // Has
-    if d.has(sym("y")) {
+    if d.has(`y`) {
       println("has y")
     }
-    if !d.has(sym("w")) {
+    if !d.has(`w`) {
       println("no w")
     }
 
@@ -27,14 +27,14 @@ forge dict_test {
     println(itoa(len(keys)))
 
     // Remove
-    d.remove(sym("y"))
-    if !d.has(sym("y")) {
+    d.remove(`y`)
+    if !d.has(`y`) {
       println("y removed")
     }
 
     // Sym interning - reference equality
-    let a = sym("hello")
-    let b = sym("hello")
+    let a = `hello`
+    let b = `hello`
     if a == b {
       println("sym interning works")
     }

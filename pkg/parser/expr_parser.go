@@ -443,6 +443,27 @@ func (p *Parser) parsePrimaryExpr() (*ast.Expr, error) {
 			Data: &ast.IntLitExpr{Value: fmt.Sprintf("%d", val), TypeHint: "u8"},
 			Span: tok.Span,
 		}, nil
+	case TBacktickSym:
+		p.next()
+		// Desugar `name` → sym("name")
+		return &ast.Expr{
+			Kind: ast.ExprCall,
+			Data: &ast.CallExpr{
+				Func: ast.Expr{
+					Kind: ast.ExprIdent,
+					Data: &ast.IdentExpr{Name: "sym"},
+					Span: tok.Span,
+				},
+				Args: []ast.Expr{
+					{
+						Kind: ast.ExprStringLit,
+						Data: &ast.StringLitExpr{Value: tok.Text},
+						Span: tok.Span,
+					},
+				},
+			},
+			Span: tok.Span,
+		}, nil
 	case TFloatLit:
 		p.next()
 		return &ast.Expr{
