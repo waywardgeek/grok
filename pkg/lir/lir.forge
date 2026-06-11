@@ -182,15 +182,27 @@ forge Lir {
 
   doc "Invariants — TypeArgs Propagation": """
     LType has a TypeArgs []*LType field. This MUST be preserved through:
-    1. Lowerer: lowerCheckerType and lowerNamedType copy TypeArgs from checker/AST
-    2. Monomorphizer substType: propagates TypeArgs through specialization
-    3. Monomorphizer substTypeRemoveVars: mangles class/struct names using TypeArgs
-    4. Desugar rewriteFieldType: constructs NamedType.Args from RelationSide.TypeArgs
+    1. Checker: checkStructLit MUST return type with TypeArgs when struct literal
+       has explicit type args. Without this, variables get bare type names and
+       substTypeRemoveVars can't mangle them. (Fixed 2026-06-11: 321 GCC warnings)
+    2. Lowerer: ClassAlloc expression Type MUST include TypeArgs (not just on
+       LClassAllocData). VarDecl types are set from alloc result's v.Type.
+       (Fixed 2026-06-11 alongside checker fix)
+    3. Lowerer: lowerCheckerType copies TypeArgs from checker Type to LType
+    4. Monomorphizer substType: propagates TypeArgs through specialization
+    5. Monomorphizer substTypeRemoveVars: mangles class/struct names using TypeArgs
+    6. Desugar rewriteFieldType: constructs NamedType.Args from RelationSide.TypeArgs
 
     Without TypeArgs, generic class instances (Dict<ClassDecl> vs Dict<InterfaceDecl>)
     collide in monomorphization (both mangle to "CDict"). The desugar layer must
     preserve TypeArgs on relation-injected fields (e.g., HashedList Dict<V>:d injects
     d_parent: Dict<V>, not d_parent: Dict).
+
+    The global classRenames map in the monomorphizer is LAST-WRITER-WINS and
+    fundamentally broken for multi-specialization classes. It exists only as a
+    legacy fallback. All type resolution should go through TypeArgs-based mangling
+    (substTypeRemoveVars) or per-function ClassRenameMap (Phase 6). The global
+    map should be eliminated entirely.
   """
 
   doc "Invariants — Multi-Return Destructuring and TempTypes": """
