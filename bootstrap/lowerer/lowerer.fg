@@ -906,7 +906,8 @@ forge lowerer {
   // ---------- Function lowering ----------
 
   func Lowerer.lower_func(self, fd: FuncDecl?) -> LFuncDecl? {
-    return self.lower_func_with_receiver(fd, "")
+    let receiver = if !isnull(fd) && !isnull(fd!.receiver_type) { fd!.receiver_type!.name } else { "" }
+    return self.lower_func_with_receiver(fd, receiver)
   }
 
   func Lowerer.lower_func_with_receiver(self, fd: FuncDecl?, receiver: string) -> LFuncDecl? {
