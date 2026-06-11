@@ -47,6 +47,10 @@ class CGen {
 
   // Mut param tracking
   mut_params: Dict<bool>?
+
+  // Tuple type tracking
+  tuple_types: Dict<string>?    // "field_types_key" → typedef name
+  tuple_count: i32
 }
 
 struct CLambda {
@@ -98,6 +102,8 @@ func new_cgen(prog: LProgram?) -> CGen? {
     needs_exec_cmd: false,
     needs_path_join: false,
     simple_enums: dict_new<bool>(),
+    tuple_types: dict_new<string>(),
+    tuple_count: 0,
   }
   // Build interface lookup
   let ifaces = prog!.interfaces
@@ -476,20 +482,25 @@ func CGen.c_tuple_type(self, t: LType?) -> string {
       return "forge_parse_float_result"
     }
   }
-  // Fallback: anonymous struct
-  let sb = new_string_builder()
-  sb.write("struct { ")
-  let mut i = 0
-  while i < len(t!.fields) {
-    if i > 0 {
-      sb.write("; ")
+  // Fallback: register a named typedef (like slice_types/opt_types pattern)
+  let mut fields_key = new_string_builder()
+  let mut i2 = 0
+  while i2 < len(t!.fields) {
+    if i2 > 0 {
+      fields_key.write(",")
     }
-    sb.write(self.c_type(t!.fields[i].typ))
-    sb.write(f" _{i}")
-    i = i + 1
+    fields_key.write(self.c_type(t!.fields[i2].typ))
+    i2 = i2 + 1
   }
-  sb.write("; }")
-  return sb.to_string()
+  let key = fields_key.to_string()
+  let existing = dict_get<string>(self.tuple_types!, key)
+  if !isnull(existing) {
+    return existing!.value
+  }
+  let name = f"ForgeTuple_{self.tuple_count}"
+  self.tuple_count = self.tuple_count + 1
+  dict_set<string>(self.tuple_types!, key, name)
+  return name
 }
 
 // ---------------------------------------------------------------------------
@@ -3248,6 +3259,7 @@ func CGen.walk_type_for_composite(self, t: LType?) {
         self.chan_suffix(t!.elem)
       }
     }
+    TyTuple => { self.c_tuple_type(t) }
     _ => {}
   }
   self.walk_type_for_composite(t!.elem)
@@ -3820,12 +3832,55 @@ pub func emit_c(prog: LProgram?) -> string {
   // Pre-scan composite types
   g.collect_composite_types()
 
+  // Pre-scan function signatures to discover tuple types
+  let pre_funcs = g.prog!.functions
+  let mut pi = 0
+  while pi < len(pre_funcs) {
+    if len(pre_funcs[pi].type_params) == 0 {
+      if !isnull(pre_funcs[pi].return_type) && pre_funcs[pi].return_type!.kind is TyTuple {
+        g.c_tuple_type(pre_funcs[pi].return_type)
+      }
+      let mut pj = 0
+      while pj < len(pre_funcs[pi].params) {
+        if !isnull(pre_funcs[pi].params[pj].typ) && pre_funcs[pi].params[pj].typ!.kind is TyTuple {
+          g.c_tuple_type(pre_funcs[pi].params[pj].typ)
+        }
+        pj = pj + 1
+      }
+    }
+    pi = pi + 1
+  }
+
   // Deduplicate
   let prog_ref = g.prog!
   prog_ref.structs = dedup_structs(prog_ref.structs)
   prog_ref.classes = dedup_classes(prog_ref.classes)
   prog_ref.enums = dedup_enums(prog_ref.enums)
   prog_ref.functions = dedup_funcs(prog_ref.functions)
+
+  // Emit tuple typedefs (before forward declarations that reference them)
+  let tuple_keys = dict_keys<string>(g.tuple_types!)
+  let mut tk = 0
+  while tk < len(tuple_keys) {
+    let tuple_entry = dict_get<string>(g.tuple_types!, tuple_keys[tk])
+    if !isnull(tuple_entry) {
+      let tname = tuple_entry!.value
+      let field_types = str_split(tuple_keys[tk], ",")
+      g.line(f"typedef struct {tname} {{")
+      g.indent = g.indent + 1
+      let mut ti = 0
+      while ti < len(field_types) {
+        g.line(f"{field_types[ti]} _{ti};")
+        ti = ti + 1
+      }
+      g.indent = g.indent - 1
+      g.line(f"}} {tname};")
+    }
+    tk = tk + 1
+  }
+  if len(tuple_keys) > 0 {
+    g.line("")
+  }
 
   // Forward-declare structs, classes, enums
   let structs = prog_ref.structs

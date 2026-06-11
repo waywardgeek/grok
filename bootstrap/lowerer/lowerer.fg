@@ -192,7 +192,8 @@ forge lowerer {
         let mut i = 0
         for f in fields {
           let ft = self.lower_type(f.type_expr)
-          let fname = if !isnull(f.name) { f.name!.name } else { "_{i}" }
+          let fname = if !isnull(f.name) { f.name!.name } else { f"_{i}" }
+
           append(lfields, LField { name: fname, typ: ft })
           i = i + 1
         }
@@ -607,7 +608,8 @@ forge lowerer {
           let mut vfields: [LField] = []
           let mut fi = 0
           for tf in v.evf_children() {
-            let fname = if !isnull(tf.name) { tf.name!.name } else { "_{fi}" }
+            let fname = if !isnull(tf.name) { tf.name!.name } else { f"_{fi}" }
+
             append(vfields, LField { name: fname, typ: self.lower_type(tf.type_expr) })
             fi = fi + 1
           }
@@ -2004,7 +2006,7 @@ forge lowerer {
               } else {
                 LType { kind: TyAny, name: "", bits: 0, is_exported: false }
               }
-              let field_name = "_{idx}"
+              let field_name = f"_{idx}"
               let extract = LExpr {
                 kind: ExStructField,
                 typ: ft,
@@ -2232,7 +2234,8 @@ forge lowerer {
       let mut i = 0
       for a in args {
         let av = self.lower_expr(a)
-        let fname = if i < len(cf) && !isnull(cf[i].name) { cf[i].name!.name } else { "_{i}" }
+        let fname = if i < len(cf) && !isnull(cf[i].name) { cf[i].name!.name } else { f"_{i}" }
+
         append(finits, LFieldInit { name: fname, value: av })
         i = i + 1
       }
@@ -3171,7 +3174,8 @@ forge lowerer {
         }
       }
     }
-    return "_{field_idx}"
+    return f"_{field_idx}"
+
   }
 
   func Lowerer.get_variant_field_type(self, enum_name: string, variant_name: string, field_idx: i32) -> LType? {
