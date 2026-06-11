@@ -514,14 +514,14 @@ func is_primitive_type(name: string) -> bool {
 
 // --- collect type names from TypeExpr ---
 
-func ast_collect_type_names(te: TypeExpr?, names: Dict<bool>) {
+func ast_collect_type_names(te: TypeExpr?, names: Dict<Sym, bool>) {
     if te == nil {
         return
     }
     match te!.kind {
         Named(name, args) => {
             if !is_primitive_type(name.name) {
-                dict_set<bool>(names, name.name, true)
+                names.set(sym(name.name), true)
             }
             for i in range(0, len(args)) {
                 ast_collect_type_names(args[i], names)
@@ -554,8 +554,8 @@ func ast_collect_type_names(te: TypeExpr?, names: Dict<bool>) {
 
 // --- collect used type names from user code ---
 
-func ast_collect_used_type_names(file: File?) -> Dict<bool> {
-    let names = dict_new<bool>()
+func ast_collect_used_type_names(file: File?) -> Dict<Sym, bool> {
+    let names = Dict<Sym, bool>()
     if file == nil {
         return names
     }
@@ -605,7 +605,7 @@ func ast_collect_used_type_names(file: File?) -> Dict<bool> {
 
 // --- collect function call names from expressions/statements ---
 
-func ast_collect_call_names_expr(expr: Expr?, names: Dict<bool>) {
+func ast_collect_call_names_expr(expr: Expr?, names: Dict<Sym, bool>) {
     if expr == nil {
         return
     }
@@ -613,7 +613,7 @@ func ast_collect_call_names_expr(expr: Expr?, names: Dict<bool>) {
         Call(func_expr, type_args, args, mut_args) => {
             match func_expr.kind {
                 Ident(id_name) => {
-                    dict_set<bool>(names, id_name.name, true)
+                    names.set(sym(id_name.name), true)
                 }
                 _ => {}
             }
@@ -712,7 +712,7 @@ func ast_collect_call_names_expr(expr: Expr?, names: Dict<bool>) {
     }
 }
 
-func ast_collect_call_names_stmt(stmt: Stmt, names: Dict<bool>) {
+func ast_collect_call_names_stmt(stmt: Stmt, names: Dict<Sym, bool>) {
     match stmt.kind {
         VarDecl(name, names_list, type_expr, is_mut, value) => {
             ast_collect_call_names_expr(value, names)
@@ -796,7 +796,7 @@ func ast_collect_call_names_stmt(stmt: Stmt, names: Dict<bool>) {
     }
 }
 
-func ast_collect_call_names_block(block: Block, names: Dict<bool>) {
+func ast_collect_call_names_block(block: Block, names: Dict<Sym, bool>) {
     let stmts = block.bs_children()
     for i in range(0, len(stmts)) {
         ast_collect_call_names_stmt(stmts[i], names)
@@ -805,8 +805,8 @@ func ast_collect_call_names_block(block: Block, names: Dict<bool>) {
 
 // --- collect used function names from user code ---
 
-func ast_collect_used_func_names(file: File?) -> Dict<bool> {
-    let names = dict_new<bool>()
+func ast_collect_used_func_names(file: File?) -> Dict<Sym, bool> {
+    let names = Dict<Sym, bool>()
     if file == nil {
         return names
     }
@@ -834,13 +834,13 @@ func ast_collect_used_func_names(file: File?) -> Dict<bool> {
 
 // --- func_references_types ---
 
-func ast_func_references_types(fn_: FuncDecl, used_types: Dict<bool>) -> bool {
+func ast_func_references_types(fn_: FuncDecl, used_types: Dict<Sym, bool>) -> bool {
     if fn_.return_type != nil {
-        let ret_names = dict_new<bool>()
+        let ret_names = Dict<Sym, bool>()
         ast_collect_type_names(fn_.return_type, ret_names)
-        let keys = dict_keys<bool>(ret_names)
+        let keys = ret_names.keys()
         for i in range(0, len(keys)) {
-            let entry = dict_get<bool>(used_types, keys[i])
+            let entry = used_types.get(keys[i])
             if entry != nil {
                 return true
             }
@@ -856,13 +856,13 @@ func merge_stdlib(file: File?, std_file: File?) {
     if std_file == nil { return }
 
     // Collect relation hints (interface names used in relations)
-    let used_ifaces = dict_new<bool>()
+    let used_ifaces = Dict<Sym, bool>()
     let blocks = file!.fb_children()
     for bi in range(0, len(blocks)) {
         let rels = blocks[bi].rd_children()
         for ri in range(0, len(rels)) {
             if rels[ri].hint != nil {
-                dict_set<bool>(used_ifaces, rels[ri].hint!.name, true)
+                used_ifaces.set(sym(rels[ri].hint!.name), true)
             }
         }
     }
@@ -872,9 +872,9 @@ func merge_stdlib(file: File?, std_file: File?) {
     let used_func_names = ast_collect_used_func_names(file)
 
     // Build stdlib lookups
-    let std_iface_map = dict_new<InterfaceDecl>()
-    let std_class_map = dict_new<ClassDecl>()
-    let std_func_map = dict_new<FuncDecl>()
+    let std_iface_map = Dict<Sym, InterfaceDecl>()
+    let std_class_map = Dict<Sym, ClassDecl>()
+    let std_func_map = Dict<Sym, FuncDecl>()
 
     let std_blocks = std_file!.fb_children()
     for bi in range(0, len(std_blocks)) {
@@ -882,26 +882,26 @@ func merge_stdlib(file: File?, std_file: File?) {
         let ifaces = sb.id_children()
         for i in range(0, len(ifaces)) {
             if ifaces[i].name != nil {
-                dict_set<InterfaceDecl>(std_iface_map, ifaces[i].name!.name, ifaces[i])
+                std_iface_map.set(sym(ifaces[i].name!.name), ifaces[i])
             }
         }
         let classes = sb.cd_children()
         for i in range(0, len(classes)) {
             if classes[i].name != nil {
-                dict_set<ClassDecl>(std_class_map, classes[i].name!.name, classes[i])
+                std_class_map.set(sym(classes[i].name!.name), classes[i])
             }
         }
         let fns = sb.fd_children()
         for i in range(0, len(fns)) {
             if fns[i].name != nil {
-                dict_set<FuncDecl>(std_func_map, fns[i].name!.name, fns[i])
+                std_func_map.set(sym(fns[i].name!.name), fns[i])
             }
         }
     }
 
     // Transitively pull in interfaces referenced by embeds
-    let mut queue: [string] = []
-    let iface_keys = dict_keys<bool>(used_ifaces)
+    let mut queue: [Sym] = []
+    let iface_keys = used_ifaces.keys()
     for i in range(0, len(iface_keys)) {
         queue = append(queue, iface_keys[i])
     }
@@ -909,16 +909,16 @@ func merge_stdlib(file: File?, std_file: File?) {
     while qi < len(queue) {
         let iname = queue[qi]
         qi = qi + 1
-        let entry = dict_get<InterfaceDecl>(std_iface_map, iname)
+        let entry = std_iface_map.get(iname)
         if entry != nil {
             let iface = entry!.value
             let embeds = iface.ie_children()
             for ei in range(0, len(embeds)) {
                 if embeds[ei].name != nil {
-                    let emb_name = embeds[ei].name!.name
-                    let already = dict_get<bool>(used_ifaces, emb_name)
+                    let emb_name = embeds[ei].name!
+                    let already = used_ifaces.get(emb_name)
                     if already == nil {
-                        dict_set<bool>(used_ifaces, emb_name, true)
+                        used_ifaces.set(emb_name, true)
                         queue = append(queue, emb_name)
                     }
                 }
@@ -929,21 +929,21 @@ func merge_stdlib(file: File?, std_file: File?) {
     // Collect referenced interface declarations, skipping those already defined in user file
     let mut std_ifaces: [InterfaceDecl] = []
     // Build set of user-defined interface names to avoid duplicates
-    let user_iface_names = dict_new<bool>()
+    let user_iface_names = Dict<Sym, bool>()
     for bi in range(0, len(blocks)) {
         let user_ifaces = blocks[bi].id_children()
         for i in range(0, len(user_ifaces)) {
             if user_ifaces[i].name != nil {
-                dict_set<bool>(user_iface_names, user_ifaces[i].name!.name, true)
+                user_iface_names.set(sym(user_ifaces[i].name!.name), true)
             }
         }
     }
-    let all_iface_keys = dict_keys<bool>(used_ifaces)
+    let all_iface_keys = used_ifaces.keys()
     for i in range(0, len(all_iface_keys)) {
         // Skip if user already defines this interface
-        let user_has = dict_get<bool>(user_iface_names, all_iface_keys[i])
+        let user_has = user_iface_names.get(all_iface_keys[i])
         if user_has != nil { continue }
-        let entry = dict_get<InterfaceDecl>(std_iface_map, all_iface_keys[i])
+        let entry = std_iface_map.get(all_iface_keys[i])
         if entry != nil {
             std_ifaces = append(std_ifaces, entry!.value)
         }
@@ -951,9 +951,9 @@ func merge_stdlib(file: File?, std_file: File?) {
 
     // Collect referenced classes
     let mut std_classes: [ClassDecl] = []
-    let type_keys = dict_keys<bool>(used_types)
+    let type_keys = used_types.keys()
     for i in range(0, len(type_keys)) {
-        let entry = dict_get<ClassDecl>(std_class_map, type_keys[i])
+        let entry = std_class_map.get(type_keys[i])
         if entry != nil {
             std_classes = append(std_classes, entry!.value)
         }
@@ -961,44 +961,44 @@ func merge_stdlib(file: File?, std_file: File?) {
 
     // Collect user-defined function names so stdlib doesn't shadow them.
     // Users can call shadowed stdlib functions via std.funcName().
-    let user_defined_funcs = dict_new<bool>()
+    let user_defined_funcs = Dict<Sym, bool>()
     for bi in range(0, len(blocks)) {
         let user_fns = blocks[bi].fd_children()
         for i in range(0, len(user_fns)) {
             if user_fns[i].name != nil {
-                dict_set<bool>(user_defined_funcs, user_fns[i].name!.name, true)
+                user_defined_funcs.set(sym(user_fns[i].name!.name), true)
             }
         }
     }
 
     // Collect functions that return/use referenced stdlib classes or are called
     let mut std_funcs: [FuncDecl] = []
-    let merged_funcs = dict_new<bool>()
-    let func_keys = dict_keys<FuncDecl>(std_func_map)
+    let merged_funcs = Dict<Sym, bool>()
+    let func_keys = std_func_map.keys()
     for i in range(0, len(func_keys)) {
         let fname = func_keys[i]
         // Skip stdlib functions that would shadow user-defined functions
-        let user_has_func = dict_get<bool>(user_defined_funcs, fname)
+        let user_has_func = user_defined_funcs.get(fname)
         if user_has_func != nil { continue }
-        let fentry = dict_get<FuncDecl>(std_func_map, fname)
+        let fentry = std_func_map.get(fname)
         if fentry == nil { continue }
         let fn_ = fentry!.value
-        let called = dict_get<bool>(used_func_names, fname)
+        let called = used_func_names.get(fname)
         let refs_types = ast_func_references_types(fn_, used_types)
         if called != nil || refs_types {
             std_funcs = append(std_funcs, fn_)
-            dict_set<bool>(merged_funcs, fname, true)
+            merged_funcs.set(fname, true)
             // If function returns a stdlib class, merge that class too
             if fn_.return_type != nil {
-                let ret_names = dict_new<bool>()
+                let ret_names = Dict<Sym, bool>()
                 ast_collect_type_names(fn_.return_type, ret_names)
-                let rkeys = dict_keys<bool>(ret_names)
+                let rkeys = ret_names.keys()
                 for ri in range(0, len(rkeys)) {
-                    let cls_entry = dict_get<ClassDecl>(std_class_map, rkeys[ri])
+                    let cls_entry = std_class_map.get(rkeys[ri])
                     if cls_entry != nil {
-                        let already_type = dict_get<bool>(used_types, rkeys[ri])
+                        let already_type = used_types.get(rkeys[ri])
                         if already_type == nil {
-                            dict_set<bool>(used_types, rkeys[ri], true)
+                            used_types.set(rkeys[ri], true)
                             std_classes = append(std_classes, cls_entry!.value)
                         }
                     }
@@ -1008,15 +1008,15 @@ func merge_stdlib(file: File?, std_file: File?) {
     }
 
     // Collect stdlib relations whose participant types are being merged
-    let merged_classes = dict_new<bool>()
+    let merged_classes = Dict<Sym, bool>()
     for i in range(0, len(std_classes)) {
         if std_classes[i].name != nil {
-            dict_set<bool>(merged_classes, std_classes[i].name!.name, true)
+            merged_classes.set(sym(std_classes[i].name!.name), true)
         }
     }
 
     // Build set of existing relations to avoid duplicates
-    let existing_rels = dict_new<bool>()
+    let existing_rels = Dict<Sym, bool>()
     for bi in range(0, len(blocks)) {
         let rels = blocks[bi].rd_children()
         for ri in range(0, len(rels)) {
@@ -1026,7 +1026,7 @@ func merge_stdlib(file: File?, std_file: File?) {
                 key = r.hint!.name
             }
             key = f"{key}:{r.parent.type_name!.name}:{r.child.type_name!.name}"
-            dict_set<bool>(existing_rels, key, true)
+            existing_rels.set(sym(key), true)
         }
     }
 
@@ -1043,30 +1043,30 @@ func merge_stdlib(file: File?, std_file: File?) {
                 key = r.hint!.name
             }
             key = f"{key}:{parent_name}:{child_name}"
-            let exists = dict_get<bool>(existing_rels, key)
+            let exists = existing_rels.get(sym(key))
             if exists != nil { continue }
 
-            let parent_merged = dict_get<bool>(merged_classes, parent_name)
-            let child_merged = dict_get<bool>(merged_classes, child_name)
+            let parent_merged = merged_classes.get(sym(parent_name))
+            let child_merged = merged_classes.get(sym(child_name))
             if parent_merged != nil || child_merged != nil {
                 std_relations = append(std_relations, r)
                 // Ensure the interface hint is merged
                 if r.hint != nil {
                     let hint_name = r.hint!.name
-                    let hint_used = dict_get<bool>(used_ifaces, hint_name)
+                    let hint_used = used_ifaces.get(sym(hint_name))
                     if hint_used == nil {
-                        dict_set<bool>(used_ifaces, hint_name, true)
-                        let hint_entry = dict_get<InterfaceDecl>(std_iface_map, hint_name)
+                        used_ifaces.set(sym(hint_name), true)
+                        let hint_entry = std_iface_map.get(sym(hint_name))
                         if hint_entry != nil {
                             std_ifaces = append(std_ifaces, hint_entry!.value)
                             let embeds = hint_entry!.value.ie_children()
                             for ei in range(0, len(embeds)) {
                                 if embeds[ei].name != nil {
                                     let emb_n = embeds[ei].name!.name
-                                    let emb_used = dict_get<bool>(used_ifaces, emb_n)
+                                    let emb_used = used_ifaces.get(sym(emb_n))
                                     if emb_used == nil {
-                                        dict_set<bool>(used_ifaces, emb_n, true)
-                                        let emb_entry = dict_get<InterfaceDecl>(std_iface_map, emb_n)
+                                        used_ifaces.set(sym(emb_n), true)
+                                        let emb_entry = std_iface_map.get(sym(emb_n))
                                         if emb_entry != nil {
                                             std_ifaces = append(std_ifaces, emb_entry!.value)
                                         }
@@ -1078,16 +1078,16 @@ func merge_stdlib(file: File?, std_file: File?) {
                 }
                 // Ensure both participant types are merged
                 if parent_merged == nil {
-                    let cls_entry = dict_get<ClassDecl>(std_class_map, parent_name)
+                    let cls_entry = std_class_map.get(sym(parent_name))
                     if cls_entry != nil {
-                        dict_set<bool>(merged_classes, parent_name, true)
+                        merged_classes.set(sym(parent_name), true)
                         std_classes = append(std_classes, cls_entry!.value)
                     }
                 }
                 if child_merged == nil {
-                    let cls_entry = dict_get<ClassDecl>(std_class_map, child_name)
+                    let cls_entry = std_class_map.get(sym(child_name))
                     if cls_entry != nil {
-                        dict_set<bool>(merged_classes, child_name, true)
+                        merged_classes.set(sym(child_name), true)
                         std_classes = append(std_classes, cls_entry!.value)
                     }
                 }
@@ -1099,17 +1099,17 @@ func merge_stdlib(file: File?, std_file: File?) {
     let mut changed = true
     while changed {
         changed = false
-        let all_func_keys = dict_keys<FuncDecl>(std_func_map)
+        let all_func_keys = std_func_map.keys()
         for i in range(0, len(all_func_keys)) {
             let fname = all_func_keys[i]
-            let already = dict_get<bool>(merged_funcs, fname)
+            let already = merged_funcs.get(fname)
             if already != nil { continue }
             let mut found = false
             for j in range(0, len(std_funcs)) {
                 if std_funcs[j].body != nil {
-                    let calls = dict_new<bool>()
+                    let calls = Dict<Sym, bool>()
                     ast_collect_call_names_block(std_funcs[j].body!, calls)
-                    let call_entry = dict_get<bool>(calls, fname)
+                    let call_entry = calls.get(fname)
                     if call_entry != nil {
                         found = true
                         break
@@ -1117,22 +1117,22 @@ func merge_stdlib(file: File?, std_file: File?) {
                 }
             }
             if found {
-                let fentry = dict_get<FuncDecl>(std_func_map, fname)
+                let fentry = std_func_map.get(fname)
                 if fentry != nil {
                     let fn_ = fentry!.value
-                    dict_set<bool>(merged_funcs, fname, true)
+                    merged_funcs.set(fname, true)
                     std_funcs = append(std_funcs, fn_)
                     changed = true
                     if fn_.return_type != nil {
-                        let ret_names = dict_new<bool>()
+                        let ret_names = Dict<Sym, bool>()
                         ast_collect_type_names(fn_.return_type, ret_names)
-                        let rkeys = dict_keys<bool>(ret_names)
+                        let rkeys = ret_names.keys()
                         for ri in range(0, len(rkeys)) {
-                            let cls_entry = dict_get<ClassDecl>(std_class_map, rkeys[ri])
+                            let cls_entry = std_class_map.get(rkeys[ri])
                             if cls_entry != nil {
-                                let cls_merged = dict_get<bool>(merged_classes, rkeys[ri])
+                                let cls_merged = merged_classes.get(rkeys[ri])
                                 if cls_merged == nil {
-                                    dict_set<bool>(merged_classes, rkeys[ri], true)
+                                    merged_classes.set(rkeys[ri], true)
                                     std_classes = append(std_classes, cls_entry!.value)
                                 }
                             }

@@ -632,8 +632,8 @@ forge lir {
     functions: [LFuncDecl]
     globals: [LVarDeclData]
     type_defs: [LTypeDef]
-    class_renames: Dict<string>?
-    impl_method_renames: Dict<string>?
+    class_renames: Dict<Sym, string>?
+    impl_method_renames: Dict<Sym, string>?
   }
 
 }

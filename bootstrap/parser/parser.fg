@@ -405,7 +405,7 @@ forge parser {
     if self.peek().kind == KSelf {
       let tok = self.next()
       return (Param {
-        sym("self"),
+        `self`,
         is_mut: is_mut,
         is_self: true,
         span: self.make_span(start)
@@ -414,7 +414,7 @@ forge parser {
     let name = self.expect_ident()?
     if name!.text == "self" {
       return (Param {
-        sym("self"),
+        `self`,
         is_mut: is_mut,
         is_self: true,
         span: self.make_span(start)

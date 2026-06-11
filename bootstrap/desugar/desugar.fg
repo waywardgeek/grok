@@ -16,11 +16,11 @@ forge desugar {
 
   func desugar_interface_embeds(file: File) {
     // Build index of all interfaces by name
-    let iface_map = dict_new<InterfaceDecl>()
+    let iface_map = Dict<Sym, InterfaceDecl>()
     for block in file.fb_children() {
       for iface in block.id_children() {
         if !isnull(iface.name) {
-          dict_set<InterfaceDecl>(iface_map, iface.name!.name, iface)
+          iface_map.set(sym(iface.name!.name), iface)
         }
       }
     }
@@ -29,12 +29,12 @@ forge desugar {
       for iface in block.id_children() {
         for emb in iface.ie_children() {
           if isnull(emb.name) { continue }
-          let entry = dict_get<InterfaceDecl>(iface_map, emb.name!.name)
+          let entry = iface_map.get(sym(emb.name!.name))
           if isnull(entry) { continue }
           let parent_iface = entry!.value
 
           // Build type param substitution map: parent.TypeParams[i] -> emb.TypeArgs[i]
-          let type_map = dict_new<string>()
+          let type_map = Dict<Sym, string>()
           let parent_tps = parent_iface.itp_children()
           let emb_args = emb.ie_arg_children()
           let mut i: i32 = 0
@@ -45,7 +45,7 @@ forge desugar {
               if !isnull(tp.name) {
                 let arg_name = type_expr_name(arg)
                 if !isnull(arg_name) {
-                  dict_set<string>(type_map, tp.name!.name, arg_name!.name)
+                  type_map.set(sym(tp.name!.name), arg_name!.name)
                 }
               }
             }
@@ -91,7 +91,7 @@ forge desugar {
         for fd in iface.ifd_children() {
           // Getter: func T.name(self) -> Type
           let self_param = Param {
-            name: sym("self"),
+            name: `self`,
             type_expr: null,
             is_mut: false,
             is_self: true,
@@ -115,14 +115,14 @@ forge desugar {
             setter_name = sym("set_" + fd.name!.name)
           }
           let self_param2 = Param {
-            name: sym("self"),
+            name: `self`,
             type_expr: null,
             is_mut: true,
             is_self: true,
             span: fd.span,
           }
           let val_param = Param {
-            name: sym("val"),
+            name: `val`,
             type_expr: fd.type_expr,
             is_mut: false,
             is_self: false,
@@ -152,24 +152,24 @@ forge desugar {
   func desugar_relations(file: File) {
     for block in file.fb_children() {
       // Build interface lookup
-      let iface_map = dict_new<InterfaceDecl>()
+      let iface_map = Dict<Sym, InterfaceDecl>()
       for iface in block.id_children() {
         if !isnull(iface.name) {
-          dict_set<InterfaceDecl>(iface_map, iface.name!.name, iface)
+          iface_map.set(sym(iface.name!.name), iface)
         }
       }
 
       // Build class lookup: name -> ClassDecl
-      let class_map = dict_new<ClassDecl>()
+      let class_map = Dict<Sym, ClassDecl>()
       for cls in block.cd_children() {
         if !isnull(cls.name) {
-          dict_set<ClassDecl>(class_map, cls.name!.name, cls)
+          class_map.set(sym(cls.name!.name), cls)
         }
       }
 
       for rel in block.rd_children() {
         if isnull(rel.hint) { continue }
-        let iface_entry = dict_get<InterfaceDecl>(iface_map, rel.hint!.name)
+        let iface_entry = iface_map.get(sym(rel.hint!.name))
         if isnull(iface_entry) { continue }
         let iface = iface_entry!.value
 
@@ -207,7 +207,7 @@ forge desugar {
           }
 
           if side_name == "" { continue }
-          let cls_entry = dict_get<ClassDecl>(class_map, side_name)
+          let cls_entry = class_map.get(sym(side_name))
           if isnull(cls_entry) { continue }
           let cls = cls_entry!.value
 
@@ -342,29 +342,29 @@ forge desugar {
   func desugar_destructors(file: File) {
     for block in file.fb_children() {
       // Build interface lookup
-      let iface_map = dict_new<InterfaceDecl>()
+      let iface_map = Dict<Sym, InterfaceDecl>()
       for iface in block.id_children() {
         if !isnull(iface.name) {
-          dict_set<InterfaceDecl>(iface_map, iface.name!.name, iface)
+          iface_map.set(sym(iface.name!.name), iface)
         }
       }
 
       // Build class lookup
-      let class_map = dict_new<ClassDecl>()
+      let class_map = Dict<Sym, ClassDecl>()
       for cls in block.cd_children() {
         if !isnull(cls.name) {
-          dict_set<ClassDecl>(class_map, cls.name!.name, cls)
+          class_map.set(sym(cls.name!.name), cls)
         }
       }
 
       // Collect destructor blocks per class name
-      // Since Dict can only store single values, we use a Dict<Block> where
+      // Since Dict can only store single values, we use a Dict<Sym, Block> where
       // each Block wraps all destructor stmts for that class as sub-blocks.
-      let destroy_methods = dict_new<FuncDecl>()
+      let destroy_methods = Dict<Sym, FuncDecl>()
 
       for rel in block.rd_children() {
         if isnull(rel.hint) { continue }
-        let iface_entry = dict_get<InterfaceDecl>(iface_map, rel.hint!.name)
+        let iface_entry = iface_map.get(sym(rel.hint!.name))
         if isnull(iface_entry) { continue }
         let iface = iface_entry!.value
 
@@ -375,23 +375,23 @@ forge desugar {
         if len(iface_tps) < 2 { continue }
 
         // Map type params to concrete class names (simple string map)
-        let type_map = dict_new<string>()
+        let type_map = Dict<Sym, string>()
         if !isnull(iface_tps[0].name) && !isnull(rel.parent.type_name) {
-          dict_set<string>(type_map, iface_tps[0].name!.name, rel.parent.type_name!.name)
+          type_map.set(sym(iface_tps[0].name!.name), rel.parent.type_name!.name)
         }
         if !isnull(iface_tps[1].name) && !isnull(rel.child.type_name) {
-          dict_set<string>(type_map, iface_tps[1].name!.name, rel.child.type_name!.name)
+          type_map.set(sym(iface_tps[1].name!.name), rel.child.type_name!.name)
         }
 
         // Rich type map (preserves TypeArgs for generic instantiation)
-        let rich_type_map = dict_new<TypeExpr>()
+        let rich_type_map = Dict<Sym, TypeExpr>()
         if !isnull(iface_tps[0].name) && !isnull(rel.parent.type_name) {
           let mut parent_args: [TypeExpr] = []
           for ta in rel.parent.type_args {
             append(parent_args, TypeExpr { kind: Named(ta, []), span: rel.span })
           }
           let te = TypeExpr { kind: Named(rel.parent.type_name!, parent_args), span: rel.span }
-          dict_set<TypeExpr>(rich_type_map, iface_tps[0].name!.name, te)
+          rich_type_map.set(sym(iface_tps[0].name!.name), te)
         }
         if !isnull(iface_tps[1].name) && !isnull(rel.child.type_name) {
           let mut child_args: [TypeExpr] = []
@@ -399,37 +399,37 @@ forge desugar {
             append(child_args, TypeExpr { kind: Named(ta, []), span: rel.span })
           }
           let te = TypeExpr { kind: Named(rel.child.type_name!, child_args), span: rel.span }
-          dict_set<TypeExpr>(rich_type_map, iface_tps[1].name!.name, te)
+          rich_type_map.set(sym(iface_tps[1].name!.name), te)
         }
 
         // Build method rename map for label-prefixed fields
-        let method_renames = dict_new<string>()
-        let type_param_to_label = dict_new<string>()
+        let method_renames = Dict<Sym, string>()
+        let type_param_to_label = Dict<Sym, string>()
         if !isnull(iface_tps[0].name) && !isnull(rel.parent.label) {
-          dict_set<string>(type_param_to_label, iface_tps[0].name!.name, rel.parent.label!.name)
+          type_param_to_label.set(sym(iface_tps[0].name!.name), rel.parent.label!.name)
         }
         if !isnull(iface_tps[1].name) && !isnull(rel.child.label) {
-          dict_set<string>(type_param_to_label, iface_tps[1].name!.name, rel.child.label!.name)
+          type_param_to_label.set(sym(iface_tps[1].name!.name), rel.child.label!.name)
         }
         for ifield in iface.ifd_children() {
           if isnull(ifield.type_param) { continue }
-          let label_entry = dict_get<string>(type_param_to_label, ifield.type_param!.name)
+          let label_entry = type_param_to_label.get(sym(ifield.type_param!.name))
           if !isnull(label_entry) && !isnull(ifield.name) {
             let label = label_entry!.value
             let fname = ifield.name!.name
-            dict_set<string>(method_renames, fname, label + "_" + fname)
-            dict_set<string>(method_renames, "set_" + fname, "set_" + label + "_" + fname)
+            method_renames.set(sym(fname), label + "_" + fname)
+            method_renames.set(sym("set_" + fname), "set_" + label + "_" + fname)
           }
         }
 
         for db in destructors {
           if isnull(db.type_param) { continue }
           let mut class_name: string = ""
-          let entry = dict_get<string>(type_map, db.type_param!.name)
+          let entry = type_map.get(sym(db.type_param!.name))
           if isnull(entry) { continue }
           class_name = entry!.value
 
-          let cls_entry = dict_get<ClassDecl>(class_map, class_name)
+          let cls_entry = class_map.get(sym(class_name))
           if isnull(cls_entry) { continue }
 
           // Deep copy and substitute type params (rich, preserving type args)
@@ -440,13 +440,13 @@ forge desugar {
           rename_method_calls_in_block(body_copy!, method_renames)
 
           // Get or create destroy method for this class
-          let method_entry = dict_get<FuncDecl>(destroy_methods, class_name)
+          let method_entry = destroy_methods.get(sym(class_name))
           let mut method: FuncDecl? = null
           if !isnull(method_entry) {
             method = method_entry!.value
           } else {
             let self_param = Param {
-              name: sym("self"),
+              name: `self`,
               type_expr: null,
               is_mut: true,
               is_self: true,
@@ -454,7 +454,7 @@ forge desugar {
             }
             let destroy_body = Block { span: db.span }
             let m = FuncDecl {
-              name: sym("destroy"),
+              name: `destroy`,
               is_public: true,
               receiver_type: null,
               return_type: null,
@@ -463,7 +463,7 @@ forge desugar {
               span: db.span,
             }
             array_append<FuncDecl, Param>(m, self_param)
-            dict_set<FuncDecl>(destroy_methods, class_name, m)
+            destroy_methods.set(sym(class_name), m)
             method = m
           }
 
@@ -479,7 +479,7 @@ forge desugar {
       // Attach destroy methods to classes
       for cls in block.cd_children() {
         if isnull(cls.name) { continue }
-        let entry = dict_get<FuncDecl>(destroy_methods, cls.name!.name)
+        let entry = destroy_methods.get(sym(cls.name!.name))
         if !isnull(entry) {
           array_append<ClassDecl, FuncDecl>(cls, entry!.value)
         }
@@ -589,15 +589,15 @@ forge desugar {
   }
 
   // Substitute a Sym through the type map
-  func substitute_sym(s: Sym?, type_map: Dict<string>) -> Sym? {
+  func substitute_sym(s: Sym?, type_map: Dict<Sym, string>) -> Sym? {
     if isnull(s) { return null }
-    let entry = dict_get<string>(type_map, s!.name)
+    let entry = type_map.get(sym(s!.name))
     if isnull(entry) { return s }
     return sym(entry!.value)
   }
 
   // Create a copy of a TypeExpr with type params substituted
-  func substitute_type_expr_copy(te: TypeExpr?, type_map: Dict<string>) -> TypeExpr? {
+  func substitute_type_expr_copy(te: TypeExpr?, type_map: Dict<Sym, string>) -> TypeExpr? {
     if isnull(te) { return null }
     let result = TypeExpr {
       kind: te!.kind,
@@ -608,10 +608,10 @@ forge desugar {
   }
 
   // Substitute type params in a TypeExpr in place
-  func substitute_type_params_in_type_expr(te: TypeExpr, type_map: Dict<string>) {
+  func substitute_type_params_in_type_expr(te: TypeExpr, type_map: Dict<Sym, string>) {
     match te.kind {
       Named(name, args) => {
-        let entry = dict_get<string>(type_map, name.name)
+        let entry = type_map.get(sym(name.name))
         if !isnull(entry) {
           te.kind = Named(sym(entry!.value), args)
         }
@@ -929,13 +929,13 @@ forge desugar {
 
   // ---- Type param substitution in blocks/stmts/exprs ----
 
-  func substitute_type_params_in_block(block: Block, type_map: Dict<string>) {
+  func substitute_type_params_in_block(block: Block, type_map: Dict<Sym, string>) {
     for stmt in block.bs_children() {
       substitute_type_params_in_stmt(stmt, type_map)
     }
   }
 
-  func substitute_type_params_in_stmt(stmt: Stmt, type_map: Dict<string>) {
+  func substitute_type_params_in_stmt(stmt: Stmt, type_map: Dict<Sym, string>) {
     match stmt.kind {
       ExprStmt(expr) => {
         substitute_type_params_in_expr(expr, type_map)
@@ -983,7 +983,7 @@ forge desugar {
     }
   }
 
-  func substitute_type_params_in_expr(expr: Expr, type_map: Dict<string>) {
+  func substitute_type_params_in_expr(expr: Expr, type_map: Dict<Sym, string>) {
     match expr.kind {
       Call(func_expr, type_args, args, _) => {
         let mut i: i32 = 0
@@ -1030,18 +1030,18 @@ forge desugar {
   }
 
   // === Rich type parameter substitution (map[string]TypeExpr) ===
-  // Used by DesugarDestructors: when replacing type param P with Dict<V>,
+  // Used by DesugarDestructors: when replacing type param P with Dict<Sym, V>,
   // === Rich type parameter substitution (map[string]TypeExpr) ===
-  // Used by DesugarDestructors: when replacing type param P with Dict<V>,
+  // Used by DesugarDestructors: when replacing type param P with Dict<Sym, V>,
   // the replacement carries Args so generic instantiations are preserved.
 
-  func substitute_type_params_rich_in_block(block: Block, type_map: Dict<TypeExpr>) {
+  func substitute_type_params_rich_in_block(block: Block, type_map: Dict<Sym, TypeExpr>) {
     for stmt in block.bs_children() {
       substitute_type_params_rich_in_stmt(stmt, type_map)
     }
   }
 
-  func substitute_type_params_rich_in_stmt(stmt: Stmt, type_map: Dict<TypeExpr>) {
+  func substitute_type_params_rich_in_stmt(stmt: Stmt, type_map: Dict<Sym, TypeExpr>) {
     match stmt.kind {
       ExprStmt(expr) => {
         substitute_type_params_rich_in_expr(expr, type_map)
@@ -1090,7 +1090,7 @@ forge desugar {
     }
   }
 
-  func substitute_type_params_rich_in_expr(expr: Expr, type_map: Dict<TypeExpr>) {
+  func substitute_type_params_rich_in_expr(expr: Expr, type_map: Dict<Sym, TypeExpr>) {
     match expr.kind {
       Call(func_expr, type_args, args, _) => {
         let mut i: i32 = 0
@@ -1136,10 +1136,10 @@ forge desugar {
     }
   }
 
-  func substitute_type_params_rich_in_type_expr(te: TypeExpr, type_map: Dict<TypeExpr>) {
+  func substitute_type_params_rich_in_type_expr(te: TypeExpr, type_map: Dict<Sym, TypeExpr>) {
     match te.kind {
       Named(name, args) => {
-        let entry = dict_get<TypeExpr>(type_map, name.name)
+        let entry = type_map.get(sym(name.name))
         if !isnull(entry) {
           // Replace entirely with the rich TypeExpr (which carries Args)
           let replacement = entry!.value
@@ -1167,13 +1167,13 @@ forge desugar {
   // Used by DesugarDestructors to rewrite generic interface method names
   // (e.g. "children") to label-prefixed concrete names (e.g. "fb_children").
 
-  func rename_method_calls_in_block(block: Block, renames: Dict<string>) {
+  func rename_method_calls_in_block(block: Block, renames: Dict<Sym, string>) {
     for stmt in block.bs_children() {
       rename_method_calls_in_stmt(stmt, renames)
     }
   }
 
-  func rename_method_calls_in_stmt(stmt: Stmt, renames: Dict<string>) {
+  func rename_method_calls_in_stmt(stmt: Stmt, renames: Dict<Sym, string>) {
     match stmt.kind {
       ExprStmt(expr) => {
         rename_method_calls_in_expr(expr, renames)
@@ -1222,10 +1222,10 @@ forge desugar {
     }
   }
 
-  func rename_method_calls_in_expr(expr: Expr, renames: Dict<string>) {
+  func rename_method_calls_in_expr(expr: Expr, renames: Dict<Sym, string>) {
     match expr.kind {
       MethodCall(receiver, method, type_args, args, _) => {
-        let entry = dict_get<string>(renames, method.name)
+        let entry = renames.get(sym(method.name))
         if !isnull(entry) {
           expr.kind = MethodCall(receiver, sym(entry!.value), type_args, args, [])
         }

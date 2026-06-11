@@ -58,10 +58,10 @@ forge checker {
   // ---- TypeInfo: registry entry for named types ----
   class TypeInfo {
     type_val: Type
-    fields: Dict<Type>        // field name -> type
+    fields: Dict<Sym, Type>        // field name -> type
     field_order: [string]     // field names in declaration order
-    methods: Dict<Type>       // method name -> func type
-    variants: Dict<VariantInfo>  // variant name -> info (for enums)
+    methods: Dict<Sym, Type>       // method name -> func type
+    variants: Dict<Sym, VariantInfo>  // variant name -> info (for enums)
     type_param_names: [string]
     type_param_constraints: [string]
     implements_list: [string]   // interface names this class implements
@@ -83,15 +83,15 @@ forge checker {
 
   class Scope {
     parent: Scope?
-    vars: Dict<Type>
+    vars: Dict<Sym, Type>
   }
 
   func new_scope(parent: Scope?) -> Scope {
-    return Scope { parent: parent, vars: dict_new<Type>() }
+    return Scope { parent: parent, vars: Dict<Sym, Type>() }
   }
 
   func Scope.lookup(self, name: string) -> Type? {
-    let entry = dict_get<Type>(self.vars, name)
+    let entry = self.vars.get(sym(name))
     if entry != nil {
       return entry!.value
     }
@@ -102,7 +102,7 @@ forge checker {
   }
 
   func Scope.define(self, name: string, t: Type) {
-    dict_set<Type>(self.vars, name, t)
+    self.vars.set(sym(name), t)
   }
 
   // =====================================================================
@@ -110,11 +110,11 @@ forge checker {
   // =====================================================================
 
   class Registry {
-    types: Dict<TypeInfo>
+    types: Dict<Sym, TypeInfo>
   }
 
   func new_registry() -> Registry {
-    return Registry { types: dict_new<TypeInfo>() }
+    return Registry { types: Dict<Sym, TypeInfo>() }
   }
 
   func Registry.register(self, name: string, info: TypeInfo) {
@@ -122,18 +122,18 @@ forge checker {
     // Phase 0 stubs have empty methods/fields, so Phase 1 overwrites are OK.
     let existing = self.lookup(name)
     if existing != nil {
-      let em = dict_keys<Type>(existing!.methods)
-      let ef = dict_keys<Type>(existing!.fields)
+      let em = existing!.methods.keys()
+      let ef = existing!.fields.keys()
       if len(em) > 0 || len(ef) > 0 {
         eprintln(f"FATAL: registry overwrite of fully-registered type '{name}' (had {itoa(len(em) as i64)} methods, {itoa(len(ef) as i64)} fields)")
         os_exit(1)
       }
     }
-    dict_set<TypeInfo>(self.types, name, info)
+    self.types.set(sym(name), info)
   }
 
   func Registry.lookup(self, name: string) -> TypeInfo? {
-    let entry = dict_get<TypeInfo>(self.types, name)
+    let entry = self.types.get(sym(name))
     if entry != nil {
       return entry!.value
     }
@@ -150,8 +150,8 @@ forge checker {
     errors: [string]
     current_func_return: Type?
     current_func_name: string
-    iface_decls: Dict<InterfaceDecl>  // for checkImplements
-    type_var_methods: Dict<Dict<Type>>?  // type var name → (method name → method type)
+    iface_decls: Dict<Sym, InterfaceDecl>  // for checkImplements
+    type_var_methods: Dict<Sym, Dict<Sym, Type>>?  // type var name → (method name → method type)
   }
 
   func new_checker() -> Checker {
@@ -161,7 +161,7 @@ forge checker {
       errors: [],
       current_func_return: nil,
       current_func_name: "",
-      iface_decls: dict_new<InterfaceDecl>(),
+      iface_decls: Dict<Sym, InterfaceDecl>(),
     }
     c.register_builtins()
     return c
@@ -311,10 +311,10 @@ forge checker {
   func Checker.register_primitive_type(self, name: string, t: Type) {
     let info = TypeInfo {
       type_val: t,
-      fields: dict_new<Type>(),
+      fields: Dict<Sym, Type>(),
       field_order: [],
-      methods: dict_new<Type>(),
-      variants: dict_new<VariantInfo>(),
+      methods: Dict<Sym, Type>(),
+      variants: Dict<Sym, VariantInfo>(),
       type_param_names: [],
       type_param_constraints: [],
       implements_list: [],
@@ -682,15 +682,15 @@ forge checker {
   // matchTypeVars matches a concrete type against a pattern type, binding
   // type variables in the pattern to concrete types. Returns false if
   // the match fails.
-  func match_type_vars(pattern: Type, concrete: Type, bindings: Dict<Type>) -> bool {
+  func match_type_vars(pattern: Type, concrete: Type, bindings: Dict<Sym, Type>) -> bool {
     match pattern.kind {
       TypeVar(name) => {
-        let existing = dict_get<Type>(bindings, name)
+        let existing = bindings.get(sym(name))
         if existing != nil {
           // Already bound — check compatibility
           return types_equal(existing!.value, concrete)
         }
-        dict_set<Type>(bindings, name, concrete)
+        bindings.set(sym(name), concrete)
         return true
       }
       Optional(inner_p) => {
@@ -785,10 +785,10 @@ forge checker {
   }
 
   // substituteType replaces type variables with their bindings.
-  func substitute_type(t: Type, bindings: Dict<Type>) -> Type {
+  func substitute_type(t: Type, bindings: Dict<Sym, Type>) -> Type {
     match t.kind {
       TypeVar(name) => {
-        let bound = dict_get<Type>(bindings, name)
+        let bound = bindings.get(sym(name))
         if bound != nil { return bound!.value }
         return t
       }
@@ -834,8 +834,8 @@ forge checker {
   }
 
   // inferTypeArgs infers type arguments from call arguments for a generic function.
-  func Checker.infer_type_args(self, func_type: Type, arg_types: [Type]) -> Dict<Type> {
-    let bindings = dict_new<Type>()
+  func Checker.infer_type_args(self, func_type: Type, arg_types: [Type]) -> Dict<Sym, Type> {
+    let bindings = Dict<Sym, Type>()
     match func_type.kind {
       Func(params, _, _) => {
         let mut limit = len(params)
@@ -919,19 +919,19 @@ forge checker {
         return TypeExpr { kind: Named(sym(name), []), span: zero_span }
       }
       Bool => {
-        return TypeExpr { kind: Named(sym("bool"), []), span: zero_span }
+        return TypeExpr { kind: Named(`bool`, []), span: zero_span }
       }
       String => {
-        return TypeExpr { kind: Named(sym("string"), []), span: zero_span }
+        return TypeExpr { kind: Named(`string`, []), span: zero_span }
       }
       Void | Nil => {
         return TypeExpr { kind: Unit, span: zero_span }
       }
       Any => {
-        return TypeExpr { kind: Named(sym("any"), []), span: zero_span }
+        return TypeExpr { kind: Named(`any`, []), span: zero_span }
       }
       Error => {
-        return TypeExpr { kind: Named(sym("error"), []), span: zero_span }
+        return TypeExpr { kind: Named(`error`, []), span: zero_span }
       }
       Lock => {
         return TypeExpr { kind: Lock, span: zero_span }
@@ -1117,13 +1117,13 @@ forge checker {
     if info != nil {
       // If generic type with args, substitute
       if len(args) > 0 && len(info!.type_param_names) > 0 {
-        let bindings = dict_new<Type>()
+        let bindings = Dict<Sym, Type>()
         let mut limit = len(info!.type_param_names)
         if len(args) < limit { limit = len(args) }
         let mut resolved_args: [Type] = []
         for i in range(0, limit) {
           let resolved = self.resolve_type_expr(args[i])
-          dict_set<Type>(bindings, info!.type_param_names[i], resolved)
+          bindings.set(sym(info!.type_param_names[i]), resolved)
           append(resolved_args, resolved)
         }
         // Return a NEW type with type_args populated (like Go compiler)
@@ -1205,10 +1205,10 @@ forge checker {
         let iname = sym_to_string(iface.name!)
         let stub = TypeInfo {
           type_val: make_interface_type(iname),
-          fields: dict_new<Type>(),
+          fields: Dict<Sym, Type>(),
           field_order: [],
-          methods: dict_new<Type>(),
-          variants: dict_new<VariantInfo>(),
+          methods: Dict<Sym, Type>(),
+          variants: Dict<Sym, VariantInfo>(),
           type_param_names: [],
           type_param_constraints: [],
           implements_list: [],
@@ -1222,10 +1222,10 @@ forge checker {
         let sname = sym_to_string(s.name!)
         let stub = TypeInfo {
           type_val: make_struct_type(sname),
-          fields: dict_new<Type>(),
+          fields: Dict<Sym, Type>(),
           field_order: [],
-          methods: dict_new<Type>(),
-          variants: dict_new<VariantInfo>(),
+          methods: Dict<Sym, Type>(),
+          variants: Dict<Sym, VariantInfo>(),
           type_param_names: [],
           type_param_constraints: [],
           implements_list: [],
@@ -1239,10 +1239,10 @@ forge checker {
         let cname = sym_to_string(c.name!)
         let stub = TypeInfo {
           type_val: make_class_type(cname),
-          fields: dict_new<Type>(),
+          fields: Dict<Sym, Type>(),
           field_order: [],
-          methods: dict_new<Type>(),
-          variants: dict_new<VariantInfo>(),
+          methods: Dict<Sym, Type>(),
+          variants: Dict<Sym, VariantInfo>(),
           type_param_names: [],
           type_param_constraints: [],
           implements_list: [],
@@ -1256,10 +1256,10 @@ forge checker {
         let ename = sym_to_string(e.name!)
         let stub = TypeInfo {
           type_val: make_enum_type(ename),
-          fields: dict_new<Type>(),
+          fields: Dict<Sym, Type>(),
           field_order: [],
-          methods: dict_new<Type>(),
-          variants: dict_new<VariantInfo>(),
+          methods: Dict<Sym, Type>(),
+          variants: Dict<Sym, VariantInfo>(),
           type_param_names: [],
           type_param_constraints: [],
           implements_list: [],
@@ -1309,10 +1309,10 @@ forge checker {
         let aname = sym_to_string(a.name!)
         let info = TypeInfo {
           type_val: t,
-          fields: dict_new<Type>(),
+          fields: Dict<Sym, Type>(),
           field_order: [],
-          methods: dict_new<Type>(),
-          variants: dict_new<VariantInfo>(),
+          methods: Dict<Sym, Type>(),
+          variants: Dict<Sym, VariantInfo>(),
           type_param_names: [],
           type_param_constraints: [],
           implements_list: [],
@@ -1352,14 +1352,14 @@ forge checker {
     let iname = sym_to_string(iface.name!)
 
     // Save for checkImplements
-    dict_set<InterfaceDecl>(self.iface_decls, iname, iface)
+    self.iface_decls.set(sym(iname), iface)
 
     let info = TypeInfo {
       type_val: make_interface_type(iname),
-      fields: dict_new<Type>(),
+      fields: Dict<Sym, Type>(),
       field_order: [],
-      methods: dict_new<Type>(),
-      variants: dict_new<VariantInfo>(),
+      methods: Dict<Sym, Type>(),
+      variants: Dict<Sym, VariantInfo>(),
       type_param_names: [],
       type_param_constraints: [],
       implements_list: [],
@@ -1394,7 +1394,7 @@ forge checker {
       if m.name != nil {
         let mn = sym_to_string(m.name!)
         let rn = if m.receiver_type != nil { sym_to_string(m.receiver_type!) } else { "" }
-        dict_set<Type>(info.methods, mn, ft)
+        info.methods.set(sym(mn), ft)
       }
     }
 
@@ -1407,10 +1407,10 @@ forge checker {
     let sname = sym_to_string(s.name!)
     let info = TypeInfo {
       type_val: make_struct_type(sname),
-      fields: dict_new<Type>(),
+      fields: Dict<Sym, Type>(),
       field_order: [],
-      methods: dict_new<Type>(),
-      variants: dict_new<VariantInfo>(),
+      methods: Dict<Sym, Type>(),
+      variants: Dict<Sym, VariantInfo>(),
       type_param_names: [],
       type_param_constraints: [],
       implements_list: [],
@@ -1440,7 +1440,7 @@ forge checker {
         if f.type_expr != nil {
           ft = self.resolve_type_expr(f.type_expr!)
         }
-        dict_set<Type>(info.fields, fname, ft)
+        info.fields.set(sym(fname), ft)
         append(info.field_order, fname)
         // Check default expression
         if f.default_value != nil {
@@ -1458,10 +1458,10 @@ forge checker {
     let cname = sym_to_string(cls.name!)
     let info = TypeInfo {
       type_val: make_class_type(cname),
-      fields: dict_new<Type>(),
+      fields: Dict<Sym, Type>(),
       field_order: [],
-      methods: dict_new<Type>(),
-      variants: dict_new<VariantInfo>(),
+      methods: Dict<Sym, Type>(),
+      variants: Dict<Sym, VariantInfo>(),
       type_param_names: [],
       type_param_constraints: [],
       implements_list: [],
@@ -1492,7 +1492,7 @@ forge checker {
         if f.type_expr != nil {
           ft = self.resolve_type_expr(f.type_expr!)
         }
-        dict_set<Type>(info.fields, fname, ft)
+        info.fields.set(sym(fname), ft)
         append(info.field_order, fname)
         if f.default_value != nil {
           self.check_expr(f.default_value!)
@@ -1505,7 +1505,7 @@ forge checker {
     for m in cmethods {
       if m.name != nil {
         let ft = self.func_decl_to_type(m)
-        dict_set<Type>(info.methods, sym_to_string(m.name!), ft)
+        info.methods.set(sym(sym_to_string(m.name!)), ft)
       }
     }
 
@@ -1560,10 +1560,10 @@ forge checker {
     let enum_type = make_enum_type(ename)
     let info = TypeInfo {
       type_val: enum_type,
-      fields: dict_new<Type>(),
+      fields: Dict<Sym, Type>(),
       field_order: [],
-      methods: dict_new<Type>(),
-      variants: dict_new<VariantInfo>(),
+      methods: Dict<Sym, Type>(),
+      variants: Dict<Sym, VariantInfo>(),
       type_param_names: [],
       type_param_constraints: [],
       implements_list: [],
@@ -1595,7 +1595,7 @@ forge checker {
         append(param_types, ft)
       }
 
-      dict_set<VariantInfo>(info.variants, vname, vi)
+      info.variants.set(sym(vname), vi)
 
       // Register variant as constructor/value in scope
       if len(evfs) == 0 {
@@ -1629,8 +1629,8 @@ forge checker {
     if iface_info == nil { return }
 
     // Build substitution map from interface type params to impl type args
-    let iface_decl_entry = dict_get<InterfaceDecl>(self.iface_decls, iname)
-    let subst = dict_new<Type>()
+    let iface_decl_entry = self.iface_decls.get(sym(iname))
+    let subst = Dict<Sym, Type>()
     if iface_decl_entry != nil {
       let iface_decl = iface_decl_entry!.value
       let itp = iface_decl.itp_children()
@@ -1639,7 +1639,7 @@ forge checker {
       if len(impl_args) < limit { limit = len(impl_args) }
       for i in range(0, limit) {
         if itp[i].name != nil {
-          dict_set<Type>(subst, sym_to_string(itp[i].name!), self.resolve_type_expr(impl_args[i]))
+          subst.set(sym(sym_to_string(itp[i].name!)), self.resolve_type_expr(impl_args[i]))
         }
       }
     }
@@ -1651,14 +1651,14 @@ forge checker {
       let method_name = sym_to_string(m.method_name!)
 
       // Find interface method type
-      let iface_method = dict_get<Type>(iface_info!.methods, method_name)
+      let iface_method = iface_info!.methods.get(sym(method_name))
       if iface_method == nil { continue }
 
       // Determine which concrete class this maps to
       let mut class_name = ""
       if m.type_param != nil {
         let tp_name = sym_to_string(m.type_param!)
-        let bound = dict_get<Type>(subst, tp_name)
+        let bound = subst.get(sym(tp_name))
         if bound != nil {
           class_name = type_name(bound!.value)
         }
@@ -1674,9 +1674,9 @@ forge checker {
       let substituted = substitute_type(iface_method!.value, subst)
 
       // Register the method on the class (don't override existing)
-      let existing = dict_get<Type>(class_info!.methods, method_name)
+      let existing = class_info!.methods.get(sym(method_name))
       if existing == nil {
-        dict_set<Type>(class_info!.methods, method_name, substituted)
+        class_info!.methods.set(sym(method_name), substituted)
       }
 
       // For field-bind mappings, also register the label-prefixed name
@@ -1688,15 +1688,15 @@ forge checker {
               if str_starts_with(method_name, "set_") {
                 // Setter: set_next → set_from_next
                 let prefixed = "set_" + target
-                let existing2 = dict_get<Type>(class_info!.methods, prefixed)
+                let existing2 = class_info!.methods.get(sym(prefixed))
                 if existing2 == nil {
-                  dict_set<Type>(class_info!.methods, prefixed, substituted)
+                  class_info!.methods.set(sym(prefixed), substituted)
                 }
               } else {
                 // Getter: next → from_next
-                let existing2 = dict_get<Type>(class_info!.methods, target)
+                let existing2 = class_info!.methods.get(sym(target))
                 if existing2 == nil {
-                  dict_set<Type>(class_info!.methods, target, substituted)
+                  class_info!.methods.set(sym(target), substituted)
                 }
               }
             }
@@ -1705,7 +1705,7 @@ forge checker {
         Inline => {
           if m.inline_func != nil {
             let ft = self.func_decl_to_type(m.inline_func!)
-            dict_set<Type>(class_info!.methods, method_name, ft)
+            class_info!.methods.set(sym(method_name), ft)
           }
         }
         _ => {}
@@ -1726,7 +1726,7 @@ forge checker {
       // Register in methods dict AND in registry for the type
       let type_info = self.registry.lookup(rname)
       if type_info != nil {
-        dict_set<Type>(type_info!.methods, fname, ft)
+        type_info!.methods.set(sym(fname), ft)
       }
       // Also define as "T.method" in scope for lookup
       self.scope.define(key, ft)
@@ -1743,12 +1743,12 @@ forge checker {
   // Given `where DoublyLinked<P, C>`, looks up the DoublyLinked interface and maps
   // typed methods (func P.children, func C.label, etc.) to the actual type var names.
   func Checker.grant_relational_methods(self, iface_name: string, type_args: [TypeExpr]) {
-    let iface_entry = dict_get<InterfaceDecl>(self.iface_decls, iface_name)
+    let iface_entry = self.iface_decls.get(sym(iface_name))
     let iface = iface_entry!.value
 
     // Build interface type param name → where clause type arg name mapping
     let itp = iface.itp_children()
-    let param_map = dict_new<string>()  // iface param name → func type var name
+    let param_map = Dict<Sym, string>()  // iface param name → func type var name
     let mut i = 0
     while i < len(itp) && i < len(type_args) {
       if itp[i].name != nil {
@@ -1756,7 +1756,7 @@ forge checker {
           Named(name, _) => {
             let src_name = sym_to_string(itp[i].name!)
             let dst_name = sym_to_string(name)
-            dict_set<string>(param_map, src_name, dst_name)
+            param_map.set(sym(src_name), dst_name)
           }
         }
       }
@@ -1764,7 +1764,7 @@ forge checker {
     }
 
     if self.type_var_methods == nil {
-      self.type_var_methods = dict_new<Dict<Type>>()
+      self.type_var_methods = Dict<Sym, Dict<Sym, Type>>()
     }
 
     let ifuncs = iface.im_children()   // actual FuncDecl methods
@@ -1773,28 +1773,28 @@ forge checker {
       let rtype = if m.receiver_type != nil { sym_to_string(m.receiver_type!) } else { "<no-recv>" }
       if m.receiver_type == nil { continue }
       let recv_param = sym_to_string(m.receiver_type!)
-      let mapping = dict_get<string>(param_map, recv_param)
+      let mapping = param_map.get(sym(recv_param))
       if mapping == nil { continue }
       let type_var_name = mapping!.value
 
-      let methods_for_tv = dict_get<Dict<Type>>(self.type_var_methods!, type_var_name)
-      let method_dict: Dict<Type> = if methods_for_tv != nil {
+      let methods_for_tv = self.type_var_methods!.get(sym(type_var_name))
+      let method_dict: Dict<Sym, Type> = if methods_for_tv != nil {
         methods_for_tv!.value
       } else {
-        let d = dict_new<Type>()
-        dict_set<Dict<Type>>(self.type_var_methods!, type_var_name, d)
+        let d = Dict<Sym, Type>()
+        self.type_var_methods!.set(sym(type_var_name), d)
         d
       }
 
       if m.name != nil {
         // Build method type with substituted names
         let ft = self.func_decl_to_type_with_subst(m, param_map)
-        dict_set<Type>(method_dict, sym_to_string(m.name!), ft)
+        method_dict.set(sym(sym_to_string(m.name!)), ft)
       }
     }
   }
 
-  func Checker.func_decl_to_type_with_subst(self, f: FuncDecl, subst: Dict<string>) -> Type {
+  func Checker.func_decl_to_type_with_subst(self, f: FuncDecl, subst: Dict<Sym, string>) -> Type {
     let mut params: [Type] = []
     let fp = f.param_children()
     for p in fp {
@@ -1813,10 +1813,10 @@ forge checker {
     return make_func_type(params, ret, [])
   }
 
-  func subst_type_var_names(t: Type, subst: Dict<string>) -> Type {
+  func subst_type_var_names(t: Type, subst: Dict<Sym, string>) -> Type {
     match t.kind {
       TypeVar(name) => {
-        let mapped = dict_get<string>(subst, name)
+        let mapped = subst.get(sym(name))
         if mapped != nil {
           return make_typevar_type(mapped!.value)
         }
@@ -2277,7 +2277,7 @@ forge checker {
         if ename != "" {
           let enum_info = self.registry.lookup(ename)
           if enum_info != nil {
-            let vi = dict_get<VariantInfo>(enum_info!.variants, vname)
+            let vi = enum_info!.variants.get(sym(vname))
             if vi != nil {
               for i in range(0, len(bindings)) {
                 if i < len(vi!.value.fields) {
@@ -2601,7 +2601,7 @@ forge checker {
           // Look up expected field type
           if f.name != nil {
             let fname = sym_to_string(f.name!)
-            let field_entry = dict_get<Type>(info!.fields, fname)
+            let field_entry = info!.fields.get(sym(fname))
             if field_entry != nil {
               let field_type = field_entry!.value
               // Propagate expected type to empty list/map/nil literals
@@ -2729,13 +2729,13 @@ forge checker {
                 let mut limit = len(tpnames)
                 if len(type_args) < limit { limit = len(type_args) }
                 for i in range(0, limit) {
-                  dict_set<Type>(bindings, tpnames[i], self.resolve_type_expr(type_args[i]))
+                  bindings.set(sym(tpnames[i]), self.resolve_type_expr(type_args[i]))
                 }
                 // Store inferred type args on the call expression for the lowerer
                 if len(type_args) == 0 {
                   let mut inferred: [TypeExpr] = []
                   for tpn in tpnames {
-                    let bound = dict_get<Type>(bindings, tpn)
+                    let bound = bindings.get(sym(tpn))
                     if bound != nil {
                       append(inferred, type_to_type_expr(bound!.value))
                     }
@@ -2924,25 +2924,7 @@ forge checker {
       return make_bool_type()
     }
 
-    // Dict builtins
-    if name == "dict_new" {
-      let info = self.registry.lookup("Dict")
-      if info != nil { return info!.type_val }
-      eprintln("checker: stdlib type Dict not found")
-      os_exit(1)
-      return make_error_type()
-    }
-    if name == "dict_set" { return make_void_type() }
-    if name == "dict_get" {
-      let info = self.registry.lookup("DictEntry")
-      if info != nil { return make_optional_type(info!.type_val) }
-      eprintln("checker: stdlib type DictEntry not found")
-      os_exit(1)
-      return make_error_type()
-    }
-    if name == "dict_has" { return make_bool_type() }
-    if name == "dict_remove" { return make_bool_type() }
-    if name == "dict_keys" { return make_sequence_type(make_string_type()) }
+    // Dict builtins removed — now methods on Dict<K,V>
 
     // ArrayList/DLL builtins
     if name == "array_append" || name == "array_remove" || name == "dll_append" || name == "dll_remove" {
@@ -2968,17 +2950,17 @@ forge checker {
 
   // build_type_arg_subst creates a substitution map from a type's type_args
   // and the class/struct's type_param_names. Returns nil if no substitution needed.
-  func Checker.build_type_arg_subst(self, recv_type: Type) -> Dict<Type>? {
+  func Checker.build_type_arg_subst(self, recv_type: Type) -> Dict<Sym, Type>? {
     if len(recv_type.type_args) == 0 { return nil }
     let tname = type_name(recv_type)
     if tname == "" { return nil }
     let info = self.registry.lookup(tname)
     if info == nil || len(info!.type_param_names) == 0 { return nil }
-    let subst = dict_new<Type>()
+    let subst = Dict<Sym, Type>()
     let mut limit = len(info!.type_param_names)
     if len(recv_type.type_args) < limit { limit = len(recv_type.type_args) }
     for i in range(0, limit) {
-      dict_set<Type>(subst, info!.type_param_names[i], recv_type.type_args[i])
+      subst.set(sym(info!.type_param_names[i]), recv_type.type_args[i])
     }
     return subst
   }
@@ -3016,7 +2998,7 @@ forge checker {
     if tname != "" {
       let info = self.registry.lookup(tname)
       if info != nil {
-        let mt = dict_get<Type>(info!.methods, method_str)
+        let mt = info!.methods.get(sym(method_str))
         if mt != nil {
           match mt!.value.kind {
             Func(params, ret, tpnames) => {
@@ -3026,7 +3008,7 @@ forge checker {
                 if len(type_args) == 0 {
                   let mut inferred: [TypeExpr] = []
                   for tpn in tpnames {
-                    let bound = dict_get<Type>(bindings, tpn)
+                    let bound = bindings.get(sym(tpn))
                     if bound != nil {
                       append(inferred, type_to_type_expr(bound!.value))
                     }
@@ -3067,7 +3049,7 @@ forge checker {
         if inner_name != "" {
           let info = self.registry.lookup(inner_name)
           if info != nil {
-            let mt = dict_get<Type>(info!.methods, method_str)
+            let mt = info!.methods.get(sym(method_str))
             if mt != nil {
               match mt!.value.kind {
                 Func(_, ret, _) => { return ret }
@@ -3087,9 +3069,9 @@ forge checker {
     match recv_type.kind {
       TypeVar(tv_name) => {
         if self.type_var_methods != nil {
-          let tv_methods = dict_get<Dict<Type>>(self.type_var_methods!, tv_name)
+          let tv_methods = self.type_var_methods!.get(sym(tv_name))
           if tv_methods != nil {
-            let meth = dict_get<Type>(tv_methods!.value, method_str)
+            let meth = tv_methods!.value.get(sym(method_str))
             if meth != nil {
               match meth!.value.kind {
                 Func(params, ret, _) => { return ret }
@@ -3190,14 +3172,14 @@ forge checker {
       let info = self.registry.lookup(tname)
       if info != nil {
         // Check fields first
-        let ft = dict_get<Type>(info!.fields, field_str)
+        let ft = info!.fields.get(sym(field_str))
         if ft != nil {
           let subst = self.build_type_arg_subst(recv_type)
           if subst != nil { return substitute_type(ft!.value, subst!) }
           return ft!.value
         }
         // Then check methods (for method-as-value)
-        let mt = dict_get<Type>(info!.methods, field_str)
+        let mt = info!.methods.get(sym(field_str))
         if mt != nil {
           let subst = self.build_type_arg_subst(recv_type)
           if subst != nil { return substitute_type(mt!.value, subst!) }
@@ -4036,9 +4018,9 @@ forge checker {
     let info = self.registry.lookup(tname)
     if info == nil { return }
 
-    let ft = dict_get<Type>(info!.fields, field_str)
+    let ft = info!.fields.get(sym(field_str))
     if ft != nil { return }
-    let mt = dict_get<Type>(info!.methods, field_str)
+    let mt = info!.methods.get(sym(field_str))
     if mt != nil { return }
 
     // Check tuple numeric access
@@ -4077,7 +4059,7 @@ forge checker {
     let info = self.registry.lookup(tname)
     if info == nil { return }
 
-    let mt = dict_get<Type>(info!.methods, method_str)
+    let mt = info!.methods.get(sym(method_str))
     if mt != nil { return }
 
     // Check "T.method" in scope

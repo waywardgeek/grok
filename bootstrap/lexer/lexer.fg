@@ -48,79 +48,79 @@ forge lexer {
 
   // ---- Keyword lookup (Dict-based, O(1) via hash) ----
 
-  func init_keywords() -> Dict<TokenKind> {
-    let d = dict_new<TokenKind>()
-    dict_set<TokenKind>(d, "forge", KForge)
-    dict_set<TokenKind>(d, "func", KFunc)
-    dict_set<TokenKind>(d, "class", KClass)
-    dict_set<TokenKind>(d, "struct", KStruct)
-    dict_set<TokenKind>(d, "enum", KEnum)
-    dict_set<TokenKind>(d, "interface", KInterface)
-    dict_set<TokenKind>(d, "relation", KRelation)
-    dict_set<TokenKind>(d, "destructor", KDestructor)
-    dict_set<TokenKind>(d, "embed", KEmbed)
+  func init_keywords() -> Dict<Sym, TokenKind> {
+    let d = Dict<Sym, TokenKind>()
+    d.set(`forge`, KForge)
+    d.set(`func`, KFunc)
+    d.set(`class`, KClass)
+    d.set(`struct`, KStruct)
+    d.set(`enum`, KEnum)
+    d.set(`interface`, KInterface)
+    d.set(`relation`, KRelation)
+    d.set(`destructor`, KDestructor)
+    d.set(`embed`, KEmbed)
     // "field" is contextual — in annot_keywords only
-    dict_set<TokenKind>(d, "import", KImport)
+    d.set(`import`, KImport)
     // "implements" is contextual — in annot_keywords only
-    dict_set<TokenKind>(d, "impl", KImpl)
-    dict_set<TokenKind>(d, "as", KAs)
-    dict_set<TokenKind>(d, "is", KIs)
-    dict_set<TokenKind>(d, "type", KType)
-    dict_set<TokenKind>(d, "where", KWhere)
-    dict_set<TokenKind>(d, "owns", KOwns)
-    dict_set<TokenKind>(d, "refs", KRefs)
-    dict_set<TokenKind>(d, "mut", KMut)
-    dict_set<TokenKind>(d, "self", KSelf)
-    dict_set<TokenKind>(d, "from", KFrom)
-    dict_set<TokenKind>(d, "true", KTrue)
-    dict_set<TokenKind>(d, "false", KFalse)
-    dict_set<TokenKind>(d, "nil", KNil)
-    dict_set<TokenKind>(d, "null", KNil)
-    dict_set<TokenKind>(d, "let", KLet)
-    dict_set<TokenKind>(d, "if", KIf)
-    dict_set<TokenKind>(d, "else", KElse)
-    dict_set<TokenKind>(d, "for", KFor)
-    dict_set<TokenKind>(d, "in", KIn)
-    dict_set<TokenKind>(d, "while", KWhile)
-    dict_set<TokenKind>(d, "match", KMatch)
-    dict_set<TokenKind>(d, "return", KReturn)
-    dict_set<TokenKind>(d, "break", KBreak)
-    dict_set<TokenKind>(d, "continue", KContinue)
-    dict_set<TokenKind>(d, "cascade", KCascade)
-    dict_set<TokenKind>(d, "spawn", KSpawn)
-    dict_set<TokenKind>(d, "select", KSelect)
-    dict_set<TokenKind>(d, "case", KCase)
+    d.set(`impl`, KImpl)
+    d.set(`as`, KAs)
+    d.set(`is`, KIs)
+    d.set(`type`, KType)
+    d.set(`where`, KWhere)
+    d.set(`owns`, KOwns)
+    d.set(`refs`, KRefs)
+    d.set(`mut`, KMut)
+    d.set(`self`, KSelf)
+    d.set(`from`, KFrom)
+    d.set(`true`, KTrue)
+    d.set(`false`, KFalse)
+    d.set(`nil`, KNil)
+    d.set(`null`, KNil)
+    d.set(`let`, KLet)
+    d.set(`if`, KIf)
+    d.set(`else`, KElse)
+    d.set(`for`, KFor)
+    d.set(`in`, KIn)
+    d.set(`while`, KWhile)
+    d.set(`match`, KMatch)
+    d.set(`return`, KReturn)
+    d.set(`break`, KBreak)
+    d.set(`continue`, KContinue)
+    d.set(`cascade`, KCascade)
+    d.set(`spawn`, KSpawn)
+    d.set(`select`, KSelect)
+    d.set(`case`, KCase)
     // "lock" is contextual — in annot_keywords only
-    dict_set<TokenKind>(d, "yield", KYield)
-    dict_set<TokenKind>(d, "pub", KPub)
+    d.set(`yield`, KYield)
+    d.set(`pub`, KPub)
     return d
   }
 
-  func init_annot_keywords() -> Dict<TokenKind> {
-    let d = dict_new<TokenKind>()
-    dict_set<TokenKind>(d, "why", AWhy)
-    dict_set<TokenKind>(d, "doc", ADoc)
-    dict_set<TokenKind>(d, "invariant", AInvariant)
-    dict_set<TokenKind>(d, "requires", ARequires)
-    dict_set<TokenKind>(d, "ensures", AEnsures)
-    dict_set<TokenKind>(d, "raises", ARaises)
-    dict_set<TokenKind>(d, "concurrent", AConcurrent)
-    dict_set<TokenKind>(d, "requires_lock", ARequiresLock)
-    dict_set<TokenKind>(d, "excludes_lock", AExcludesLock)
-    dict_set<TokenKind>(d, "guarded_by", AGuardedBy)
-    dict_set<TokenKind>(d, "spawns", ASpawns)
-    dict_set<TokenKind>(d, "pure", APure)
-    dict_set<TokenKind>(d, "source", ASource)
-    dict_set<TokenKind>(d, "fake", AFake)
-    dict_set<TokenKind>(d, "verified_at", AVerifiedAt)
-    dict_set<TokenKind>(d, "field", KField)
-    dict_set<TokenKind>(d, "lock", KLock)
-    dict_set<TokenKind>(d, "implements", KImplements)
+  func init_annot_keywords() -> Dict<Sym, TokenKind> {
+    let d = Dict<Sym, TokenKind>()
+    d.set(`why`, AWhy)
+    d.set(`doc`, ADoc)
+    d.set(`invariant`, AInvariant)
+    d.set(`requires`, ARequires)
+    d.set(`ensures`, AEnsures)
+    d.set(`raises`, ARaises)
+    d.set(`concurrent`, AConcurrent)
+    d.set(`requires_lock`, ARequiresLock)
+    d.set(`excludes_lock`, AExcludesLock)
+    d.set(`guarded_by`, AGuardedBy)
+    d.set(`spawns`, ASpawns)
+    d.set(`pure`, APure)
+    d.set(`source`, ASource)
+    d.set(`fake`, AFake)
+    d.set(`verified_at`, AVerifiedAt)
+    d.set(`field`, KField)
+    d.set(`lock`, KLock)
+    d.set(`implements`, KImplements)
     return d
   }
 
   func lookup_keyword(lex: Lexer, text: string) -> TokenKind? {
-    let entry = dict_get<TokenKind>(lex.keywords!, text)
+    let entry = lex.keywords!.get(sym(text))
     if isnull(entry) {
       return null
     }
@@ -128,7 +128,7 @@ forge lexer {
   }
 
   func lookup_annot_keyword(lex: Lexer, text: string) -> TokenKind? {
-    let entry = dict_get<TokenKind>(lex.annot_keywords!, text)
+    let entry = lex.annot_keywords!.get(sym(text))
     if isnull(entry) {
       return null
     }
@@ -155,8 +155,8 @@ forge lexer {
     line: i32 = 1
     column: i32 = 1
     peeked_token: Token?
-    keywords: Dict<TokenKind>?
-    annot_keywords: Dict<TokenKind>?
+    keywords: Dict<Sym, TokenKind>?
+    annot_keywords: Dict<Sym, TokenKind>?
     bracket_depth: i32 = 0
   }
   relation ArrayList Lexer:lc owns [Comment:lc]

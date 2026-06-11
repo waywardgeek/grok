@@ -3011,7 +3011,7 @@ func (l *Lowerer) lowerCall(expr *ast.Expr) LValue {
 		}
 		return l.emitTemp(LExpr{
 			Kind: LExprClassAlloc,
-			Type: &LType{Kind: LTyClassHandle, Name: funcName, IsExported: l.exported[funcName]},
+			Type: &LType{Kind: LTyClassHandle, Name: funcName, TypeArgs: typeArgs, IsExported: l.exported[funcName]},
 			Data: &LClassAllocData{Class: funcName, Fields: fieldInits, TypeArgs: typeArgs},
 		})
 	}

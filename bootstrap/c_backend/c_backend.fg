@@ -8,13 +8,13 @@ class CGen {
   prog: LProgram?
   buf: StringBuilder?
   indent: i32
-  temp_used: Dict<bool>?
-  temp_types: Dict<LType?>?     // resolved types for temps
-  var_types: Dict<LType?>?      // resolved types for variables
-  slice_types: Dict<string>?    // cType(elem) → typedef name
-  opt_types: Dict<string>?      // cType(elem) → typedef name
-  result_types: Dict<string>?   // cType(elem) → typedef name
-  chan_types: Dict<string>?      // cType(elem) → suffix name
+  temp_used: Dict<Sym, bool>?
+  temp_types: Dict<Sym, LType?>?     // resolved types for temps
+  var_types: Dict<Sym, LType?>?      // resolved types for variables
+  slice_types: Dict<Sym, string>?    // cType(elem) → typedef name
+  opt_types: Dict<Sym, string>?      // cType(elem) → typedef name
+  result_types: Dict<Sym, string>?   // cType(elem) → typedef name
+  chan_types: Dict<Sym, string>?      // cType(elem) → suffix name
   slice_count: i32
   opt_count: i32
   result_count: i32
@@ -30,12 +30,12 @@ class CGen {
   // Spawn support
   spawn_id: i32
   spawn_funcs: [CSpawnFunc]
-  spawn_captures: Dict<bool>?    // variables captured by current spawn block
+  spawn_captures: Dict<Sym, bool>?    // variables captured by current spawn block
 
   // Interface vtable dispatch
-  iface_by_name: Dict<LInterfaceDecl>?
-  impl_map: Dict<[string]>?      // class name → interfaces it implements
-  func_by_name: Dict<LFuncDecl>?
+  iface_by_name: Dict<Sym, LInterfaceDecl>?
+  impl_map: Dict<Sym, [string]>?      // class name → interfaces it implements
+  func_by_name: Dict<Sym, LFuncDecl>?
 
   // OS builtin helpers needed
   needs_os_args: bool
@@ -43,13 +43,13 @@ class CGen {
   needs_path_join: bool
 
   // Simple enum tracking
-  simple_enums: Dict<bool>?
+  simple_enums: Dict<Sym, bool>?
 
   // Mut param tracking
-  mut_params: Dict<bool>?
+  mut_params: Dict<Sym, bool>?
 
   // Tuple type tracking
-  tuple_types: Dict<string>?    // "field_types_key" → typedef name
+  tuple_types: Dict<Sym, string>?    // "field_types_key" → typedef name
   tuple_count: i32
 }
 
@@ -76,13 +76,13 @@ func new_cgen(prog: LProgram?) -> CGen? {
     prog: prog,
     buf: new_string_builder(),
     indent: 0,
-    temp_used: dict_new<bool>(),
-    temp_types: dict_new<LType?>(),
-    var_types: dict_new<LType?>(),
-    slice_types: dict_new<string>(),
-    opt_types: dict_new<string>(),
-    result_types: dict_new<string>(),
-    chan_types: dict_new<string>(),
+    temp_used: Dict<Sym, bool>(),
+    temp_types: Dict<Sym, LType?>(),
+    var_types: Dict<Sym, LType?>(),
+    slice_types: Dict<Sym, string>(),
+    opt_types: Dict<Sym, string>(),
+    result_types: Dict<Sym, string>(),
+    chan_types: Dict<Sym, string>(),
     slice_count: 0,
     opt_count: 0,
     result_count: 0,
@@ -95,21 +95,21 @@ func new_cgen(prog: LProgram?) -> CGen? {
     spawn_id: 0,
     spawn_funcs: [],
     spawn_captures: null,
-    iface_by_name: dict_new<LInterfaceDecl>(),
-    impl_map: dict_new<[string]>(),
-    func_by_name: dict_new<LFuncDecl>(),
+    iface_by_name: Dict<Sym, LInterfaceDecl>(),
+    impl_map: Dict<Sym, [string]>(),
+    func_by_name: Dict<Sym, LFuncDecl>(),
     needs_os_args: false,
     needs_exec_cmd: false,
     needs_path_join: false,
-    simple_enums: dict_new<bool>(),
-    tuple_types: dict_new<string>(),
+    simple_enums: Dict<Sym, bool>(),
+    tuple_types: Dict<Sym, string>(),
     tuple_count: 0,
   }
   // Build interface lookup
   let ifaces = prog!.interfaces
   let mut i = 0
   while i < len(ifaces) {
-    dict_set<LInterfaceDecl>(g.iface_by_name!, ifaces[i].name, ifaces[i])
+    g.iface_by_name!.set(sym(ifaces[i].name), ifaces[i])
     i = i + 1
   }
   // Build implements map from class declarations
@@ -117,7 +117,7 @@ func new_cgen(prog: LProgram?) -> CGen? {
   i = 0
   while i < len(classes) {
     if len(classes[i].implements) > 0 {
-      dict_set<[string]>(g.impl_map!, classes[i].name, classes[i].implements)
+      g.impl_map!.set(sym(classes[i].name), classes[i].implements)
     }
     i = i + 1
   }
@@ -129,7 +129,7 @@ func new_cgen(prog: LProgram?) -> CGen? {
     if funcs[i].receiver != "" {
       key = f"{funcs[i].receiver}.{funcs[i].name}"
     }
-    dict_set<LFuncDecl>(g.func_by_name!, key, funcs[i])
+    g.func_by_name!.set(sym(key), funcs[i])
     i = i + 1
   }
   return g
@@ -369,7 +369,7 @@ func CGen.c_type(self, t: LType?) -> string {
     TyAny => {
       // Named interface type → boxed struct
       if t!.name != "" {
-        let iface_entry = dict_get<LInterfaceDecl>(self.iface_by_name!, t!.name)
+        let iface_entry = self.iface_by_name!.get(sym(t!.name))
         if !isnull(iface_entry) {
           return t!.name
         }
@@ -385,7 +385,7 @@ func CGen.c_type(self, t: LType?) -> string {
     TyClassHandle => {
       let mut name = t!.name
       if !isnull(self.prog!.class_renames) {
-        let ren = dict_get<string>(self.prog!.class_renames!, name)
+        let ren = self.prog!.class_renames!.get(sym(name))
         if !isnull(ren) {
           name = ren!.value
         }
@@ -493,13 +493,13 @@ func CGen.c_tuple_type(self, t: LType?) -> string {
     i2 = i2 + 1
   }
   let key = fields_key.to_string()
-  let existing = dict_get<string>(self.tuple_types!, key)
+  let existing = self.tuple_types!.get(sym(key))
   if !isnull(existing) {
     return existing!.value
   }
   let name = f"ForgeTuple_{self.tuple_count}"
   self.tuple_count = self.tuple_count + 1
-  dict_set<string>(self.tuple_types!, key, name)
+  self.tuple_types!.set(sym(key), name)
   return name
 }
 
@@ -509,12 +509,12 @@ func CGen.c_tuple_type(self, t: LType?) -> string {
 
 func CGen.slice_type_name(self, elem: LType?) -> string {
   let key = self.c_type(elem)
-  let entry = dict_get<string>(self.slice_types!, key)
+  let entry = self.slice_types!.get(sym(key))
   if !isnull(entry) {
     return entry!.value
   }
   let name = f"ForgeSlice_{sanitize_c_type_name(key)}"
-  dict_set<string>(self.slice_types!, key, name)
+  self.slice_types!.set(sym(key), name)
   return name
 }
 
@@ -523,12 +523,12 @@ func CGen.opt_type_name(self, elem: LType?) -> string {
     return "ForgeOpt_void"
   }
   let key = self.c_type(elem)
-  let entry = dict_get<string>(self.opt_types!, key)
+  let entry = self.opt_types!.get(sym(key))
   if !isnull(entry) {
     return entry!.value
   }
   let name = f"ForgeOpt_{sanitize_c_type_name(key)}"
-  dict_set<string>(self.opt_types!, key, name)
+  self.opt_types!.set(sym(key), name)
   return name
 }
 
@@ -537,23 +537,23 @@ func CGen.result_type_name(self, elem: LType?) -> string {
     return "ForgeResult_void"
   }
   let key = self.c_type(elem)
-  let entry = dict_get<string>(self.result_types!, key)
+  let entry = self.result_types!.get(sym(key))
   if !isnull(entry) {
     return entry!.value
   }
   let name = f"ForgeResult_{sanitize_c_type_name(key)}"
-  dict_set<string>(self.result_types!, key, name)
+  self.result_types!.set(sym(key), name)
   return name
 }
 
 func CGen.chan_suffix(self, elem: LType?) -> string {
   let key = self.c_type(elem)
-  let entry = dict_get<string>(self.chan_types!, key)
+  let entry = self.chan_types!.get(sym(key))
   if !isnull(entry) {
     return entry!.value
   }
   let suffix = sanitize_c_type_name(key)
-  dict_set<string>(self.chan_types!, key, suffix)
+  self.chan_types!.set(sym(key), suffix)
   return suffix
 }
 
@@ -626,8 +626,8 @@ func CGen.contains_type_var(self, t: LType?) -> bool {
 }
 
 func CGen.next_temp(self) -> i32 {
-  let id = 9000 + len(dict_keys<bool>(self.temp_used!))
-  dict_set<bool>(self.temp_used!, f"{id}", true)
+  let id = 9000 + len(self.temp_used!.keys())
+  self.temp_used!.set(sym(f"{id}"), true)
   return id
 }
 
@@ -646,7 +646,7 @@ func CGen.func_name(self, f: LFuncDecl) -> string {
 }
 
 func CGen.c_param_list(self, f: LFuncDecl) -> string {
-  self.mut_params = dict_new<bool>()
+  self.mut_params = Dict<Sym, bool>()
   let sb = new_string_builder()
   let mut count = 0
   // For methods, ensure self is the first parameter
@@ -664,7 +664,7 @@ func CGen.c_param_list(self, f: LFuncDecl) -> string {
     if f.params[i].mutable {
       // Mut param: emit as pointer type
       sb.write(self.c_type(f.params[i].typ) + "* " + c_safe_name(f.params[i].name))
-      dict_set<bool>(self.mut_params!, f.params[i].name, true)
+      self.mut_params!.set(sym(f.params[i].name), true)
     } else {
       sb.write(self.c_field_decl(f.params[i].typ, f.params[i].name))
     }
@@ -696,13 +696,13 @@ func CGen.emit_value(self, v: LValue?) -> string {
         return f"_gen->{name}"
       }
       if !isnull(self.spawn_captures) {
-        let entry = dict_get<bool>(self.spawn_captures!, v!.name)
+        let entry = self.spawn_captures!.get(sym(v!.name))
         if !isnull(entry) {
           return f"(*_ctx->{name})"
         }
       }
       if !isnull(self.mut_params) {
-        let mp = dict_get<bool>(self.mut_params!, v!.name)
+        let mp = self.mut_params!.get(sym(v!.name))
         if !isnull(mp) {
           return f"(*{name})"
         }
@@ -776,7 +776,7 @@ func CGen.emit_value_as_cstr(self, v: LValue?) -> string {
   }
   // For error types, use directly
   if v!.kind is ValTemp {
-    let ty_entry = dict_get<LType?>(self.temp_types!, f"{v!.temp_id}")
+    let ty_entry = self.temp_types!.get(sym(f"{v!.temp_id}"))
     if !isnull(ty_entry) && !isnull(ty_entry!.value) {
       if ty_entry!.value!.kind is TyError {
         return self.emit_value(v)
@@ -789,7 +789,7 @@ func CGen.emit_value_as_cstr(self, v: LValue?) -> string {
   // Also check varTypes — multi-return destructuring creates VarDecls with _tN names
   if v!.kind is ValTemp {
     let var_name = f"_t{v!.temp_id}"
-    let vt_entry = dict_get<LType?>(self.var_types!, var_name)
+    let vt_entry = self.var_types!.get(sym(var_name))
     if !isnull(vt_entry) && !isnull(vt_entry!.value) {
       if vt_entry!.value!.kind is TyError {
         return self.emit_value(v)
@@ -800,7 +800,7 @@ func CGen.emit_value_as_cstr(self, v: LValue?) -> string {
     }
   }
   if v!.kind is ValVar {
-    let ty_entry = dict_get<LType?>(self.var_types!, v!.name)
+    let ty_entry = self.var_types!.get(sym(v!.name))
     if !isnull(ty_entry) && !isnull(ty_entry!.value) {
       if ty_entry!.value!.kind is TyError {
         return self.emit_value(v)
@@ -855,13 +855,13 @@ func CGen.resolve_value_type(self, v: LValue?) -> LType? {
     return v!.typ
   }
   if v!.kind is ValTemp {
-    let entry = dict_get<LType?>(self.temp_types!, f"{v!.temp_id}")
+    let entry = self.temp_types!.get(sym(f"{v!.temp_id}"))
     if !isnull(entry) {
       return entry!.value
     }
   }
   if v!.kind is ValVar {
-    let entry = dict_get<LType?>(self.var_types!, v!.name)
+    let entry = self.var_types!.get(sym(v!.name))
     if !isnull(entry) {
       return entry!.value
     }
@@ -893,13 +893,13 @@ func CGen.infer_lval_type(self, v: LValue?) -> LType? {
       return LType { kind: TyBool, name: "", elem: null, key: null, fields: [], params: [], ret: null, variants: [], type_args: [], bits: 0, is_exported: false }
     }
     ValTemp => {
-      let entry = dict_get<LType?>(self.temp_types!, f"{v!.temp_id}")
+      let entry = self.temp_types!.get(sym(f"{v!.temp_id}"))
       if !isnull(entry) {
         return entry!.value
       }
     }
     ValVar => {
-      let entry = dict_get<LType?>(self.var_types!, v!.name)
+      let entry = self.var_types!.get(sym(v!.name))
       if !isnull(entry) {
         return entry!.value
       }
@@ -969,7 +969,7 @@ func CGen.resolve_field_type(self, owner_type: LType?, field: string) -> LType? 
   }
   let mut name = owner_type!.name
   if !isnull(self.prog!.class_renames) {
-    let ren = dict_get<string>(self.prog!.class_renames!, name)
+    let ren = self.prog!.class_renames!.get(sym(name))
     if !isnull(ren) {
       name = ren!.value
     }
@@ -1051,12 +1051,12 @@ func CGen.printf_spec_and_arg(self, v: LValue?) -> (string, string) {
   let mut t = if !isnull(v) { v!.typ } else { null }
   // Resolve through temp/var types
   if !isnull(v) && v!.kind is ValTemp {
-    let entry = dict_get<LType?>(self.temp_types!, f"{v!.temp_id}")
+    let entry = self.temp_types!.get(sym(f"{v!.temp_id}"))
     if !isnull(entry) && !isnull(entry!.value) {
       t = entry!.value
     }
   } else if !isnull(v) && v!.kind is ValVar {
-    let entry = dict_get<LType?>(self.var_types!, v!.name)
+    let entry = self.var_types!.get(sym(v!.name))
     if !isnull(entry) && !isnull(entry!.value) {
       t = entry!.value
     }
@@ -1585,7 +1585,7 @@ func CGen.emit_expr_str(self, e: LExpr?) -> string {
       let vt = self.resolve_value_type(d.value)
       if !isnull(vt) && vt!.kind is TyTaggedUnion {
         let sn = vt!.name
-        let entry = dict_get<bool>(self.simple_enums!, sn)
+        let entry = self.simple_enums!.get(sym(sn))
         if !isnull(entry) {
           return val
         }
@@ -1718,7 +1718,7 @@ func CGen.emit_method_call_expr(self, e: LExpr?) -> string {
   // Check for interface vtable dispatch
   let recv_type = self.resolve_value_type(d.receiver)
   if !isnull(recv_type) && recv_type!.kind is TyAny && recv_type!.name != "" {
-    let iface_entry = dict_get<LInterfaceDecl>(self.iface_by_name!, recv_type!.name)
+    let iface_entry = self.iface_by_name!.get(sym(recv_type!.name))
     if !isnull(iface_entry) {
       if args_str != "" {
         return f"{recv}._vtable->{d.method}({recv}._data, {args_str})"
@@ -1736,7 +1736,7 @@ func CGen.emit_method_call_expr(self, e: LExpr?) -> string {
     }
   }
   if !isnull(self.prog!.class_renames) {
-    let ren = dict_get<string>(self.prog!.class_renames!, class_name)
+    let ren = self.prog!.class_renames!.get(sym(class_name))
     if !isnull(ren) {
       class_name = ren!.value
     }
@@ -1925,7 +1925,7 @@ func CGen.emit_variant_construct_expr(self, e: LExpr?) -> string {
     enum_name = "Enum"
   }
   // Simple enums
-  let entry = dict_get<bool>(self.simple_enums!, enum_name)
+  let entry = self.simple_enums!.get(sym(enum_name))
   if !isnull(entry) {
     return f"{enum_name}_{d.variant}"
   }
@@ -1999,7 +1999,7 @@ func CGen.is_gen_func_by_name(self, name: string) -> bool {
 }
 
 func CGen.emit_args_boxed(self, func_name: string, args: [LValue?]) -> string {
-  let fn_entry = dict_get<LFuncDecl>(self.func_by_name!, func_name)
+  let fn_entry = self.func_by_name!.get(sym(func_name))
   let sb = new_string_builder()
   let mut i = 0
   while i < len(args) {
@@ -2011,7 +2011,7 @@ func CGen.emit_args_boxed(self, func_name: string, args: [LValue?]) -> string {
     if !isnull(fn_entry) && i < len(fn_entry!.value.params) {
       let pt = fn_entry!.value.params[i].typ
       if !isnull(pt) && pt!.kind is TyAny && pt!.name != "" {
-        let iface_e = dict_get<LInterfaceDecl>(self.iface_by_name!, pt!.name)
+        let iface_e = self.iface_by_name!.get(sym(pt!.name))
         if !isnull(iface_e) {
           let concrete_class = self.resolve_concrete_class(args[i])
           if concrete_class != "" {
@@ -2027,7 +2027,7 @@ func CGen.emit_args_boxed(self, func_name: string, args: [LValue?]) -> string {
 }
 
 func CGen.emit_args_boxed_mut(self, func_name: string, args: [LValue?], mut_args: [bool]) -> string {
-  let fn_entry = dict_get<LFuncDecl>(self.func_by_name!, func_name)
+  let fn_entry = self.func_by_name!.get(sym(func_name))
   let sb = new_string_builder()
   let mut i = 0
   while i < len(args) {
@@ -2042,7 +2042,7 @@ func CGen.emit_args_boxed_mut(self, func_name: string, args: [LValue?], mut_args
       // Check if arg needs boxing (concrete → interface)
       let pt = fn_entry!.value.params[i].typ
       if !isnull(pt) && pt!.kind is TyAny && pt!.name != "" {
-        let iface_e = dict_get<LInterfaceDecl>(self.iface_by_name!, pt!.name)
+        let iface_e = self.iface_by_name!.get(sym(pt!.name))
         if !isnull(iface_e) {
           let concrete_class = self.resolve_concrete_class(args[i])
           if concrete_class != "" {
@@ -2138,11 +2138,11 @@ func CGen.emit_multi_assign(self, names: [string], types: [LType?], expr: LExpr?
     if names[0] != "_" {
       let val_type = self.c_type(elem_type)
       self.line(f"{val_type} {names[0]} = {tmp_name}.value;")
-      dict_set<LType?>(self.var_types!, names[0], elem_type)
+      self.var_types!.set(sym(names[0]), elem_type)
     }
     if names[1] != "_" {
       self.line(f"const char* {names[1]} = {tmp_name}.error;")
-      dict_set<LType?>(self.var_types!, names[1], LType { kind: TyError, name: "", elem: null, key: null, fields: [], params: [], ret: null, variants: [], type_args: [], bits: 0, is_exported: false })
+      self.var_types!.set(sym(names[1]), LType { kind: TyError, name: "", elem: null, key: null, fields: [], params: [], ret: null, variants: [], type_args: [], bits: 0, is_exported: false })
     }
   } else if len(names) == 2 && !isnull(expr) && !isnull(expr!.typ) && expr!.typ!.kind is TyTuple {
     let tmp_name = f"_multi_{self.next_temp()}"
@@ -2159,7 +2159,7 @@ func CGen.emit_multi_assign(self, names: [string], types: [LType?], expr: LExpr?
         }
         self.line(f"{field_type_str} {names[i]} = {tmp_name}._{i};")
         if !isnull(ltyp) {
-          dict_set<LType?>(self.var_types!, names[i], ltyp)
+          self.var_types!.set(sym(names[i]), ltyp)
         }
       }
       i = i + 1
@@ -2198,7 +2198,7 @@ func CGen.emit_stmt(self, s: LStmt?) {
     StTempDef => {
       let d = s!.temp_def!
       let ty = self.infer_expr_type(d.expr)
-      dict_set<LType?>(self.temp_types!, f"{d.id}", ty)
+      self.temp_types!.set(sym(f"{d.id}"), ty)
       if !isnull(ty) && ty!.kind is TyUnit {
         self.line(f"{self.emit_expr_str(d.expr)};")
         return
@@ -2216,7 +2216,7 @@ func CGen.emit_stmt(self, s: LStmt?) {
       }
       let name = c_safe_name(d.name)
       if self.in_generator {
-        dict_set<LType?>(self.var_types!, d.name, d.typ)
+        self.var_types!.set(sym(d.name), d.typ)
         if !isnull(d.init) {
           self.line(f"_gen->{name} = {self.emit_value(d.init)};")
         }
@@ -2235,7 +2235,7 @@ func CGen.emit_stmt(self, s: LStmt?) {
           }
         }
       }
-      dict_set<LType?>(self.var_types!, d.name, var_type)
+      self.var_types!.set(sym(d.name), var_type)
       if !isnull(d.init) {
         let mut init_str = self.emit_value(d.init)
         // Wrap in union constructor if target is union and source isn't
@@ -2267,7 +2267,7 @@ func CGen.emit_stmt(self, s: LStmt?) {
       if self.in_generator {
         target = f"_gen->{target}"
       } else if !isnull(self.spawn_captures) {
-        let entry = dict_get<bool>(self.spawn_captures!, d.target)
+        let entry = self.spawn_captures!.get(sym(d.target))
         if !isnull(entry) {
           target = f"(*_ctx->{target})"
         }
@@ -2370,7 +2370,7 @@ func CGen.emit_stmt(self, s: LStmt?) {
     }
     StExpr => {
       let d = s!.expr_stmt!
-      let ty_entry = dict_get<LType?>(self.temp_types!, f"{d.temp_id}")
+      let ty_entry = self.temp_types!.get(sym(f"{d.temp_id}"))
       if !isnull(ty_entry) && !isnull(ty_entry!.value) && ty_entry!.value!.kind is TyUnit {
         return
       }
@@ -2751,12 +2751,12 @@ func CGen.emit_generator_struct_decl(self, f: LFuncDecl) {
     i = i + 1
   }
   let vars = self.collect_gen_vars(f.body)
-  let seen = dict_new<bool>()
+  let seen = Dict<Sym, bool>()
   i = 0
   while i < len(vars) {
-    let entry = dict_get<bool>(seen, vars[i].name)
+    let entry = seen.get(sym(vars[i].name))
     if isnull(entry) {
-      dict_set<bool>(seen, vars[i].name, true)
+      seen.set(sym(vars[i].name), true)
       self.line(f"{self.c_type(vars[i].typ)} {c_safe_name(vars[i].name)};")
     }
     i = i + 1
@@ -2791,12 +2791,12 @@ func CGen.emit_generator_func_decl(self, f: LFuncDecl) {
     i = i + 1
   }
   let vars = self.collect_gen_vars(f.body)
-  let seen = dict_new<bool>()
+  let seen = Dict<Sym, bool>()
   i = 0
   while i < len(vars) {
-    let entry = dict_get<bool>(seen, vars[i].name)
+    let entry = seen.get(sym(vars[i].name))
     if isnull(entry) {
-      dict_set<bool>(seen, vars[i].name, true)
+      seen.set(sym(vars[i].name), true)
       if !isnull(vars[i].init) && !(vars[i].init!.kind is ValTemp) {
         self.line(f"_gen->{c_safe_name(vars[i].name)} = {self.emit_value(vars[i].init)};")
       } else if isnull(vars[i].init) {
@@ -2866,7 +2866,7 @@ func CGen.infer_expr_type(self, e: LExpr?) -> LType? {
     if !isnull(recv_type) && recv_type!.name != "" {
       let mut type_name = recv_type!.name
       if !isnull(self.prog!.class_renames) {
-        let ren = dict_get<string>(self.prog!.class_renames!, type_name)
+        let ren = self.prog!.class_renames!.get(sym(type_name))
         if !isnull(ren) {
           type_name = ren!.value
         }
@@ -2975,7 +2975,7 @@ func CGen.eq_expr(self, a: LValue?, b: LValue?) -> string {
   }
   if !isnull(t) && t!.kind is TyTaggedUnion {
     let sn = t!.name
-    let entry = dict_get<bool>(self.simple_enums!, sn)
+    let entry = self.simple_enums!.get(sym(sn))
     if !isnull(entry) {
       return f"({va} == {vb})"
     }
@@ -3009,13 +3009,13 @@ func CGen.field_to_string_expr(self, t: LType?, val: string) -> string {
 // ---------------------------------------------------------------------------
 
 func dedup_structs(items: [LStructDecl]) -> [LStructDecl] {
-  let seen = dict_new<bool>()
+  let seen = Dict<Sym, bool>()
   let mut result: [LStructDecl] = []
   let mut i = 0
   while i < len(items) {
-    let entry = dict_get<bool>(seen, items[i].name)
+    let entry = seen.get(sym(items[i].name))
     if isnull(entry) {
-      dict_set<bool>(seen, items[i].name, true)
+      seen.set(sym(items[i].name), true)
       append(result, items[i])
     }
     i = i + 1
@@ -3024,13 +3024,13 @@ func dedup_structs(items: [LStructDecl]) -> [LStructDecl] {
 }
 
 func dedup_classes(items: [LClassDecl]) -> [LClassDecl] {
-  let seen = dict_new<bool>()
+  let seen = Dict<Sym, bool>()
   let mut result: [LClassDecl] = []
   let mut i = 0
   while i < len(items) {
-    let entry = dict_get<bool>(seen, items[i].name)
+    let entry = seen.get(sym(items[i].name))
     if isnull(entry) {
-      dict_set<bool>(seen, items[i].name, true)
+      seen.set(sym(items[i].name), true)
       append(result, items[i])
     }
     i = i + 1
@@ -3039,13 +3039,13 @@ func dedup_classes(items: [LClassDecl]) -> [LClassDecl] {
 }
 
 func dedup_enums(items: [LEnumDecl]) -> [LEnumDecl] {
-  let seen = dict_new<bool>()
+  let seen = Dict<Sym, bool>()
   let mut result: [LEnumDecl] = []
   let mut i = 0
   while i < len(items) {
-    let entry = dict_get<bool>(seen, items[i].name)
+    let entry = seen.get(sym(items[i].name))
     if isnull(entry) {
-      dict_set<bool>(seen, items[i].name, true)
+      seen.set(sym(items[i].name), true)
       append(result, items[i])
     }
     i = i + 1
@@ -3054,7 +3054,7 @@ func dedup_enums(items: [LEnumDecl]) -> [LEnumDecl] {
 }
 
 func dedup_funcs(items: [LFuncDecl]) -> [LFuncDecl] {
-  let seen = dict_new<bool>()
+  let seen = Dict<Sym, bool>()
   let mut result: [LFuncDecl] = []
   let mut i = 0
   while i < len(items) {
@@ -3062,9 +3062,9 @@ func dedup_funcs(items: [LFuncDecl]) -> [LFuncDecl] {
     if items[i].receiver != "" {
       key = f"{items[i].receiver}.{items[i].name}"
     }
-    let entry = dict_get<bool>(seen, key)
+    let entry = seen.get(sym(key))
     if isnull(entry) {
-      dict_set<bool>(seen, key, true)
+      seen.set(sym(key), true)
       append(result, items[i])
     }
     i = i + 1
@@ -3086,10 +3086,10 @@ func topo_sort_structs(structs: [LStructDecl]) -> [LStructDecl] {
   if len(structs) <= 1 {
     return structs
   }
-  let name_idx = dict_new<i32>()
+  let name_idx = Dict<Sym, i32>()
   let mut i = 0
   while i < len(structs) {
-    dict_set<i32>(name_idx, structs[i].name, i as i32)
+    name_idx.set(sym(structs[i].name), i as i32)
     i = i + 1
   }
   // Build reverse adjacency + in-degree
@@ -3112,7 +3112,7 @@ func topo_sort_structs(structs: [LStructDecl]) -> [LStructDecl] {
     while j < len(structs[i].fields) {
       let dep_name = struct_type_name(structs[i].fields[j].typ)
       if dep_name != "" {
-        let dep_entry = dict_get<i32>(name_idx, dep_name)
+        let dep_entry = name_idx.get(sym(dep_name))
         if !isnull(dep_entry) && dep_entry!.value != i as i32 {
           in_deg[i] = in_deg[i] + 1
         }
@@ -3131,12 +3131,12 @@ func topo_sort_structs(structs: [LStructDecl]) -> [LStructDecl] {
     i = i + 1
   }
   let mut result: [LStructDecl] = []
-  let added = dict_new<bool>()
+  let added = Dict<Sym, bool>()
   let mut qi = 0
   while qi < len(queue) {
     let idx = queue[qi]
     append(result, structs[idx])
-    dict_set<bool>(added, structs[idx].name, true)
+    added.set(sym(structs[idx].name), true)
     // Find dependents
     let mut j = 0
     while j < n {
@@ -3159,7 +3159,7 @@ func topo_sort_structs(structs: [LStructDecl]) -> [LStructDecl] {
   if len(result) < n {
     i = 0
     while i < n {
-      let entry = dict_get<bool>(added, structs[i].name)
+      let entry = added.get(sym(structs[i].name))
       if isnull(entry) {
         append(result, structs[i])
       }
@@ -3464,7 +3464,7 @@ func CGen.emit_class_decl(self, c: LClassDecl) {
 }
 
 func CGen.emit_simple_enum_decl(self, e: LEnumDecl) {
-  dict_set<bool>(self.simple_enums!, e.name, true)
+  self.simple_enums!.set(sym(e.name), true)
   self.line(f"typedef enum {{")
   self.indent = self.indent + 1
   let mut i = 0
@@ -3553,8 +3553,8 @@ func CGen.emit_func_decl(self, f: LFuncDecl) {
     self.emit_generator_func_decl(f)
     return
   }
-  self.temp_types = dict_new<LType?>()
-  self.var_types = dict_new<LType?>()
+  self.temp_types = Dict<Sym, LType?>()
+  self.var_types = Dict<Sym, LType?>()
   let ret_type = self.c_return_type(f.return_type)
   let params = self.c_param_list(f)
   let name = self.func_name(f)
@@ -3569,7 +3569,7 @@ func CGen.emit_func_decl(self, f: LFuncDecl) {
   let mut i = 0
   while i < len(f.params) {
     if !isnull(f.params[i].typ) {
-      dict_set<LType?>(self.var_types!, f.params[i].name, f.params[i].typ)
+      self.var_types!.set(sym(f.params[i].name), f.params[i].typ)
     }
     i = i + 1
   }
@@ -3587,12 +3587,12 @@ func CGen.emit_func_decl(self, f: LFuncDecl) {
 // ---------------------------------------------------------------------------
 
 func CGen.emit_to_string_functions(self) {
-  let has_to_string = dict_new<bool>()
+  let has_to_string = Dict<Sym, bool>()
   let funcs = self.prog!.functions
   let mut i = 0
   while i < len(funcs) {
     if funcs[i].name == "to_string" && funcs[i].receiver != "" {
-      dict_set<bool>(has_to_string, funcs[i].receiver, true)
+      has_to_string.set(sym(funcs[i].receiver), true)
     }
     i = i + 1
   }
@@ -3602,7 +3602,7 @@ func CGen.emit_to_string_functions(self) {
   i = 0
   while i < len(enums) {
     let name = enums[i].name
-    if isnull(dict_get<bool>(has_to_string, name)) {
+    if isnull(has_to_string.get(sym(name))) {
       self.line(f"static forge_string {name}_to_string({name} v);")
     }
     i = i + 1
@@ -3611,7 +3611,7 @@ func CGen.emit_to_string_functions(self) {
   i = 0
   while i < len(structs) {
     let name = structs[i].name
-    if isnull(dict_get<bool>(has_to_string, name)) {
+    if isnull(has_to_string.get(sym(name))) {
       self.line(f"static forge_string {name}_to_string({name} v);")
     }
     i = i + 1
@@ -3620,7 +3620,7 @@ func CGen.emit_to_string_functions(self) {
   i = 0
   while i < len(classes) {
     let name = classes[i].name
-    if isnull(dict_get<bool>(has_to_string, name)) {
+    if isnull(has_to_string.get(sym(name))) {
       self.line(f"static forge_string {name}_to_string({name}* v);")
     }
     i = i + 1
@@ -3631,14 +3631,14 @@ func CGen.emit_to_string_functions(self) {
   i = 0
   while i < len(enums) {
     let name = enums[i].name
-    if !isnull(dict_get<bool>(has_to_string, name)) {
+    if !isnull(has_to_string.get(sym(name))) {
       i = i + 1
       // skip
       continue
     }
     self.line(f"static forge_string {name}_to_string({name} v) {{")
     self.indent = self.indent + 1
-    let is_simple = !isnull(dict_get<bool>(self.simple_enums!, name))
+    let is_simple = !isnull(self.simple_enums!.get(sym(name)))
     if is_simple {
       self.line(f"switch (v) {{")
     } else {
@@ -3663,7 +3663,7 @@ func CGen.emit_to_string_functions(self) {
   i = 0
   while i < len(structs) {
     let name = structs[i].name
-    if !isnull(dict_get<bool>(has_to_string, name)) {
+    if !isnull(has_to_string.get(sym(name))) {
       i = i + 1
       // skip
       continue
@@ -3681,7 +3681,7 @@ func CGen.emit_to_string_functions(self) {
   i = 0
   while i < len(classes) {
     let name = classes[i].name
-    if !isnull(dict_get<bool>(has_to_string, name)) {
+    if !isnull(has_to_string.get(sym(name))) {
       i = i + 1
       // skip
       continue
@@ -3859,13 +3859,13 @@ pub func emit_c(prog: LProgram?) -> string {
   prog_ref.functions = dedup_funcs(prog_ref.functions)
 
   // Emit tuple typedefs (before forward declarations that reference them)
-  let tuple_keys = dict_keys<string>(g.tuple_types!)
+  let tuple_keys = g.tuple_types!.keys()
   let mut tk = 0
   while tk < len(tuple_keys) {
-    let tuple_entry = dict_get<string>(g.tuple_types!, tuple_keys[tk])
+    let tuple_entry = g.tuple_types!.get(tuple_keys[tk])
     if !isnull(tuple_entry) {
       let tname = tuple_entry!.value
-      let field_types = str_split(tuple_keys[tk], ",")
+      let field_types = str_split(tuple_keys[tk].get_name(), ",")
       g.line(f"typedef struct {tname} {{")
       g.indent = g.indent + 1
       let mut ti = 0
@@ -3910,14 +3910,14 @@ pub func emit_c(prog: LProgram?) -> string {
   }
 
   // Emit slice typedefs
-  let slice_keys = dict_keys<string>(g.slice_types!)
+  let slice_keys = g.slice_types!.keys()
   i = 0
   while i < len(slice_keys) {
-    let entry = dict_get<string>(g.slice_types!, slice_keys[i])
+    let entry = g.slice_types!.get(slice_keys[i])
     if !isnull(entry) {
       let name = entry!.value
       if name != "ForgeSlice_uint8_t" && name != "ForgeSlice_forge_string" {
-        g.line(f"FORGE_SLICE_DEF({slice_keys[i]}, {name})")
+        g.line(f"FORGE_SLICE_DEF({slice_keys[i].get_name()}, {name})")
       }
     }
     i = i + 1
@@ -3971,21 +3971,21 @@ pub func emit_c(prog: LProgram?) -> string {
   }
 
   // Emit opt/result typedefs
-  let opt_keys = dict_keys<string>(g.opt_types!)
+  let opt_keys = g.opt_types!.keys()
   i = 0
   while i < len(opt_keys) {
-    let entry = dict_get<string>(g.opt_types!, opt_keys[i])
+    let entry = g.opt_types!.get(opt_keys[i])
     if !isnull(entry) {
-      g.line(f"FORGE_OPT_DEF({opt_keys[i]}, {entry!.value})")
+      g.line(f"FORGE_OPT_DEF({opt_keys[i].get_name()}, {entry!.value})")
     }
     i = i + 1
   }
-  let result_keys = dict_keys<string>(g.result_types!)
+  let result_keys = g.result_types!.keys()
   i = 0
   while i < len(result_keys) {
-    let entry = dict_get<string>(g.result_types!, result_keys[i])
+    let entry = g.result_types!.get(result_keys[i])
     if !isnull(entry) {
-      g.line(f"FORGE_RESULT_DEF({result_keys[i]}, {entry!.value})")
+      g.line(f"FORGE_RESULT_DEF({result_keys[i].get_name()}, {entry!.value})")
     }
     i = i + 1
   }
@@ -4001,12 +4001,12 @@ pub func emit_c(prog: LProgram?) -> string {
   }
 
   // Emit channel type definitions
-  let chan_keys = dict_keys<string>(g.chan_types!)
+  let chan_keys = g.chan_types!.keys()
   i = 0
   while i < len(chan_keys) {
-    let entry = dict_get<string>(g.chan_types!, chan_keys[i])
+    let entry = g.chan_types!.get(chan_keys[i])
     if !isnull(entry) {
-      g.line(f"FORGE_CHAN_DEF({chan_keys[i]}, ForgeChan_{entry!.value})")
+      g.line(f"FORGE_CHAN_DEF({chan_keys[i].get_name()}, ForgeChan_{entry!.value})")
     }
     i = i + 1
   }
@@ -4066,7 +4066,7 @@ pub func emit_c(prog: LProgram?) -> string {
     let mut j = 0
     while j < len(classes[i].implements) {
       let iface_name = classes[i].implements[j]
-      let iface_entry = dict_get<LInterfaceDecl>(g.iface_by_name!, iface_name)
+      let iface_entry = g.iface_by_name!.get(sym(iface_name))
       if !isnull(iface_entry) {
         g.line(f"static const {iface_name}_vtable {class_name}_as_{iface_name};")
       }
@@ -4122,7 +4122,7 @@ pub func emit_c(prog: LProgram?) -> string {
     let mut j = 0
     while j < len(classes[i].implements) {
       let iface_name = classes[i].implements[j]
-      let iface_entry = dict_get<LInterfaceDecl>(g.iface_by_name!, iface_name)
+      let iface_entry = g.iface_by_name!.get(sym(iface_name))
       if !isnull(iface_entry) {
         let iface = iface_entry!.value
         g.line(f"static const {iface_name}_vtable {class_name}_as_{iface_name} = {{")
@@ -4181,7 +4181,7 @@ pub func emit_c(prog: LProgram?) -> string {
   // Emit channel implementations
   i = 0
   while i < len(chan_keys) {
-    let entry = dict_get<string>(g.chan_types!, chan_keys[i])
+    let entry = g.chan_types!.get(chan_keys[i])
     if !isnull(entry) {
       let chan_name = f"ForgeChan_{entry!.value}"
       g.line(f"FORGE_CHAN_IMPL({chan_keys[i]}, {chan_name}, {entry!.value})")

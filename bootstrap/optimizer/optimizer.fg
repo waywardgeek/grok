@@ -19,18 +19,18 @@ func optimize_func(mut fn: LFuncDecl) {
   fn.body = stmts
 
   // Collect used temps and vars on the TRANSFORMED stmts
-  let used_temps = dict_new<bool>()
+  let used_temps = Dict<Sym, bool>()
   collect_used_temps(fn.body, used_temps)
-  let used_vars = dict_new<bool>()
+  let used_vars = Dict<Sym, bool>()
   collect_used_var_names(fn.body, used_vars)
 
   fn.body = eliminate_unused_temps_recursive(fn.body, used_temps, used_vars)
 
   // Re-collect AFTER elimination — some VarDecls referencing MultiAssign names
   // may have been eliminated, making those names now unused
-  let used_vars2 = dict_new<bool>()
+  let used_vars2 = Dict<Sym, bool>()
   collect_used_var_names(fn.body, used_vars2)
-  let used_temps2 = dict_new<bool>()
+  let used_temps2 = Dict<Sym, bool>()
   collect_used_temps(fn.body, used_temps2)
   blank_unused_multi_assign_names(fn.body, used_temps2, used_vars2)
 }
@@ -66,12 +66,12 @@ func optimize_stmts_structural(
 
 func fuse_side_effect_temps(stmts: [LStmt?]) -> [LStmt?] {
   // Build set of temp IDs that are only used in LStmtExpr discards
-  let discarded = dict_new<bool>()
+  let discarded = Dict<Sym, bool>()
   for s in stmts {
     if !isnull(s) && s!.kind == StExpr {
       let es = s!.expr_stmt
       if !isnull(es) {
-        dict_set<bool>(discarded, f"{es!.temp_id}", true)
+        discarded.set(sym(f"{es!.temp_id}"), true)
       }
     }
   }
@@ -86,7 +86,7 @@ func fuse_side_effect_temps(stmts: [LStmt?]) -> [LStmt?] {
         let td = stmt.temp_def
         if !isnull(td) {
           let key = f"{td!.id}"
-          let entry = dict_get<bool>(discarded, key)
+          let entry = discarded.get(sym(key))
           if !isnull(entry) && entry!.value {
             if !isnull(td!.expr) && is_side_effect_expr(td!.expr!) {
               // Emit as bare side-effect statement
@@ -108,7 +108,7 @@ func fuse_side_effect_temps(stmts: [LStmt?]) -> [LStmt?] {
         let es = stmt.expr_stmt
         if !isnull(es) {
           let key = f"{es!.temp_id}"
-          let entry = dict_get<bool>(discarded, key)
+          let entry = discarded.get(sym(key))
           if !isnull(entry) && entry!.value {
             // Skip the discard — already fused above
           } else {
@@ -217,8 +217,8 @@ func destructure_multi_return(stmts: [LStmt?]) -> [LStmt?] {
 
 func destructure_extract_pairs(stmts: [LStmt?]) -> [LStmt?] {
   // First pass: find temps that are sources of Extract operations
-  let has_value = dict_new<bool>()
-  let has_error = dict_new<bool>()
+  let has_value = Dict<Sym, bool>()
+  let has_error = Dict<Sym, bool>()
 
   for s in stmts {
     if isnull(s) { continue }
@@ -231,33 +231,33 @@ func destructure_extract_pairs(stmts: [LStmt?]) -> [LStmt?] {
     if expr.kind == ExExtractValue && !isnull(expr.extract_value) {
       let d = expr.extract_value!
       if !isnull(d.value) && d.value!.kind == ValTemp {
-        dict_set<bool>(has_value, f"{d.value!.temp_id}", true)
+        has_value.set(sym(f"{d.value!.temp_id}"), true)
       }
     }
     if expr.kind == ExExtractError && !isnull(expr.extract_error) {
       let d = expr.extract_error!
       if !isnull(d.value) && d.value!.kind == ValTemp {
-        dict_set<bool>(has_error, f"{d.value!.temp_id}", true)
+        has_error.set(sym(f"{d.value!.temp_id}"), true)
       }
     }
   }
 
   // Check if any sources found
-  if len(dict_keys<bool>(has_value)) == 0 && len(dict_keys<bool>(has_error)) == 0 {
+  if len(has_value.keys()) == 0 && len(has_error.keys()) == 0 {
     return stmts
   }
 
   // Merge: a source must have BOTH value and error extracts
-  let sources = dict_new<bool>()
-  let val_keys = dict_keys<bool>(has_value)
+  let sources = Dict<Sym, bool>()
+  let val_keys = has_value.keys()
   for k in val_keys {
-    let entry = dict_get<bool>(has_error, k)
+    let entry = has_error.get(k)
     if !isnull(entry) {
-      dict_set<bool>(sources, k, true)
+      sources.set(k, true)
     }
   }
 
-  if len(dict_keys<bool>(sources)) == 0 {
+  if len(sources.keys()) == 0 {
     return stmts
   }
 
@@ -281,7 +281,7 @@ func destructure_extract_pairs(stmts: [LStmt?]) -> [LStmt?] {
 
     // Is this a source temp being extracted?
     let src_key = f"{td!.id}"
-    let src_entry = dict_get<bool>(sources, src_key)
+    let src_entry = sources.get(sym(src_key))
     if !isnull(src_entry) {
       let val_name = f"_t{td!.id}_val"
       let err_name = f"_t{td!.id}_err"
@@ -305,7 +305,7 @@ func destructure_extract_pairs(stmts: [LStmt?]) -> [LStmt?] {
         let d = expr.extract_value!
         if !isnull(d.value) && d.value!.kind == ValTemp {
           let ek = f"{d.value!.temp_id}"
-          let ee = dict_get<bool>(sources, ek)
+          let ee = sources.get(sym(ek))
           if !isnull(ee) {
             let val_name = f"_t{d.value!.temp_id}_val"
             let vd = LStmt {
@@ -331,7 +331,7 @@ func destructure_extract_pairs(stmts: [LStmt?]) -> [LStmt?] {
         let d = expr.extract_error!
         if !isnull(d.value) && d.value!.kind == ValTemp {
           let ek = f"{d.value!.temp_id}"
-          let ee = dict_get<bool>(sources, ek)
+          let ee = sources.get(sym(ek))
           if !isnull(ee) {
             let err_name = f"_t{d.value!.temp_id}_err"
             let vd = LStmt {
@@ -503,9 +503,9 @@ func optimize_nested_stmts_structural(s: LStmt, return_type: LType?) {
 
 func eliminate_unused_temps(
     stmts: [LStmt?],
-    used_temps: Dict<bool>
+    used_temps: Dict<Sym, bool>
 ) -> [LStmt?] {
-  let used_vars = dict_new<bool>()
+  let used_vars = Dict<Sym, bool>()
   collect_used_var_names(stmts, used_vars)
 
   let mut out: [LStmt?] = []
@@ -517,7 +517,7 @@ func eliminate_unused_temps(
       let td = stmt.temp_def
       if !isnull(td) {
         let key = f"{td!.id}"
-        let entry = dict_get<bool>(used_temps, key)
+        let entry = used_temps.get(sym(key))
         if isnull(entry) {
           // Temp is unused — emit as side effect if it has side effects
           if !isnull(td!.expr) && is_side_effect_expr(td!.expr!) {
@@ -541,9 +541,9 @@ func eliminate_unused_temps(
           // '_' = 95, 't' = 116
           let num_str = vd!.name[2:len(vd!.name)]
           if is_numeric_str(num_str) {
-            let var_entry = dict_get<bool>(used_vars, vd!.name)
+            let var_entry = used_vars.get(sym(vd!.name))
             let tid = parse_temp_id(vd!.name)
-            let temp_entry = dict_get<bool>(used_temps, f"{tid}")
+            let temp_entry = used_temps.get(sym(f"{tid}"))
             if isnull(var_entry) && isnull(temp_entry) {
               continue
             }
@@ -587,8 +587,8 @@ func parse_temp_id(name: string) -> i32 {
 
 func eliminate_unused_temps_recursive(
     stmts: [LStmt?],
-    used_temps: Dict<bool>,
-    used_vars: Dict<bool>
+    used_temps: Dict<Sym, bool>,
+    used_vars: Dict<Sym, bool>
 ) -> [LStmt?] {
   let mut result = eliminate_unused_temps(stmts, used_temps)
   let mut i = 0
@@ -692,8 +692,8 @@ func eliminate_unused_temps_recursive(
 
 func blank_unused_multi_assign_names(
     stmts: [LStmt?],
-    used_temps: Dict<bool>,
-    used_vars: Dict<bool>
+    used_temps: Dict<Sym, bool>,
+    used_vars: Dict<Sym, bool>
 ) {
   for s in stmts {
     if isnull(s) { continue }
@@ -706,9 +706,9 @@ func blank_unused_multi_assign_names(
         while j < len(ma!.names) {
           let name = ma!.names[j]
           if name != "_" {
-            let var_entry = dict_get<bool>(used_vars, name)
+            let var_entry = used_vars.get(sym(name))
             let tid = parse_temp_id(name)
-            let temp_entry = dict_get<bool>(used_temps, f"{tid}")
+            let temp_entry = used_temps.get(sym(f"{tid}"))
             if isnull(var_entry) && isnull(temp_entry) {
               ma!.names[j] = "_"
             }
@@ -725,8 +725,8 @@ func blank_unused_multi_assign_names(
 
 func recurse_blank_unused(
     stmt: LStmt,
-    used_temps: Dict<bool>,
-    used_vars: Dict<bool>
+    used_temps: Dict<Sym, bool>,
+    used_vars: Dict<Sym, bool>
 ) {
   match stmt.kind {
     StIf => {
@@ -811,7 +811,7 @@ func recurse_blank_unused(
 // Collect used temps
 // ---------------------------------------------------------------------------
 
-func collect_used_temps(stmts: [LStmt?], used: Dict<bool>) {
+func collect_used_temps(stmts: [LStmt?], used: Dict<Sym, bool>) {
   for s in stmts {
     if !isnull(s) {
       collect_used_temps_in_stmt(s!, used)
@@ -819,7 +819,7 @@ func collect_used_temps(stmts: [LStmt?], used: Dict<bool>) {
   }
 }
 
-func collect_used_temps_in_stmt(s: LStmt, used: Dict<bool>) {
+func collect_used_temps_in_stmt(s: LStmt, used: Dict<Sym, bool>) {
   match s.kind {
     StTempDef => {
       let td = s.temp_def
@@ -937,7 +937,7 @@ func collect_used_temps_in_stmt(s: LStmt, used: Dict<bool>) {
     StExpr => {
       let es = s.expr_stmt
       if !isnull(es) {
-        dict_set<bool>(used, f"{es!.temp_id}", true)
+        used.set(sym(f"{es!.temp_id}"), true)
       }
     }
     StSideEffect => {
@@ -975,7 +975,7 @@ func collect_used_temps_in_stmt(s: LStmt, used: Dict<bool>) {
   }
 }
 
-func collect_used_temps_in_expr(e: LExpr, used: Dict<bool>) {
+func collect_used_temps_in_expr(e: LExpr, used: Dict<Sym, bool>) {
   match e.kind {
     ExBinOp => {
       let d = e.bin_op
@@ -1155,9 +1155,9 @@ func collect_used_temps_in_expr(e: LExpr, used: Dict<bool>) {
   }
 }
 
-func collect_used_temps_in_value(v: LValue, used: Dict<bool>) {
+func collect_used_temps_in_value(v: LValue, used: Dict<Sym, bool>) {
   if v.kind == ValTemp {
-    dict_set<bool>(used, f"{v.temp_id}", true)
+    used.set(sym(f"{v.temp_id}"), true)
   }
   if v.kind == ValIndexRef {
     if !isnull(v.collection) {
@@ -1173,7 +1173,7 @@ func collect_used_temps_in_value(v: LValue, used: Dict<bool>) {
 // Collect used variable names
 // ---------------------------------------------------------------------------
 
-func collect_used_var_names(stmts: [LStmt?], used: Dict<bool>) {
+func collect_used_var_names(stmts: [LStmt?], used: Dict<Sym, bool>) {
   for s in stmts {
     if !isnull(s) {
       collect_used_var_names_in_stmt(s!, used)
@@ -1181,7 +1181,7 @@ func collect_used_var_names(stmts: [LStmt?], used: Dict<bool>) {
   }
 }
 
-func collect_used_var_names_in_stmt(s: LStmt, used: Dict<bool>) {
+func collect_used_var_names_in_stmt(s: LStmt, used: Dict<Sym, bool>) {
   match s.kind {
     StTempDef => {
       let td = s.temp_def
@@ -1331,7 +1331,7 @@ func collect_used_var_names_in_stmt(s: LStmt, used: Dict<bool>) {
   }
 }
 
-func collect_used_var_names_in_expr(e: LExpr, used: Dict<bool>) {
+func collect_used_var_names_in_expr(e: LExpr, used: Dict<Sym, bool>) {
   match e.kind {
     ExBinOp => {
       let d = e.bin_op
@@ -1511,9 +1511,9 @@ func collect_used_var_names_in_expr(e: LExpr, used: Dict<bool>) {
   }
 }
 
-func collect_used_var_names_in_value(v: LValue, used: Dict<bool>) {
+func collect_used_var_names_in_value(v: LValue, used: Dict<Sym, bool>) {
   if v.kind == ValVar {
-    dict_set<bool>(used, v.name, true)
+    used.set(sym(v.name), true)
   }
   if v.kind == ValIndexRef {
     if !isnull(v.collection) {

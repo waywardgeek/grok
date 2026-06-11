@@ -12,47 +12,47 @@ forge lowerer {
 
   class Lowerer {
     temp_id: i32
-    structs: Dict<StructDecl>?
-    classes: Dict<ClassDecl>?
-    enums: Dict<EnumDecl>?
-    interfaces: Dict<InterfaceDecl>?
-    type_aliases: Dict<TypeExpr>?
-    func_sigs: Dict<FuncDecl>?
-    scope: Dict<LType>?
-    class_fields: Dict<Dict<LType>>?
-    class_defaults: Dict<Expr>?
-    impl_method_renames: Dict<string>?
+    structs: Dict<Sym, StructDecl>?
+    classes: Dict<Sym, ClassDecl>?
+    enums: Dict<Sym, EnumDecl>?
+    interfaces: Dict<Sym, InterfaceDecl>?
+    type_aliases: Dict<Sym, TypeExpr>?
+    func_sigs: Dict<Sym, FuncDecl>?
+    scope: Dict<Sym, LType>?
+    class_fields: Dict<Sym, Dict<Sym, LType>>?
+    class_defaults: Dict<Sym, Expr>?
+    impl_method_renames: Dict<Sym, string>?
     stmts: [LStmt?]
-    unit_variants: Dict<bool>?
-    enum_variant_tags: Dict<i32>?
-    enum_variant_fields: Dict<[TupleField]>?
-    variant_to_enum: Dict<string>?
+    unit_variants: Dict<Sym, bool>?
+    enum_variant_tags: Dict<Sym, i32>?
+    enum_variant_fields: Dict<Sym, [TupleField]>?
+    variant_to_enum: Dict<Sym, string>?
     current_func_return: LType?
-    import_aliases: Dict<string>?
-    lowered_ifaces: Dict<LInterfaceDecl>?
+    import_aliases: Dict<Sym, string>?
+    lowered_ifaces: Dict<Sym, LInterfaceDecl>?
   }
 
   func new_lowerer() -> Lowerer {
     return Lowerer {
       temp_id: 0,
-      structs: Dict<StructDecl> {},
-      classes: Dict<ClassDecl> {},
-      enums: Dict<EnumDecl> {},
-      interfaces: Dict<InterfaceDecl> {},
-      type_aliases: Dict<TypeExpr> {},
-      func_sigs: Dict<FuncDecl> {},
-      scope: Dict<LType> {},
-      class_fields: Dict<Dict<LType>> {},
-      class_defaults: Dict<Expr> {},
-      impl_method_renames: Dict<string> {},
+      structs: Dict<Sym, StructDecl> {},
+      classes: Dict<Sym, ClassDecl> {},
+      enums: Dict<Sym, EnumDecl> {},
+      interfaces: Dict<Sym, InterfaceDecl> {},
+      type_aliases: Dict<Sym, TypeExpr> {},
+      func_sigs: Dict<Sym, FuncDecl> {},
+      scope: Dict<Sym, LType> {},
+      class_fields: Dict<Sym, Dict<Sym, LType>> {},
+      class_defaults: Dict<Sym, Expr> {},
+      impl_method_renames: Dict<Sym, string> {},
       stmts: [],
-      unit_variants: Dict<bool> {},
-      enum_variant_tags: Dict<i32> {},
-      enum_variant_fields: Dict<[TupleField]> {},
-      variant_to_enum: Dict<string> {},
+      unit_variants: Dict<Sym, bool> {},
+      enum_variant_tags: Dict<Sym, i32> {},
+      enum_variant_fields: Dict<Sym, [TupleField]> {},
+      variant_to_enum: Dict<Sym, string> {},
       current_func_return: LType { kind: TyUnit, name: "", bits: 0, is_exported: false },
-      import_aliases: Dict<string> {},
-      lowered_ifaces: Dict<LInterfaceDecl> {}
+      import_aliases: Dict<Sym, string> {},
+      lowered_ifaces: Dict<Sym, LInterfaceDecl> {}
     }
   }
 
@@ -89,11 +89,11 @@ forge lowerer {
   }
 
   func Lowerer.define_var(self, name: string, typ: LType?) {
-    dict_set<LType>(self.scope!, name, typ!)
+    self.scope!.set(sym(name), typ!)
   }
 
   func Lowerer.lookup_var(self, name: string) -> LType? {
-    let entry = dict_get<LType>(self.scope!, name)
+    let entry = self.scope!.get(sym(name))
     if !isnull(entry) { return entry!.value }
     return nil
   }
@@ -274,20 +274,20 @@ forge lowerer {
     }
 
     // Check registered types
-    if dict_has<StructDecl>(self.structs!, n) {
+    if self.structs!.has(sym(n)) {
       return LType { kind: TyStruct, name: n, type_args: largs, bits: 0, is_exported: false }
     }
-    if dict_has<ClassDecl>(self.classes!, n) {
+    if self.classes!.has(sym(n)) {
       return LType { kind: TyClassHandle, name: n, type_args: largs, bits: 0, is_exported: false }
     }
-    if dict_has<EnumDecl>(self.enums!, n) {
+    if self.enums!.has(sym(n)) {
       return LType { kind: TyTaggedUnion, name: n, bits: 0, is_exported: false }
     }
-    if dict_has<InterfaceDecl>(self.interfaces!, n) {
+    if self.interfaces!.has(sym(n)) {
       return LType { kind: TyAny, name: n, bits: 0, is_exported: false }
     }
-    if dict_has<TypeExpr>(self.type_aliases!, n) {
-      let entry = dict_get<TypeExpr>(self.type_aliases!, n)
+    if self.type_aliases!.has(sym(n)) {
+      let entry = self.type_aliases!.get(sym(n))
       if !isnull(entry) {
         return self.lower_type(entry!.value)
       }
@@ -325,15 +325,15 @@ forge lowerer {
     // Register structs
     for sd in block.sd_children() {
       if !isnull(sd.name) {
-        dict_set<StructDecl>(self.structs!, sd.name!.name, sd)
+        self.structs!.set(sym(sd.name!.name), sd)
         // Register class fields for struct
-        let fmap = Dict<LType> {}
+        let fmap = Dict<Sym, LType> {}
         for f in sd.sf_children() {
           if !isnull(f.name) {
-            dict_set<LType>(fmap, f.name!.name, self.lower_type(f.type_expr)!)
+            fmap.set(f.name!, self.lower_type(f.type_expr)!)
           }
         }
-        dict_set<Dict<LType>>(self.class_fields!, sd.name!.name, fmap)
+        self.class_fields!.set(sym(sd.name!.name), fmap)
       }
     }
 
@@ -341,17 +341,17 @@ forge lowerer {
     for cd in block.cd_children() {
       if !isnull(cd.name) {
         let cname = cd.name!.name
-        dict_set<ClassDecl>(self.classes!, cname, cd)
-        let fmap = Dict<LType> {}
+        self.classes!.set(sym(cname), cd)
+        let fmap = Dict<Sym, LType> {}
         for f in cd.cf_children() {
           if !isnull(f.name) {
-            dict_set<LType>(fmap, f.name!.name, self.lower_type(f.type_expr)!)
+            fmap.set(f.name!, self.lower_type(f.type_expr)!)
             if !isnull(f.default_value) {
-              dict_set<Expr>(self.class_defaults!, cname + "." + f.name!.name, f.default_value!)
+              self.class_defaults!.set(sym(cname + "." + f.name!.name), f.default_value!)
             }
           }
         }
-        dict_set<Dict<LType>>(self.class_fields!, cname, fmap)
+        self.class_fields!.set(sym(cname), fmap)
       }
     }
 
@@ -359,22 +359,22 @@ forge lowerer {
     for ed in block.ed_children() {
       if !isnull(ed.name) {
         let ename = ed.name!.name
-        dict_set<EnumDecl>(self.enums!, ename, ed)
+        self.enums!.set(sym(ename), ed)
         let mut tag: i32 = 0
         for v in ed.ev_children() {
           if !isnull(v.name) {
             let vname = v.name!.name
             let key = ename + "." + vname
-            dict_set<i32>(self.enum_variant_tags!, key, tag)
-            dict_set<string>(self.variant_to_enum!, vname, ename)
+            self.enum_variant_tags!.set(sym(key), tag)
+            self.variant_to_enum!.set(sym(vname), ename)
             let vfields = v.evf_children()
             let mut tfs: [TupleField] = []
             for tf in vfields {
               append(tfs, tf)
             }
-            dict_set<[TupleField]>(self.enum_variant_fields!, key, tfs)
+            self.enum_variant_fields!.set(sym(key), tfs)
             if len(tfs) == 0 {
-              dict_set<bool>(self.unit_variants!, key, true)
+              self.unit_variants!.set(sym(key), true)
             }
             tag = tag + 1
           }
@@ -385,14 +385,14 @@ forge lowerer {
     // Register interfaces
     for id in block.id_children() {
       if !isnull(id.name) {
-        dict_set<InterfaceDecl>(self.interfaces!, id.name!.name, id)
+        self.interfaces!.set(sym(id.name!.name), id)
       }
     }
 
     // Register type aliases
     for ta in block.ta_children() {
       if !isnull(ta.name) {
-        dict_set<TypeExpr>(self.type_aliases!, ta.name!.name, ta.type_expr!)
+        self.type_aliases!.set(sym(ta.name!.name), ta.type_expr!)
       }
     }
 
@@ -404,7 +404,7 @@ forge lowerer {
         } else {
           fd.name!.name
         }
-        dict_set<FuncDecl>(self.func_sigs!, key, fd)
+        self.func_sigs!.set(sym(key), fd)
       }
     }
 
@@ -414,7 +414,7 @@ forge lowerer {
         for m in cd.cm_children() {
           if !isnull(m.name) {
             let key = cd.name!.name + "." + m.name!.name
-            dict_set<FuncDecl>(self.func_sigs!, key, m)
+            self.func_sigs!.set(sym(key), m)
           }
         }
       }
@@ -450,7 +450,7 @@ forge lowerer {
         let alias = if !isnull(imp.alias) { imp.alias!.name } else { "" }
         append(imports, LImport { alias: alias, path: imp.path })
         if alias != "" {
-          dict_set<string>(self.import_aliases!, alias, imp.path)
+          self.import_aliases!.set(sym(alias), imp.path)
         }
       }
 
@@ -472,7 +472,7 @@ forge lowerer {
       // Interfaces
       for id in block.id_children() {
         let li = self.lower_interface_decl(id)
-        dict_set<LInterfaceDecl>(self.lowered_ifaces!, li.name, li)
+        self.lowered_ifaces!.set(sym(li.name), li)
         append(ifaces, li)
       }
 
@@ -669,22 +669,22 @@ forge lowerer {
     let iface_name = ib!.interface_name!.name
 
     // Look up lowered interface (matches Go's l.ifaceDecls)
-    let iface_entry = dict_get<LInterfaceDecl>(self.lowered_ifaces!, iface_name)
+    let iface_entry = self.lowered_ifaces!.get(sym(iface_name))
     if isnull(iface_entry) { return result }
     let iface = iface_entry!.value
 
 
     // Build type param -> concrete type mappings (matches Go's typeArgMap + typeArgLTypeMap)
-    let mut type_arg_map: Dict<string> = dict_new<string>()
-    let mut type_arg_ltype_map: Dict<LType> = dict_new<LType>()
+    let mut type_arg_map: Dict<Sym, string> = Dict<Sym, string>()
+    let mut type_arg_ltype_map: Dict<Sym, LType> = Dict<Sym, LType>()
     let ib_args = ib!.ib_arg_children()
     let mut i = 0
     for tp in iface.type_params {
       if i < len(ib_args) {
         let lt = self.lower_type(ib_args[i])
         if !isnull(lt) {
-          dict_set<LType>(type_arg_ltype_map, tp.name, lt!)
-          dict_set<string>(type_arg_map, tp.name, lt!.name)
+          type_arg_ltype_map.set(sym(tp.name), lt!)
+          type_arg_map.set(sym(tp.name), lt!.name)
         }
       }
       i = i + 1
@@ -693,7 +693,7 @@ forge lowerer {
     // Build rename key prefix: iface_name + @ + type_arg_names...
     let mut rename_prefix = iface_name
     for tp in iface.type_params {
-      let ta_entry = dict_get<string>(type_arg_map, tp.name)
+      let ta_entry = type_arg_map.get(sym(tp.name))
       if !isnull(ta_entry) {
         rename_prefix = rename_prefix + "@" + ta_entry!.value
       }
@@ -719,12 +719,12 @@ forge lowerer {
       let iface_method = iface.methods[iface_method_idx]
 
       // Get concrete class name from type arg map
-      let class_entry = dict_get<string>(type_arg_map, type_param)
+      let class_entry = type_arg_map.get(sym(type_param))
       if isnull(class_entry) { continue }
       let class_name = class_entry!.value
 
       // Get full LType for self (preserves TypeArgs for generic classes)
-      let self_ltype_entry = dict_get<LType>(type_arg_ltype_map, type_param)
+      let self_ltype_entry = type_arg_ltype_map.get(sym(type_param))
       let self_type = if !isnull(self_ltype_entry) {
         self_ltype_entry!.value
       } else {
@@ -786,8 +786,8 @@ forge lowerer {
           if !isnull(mapping.inline_func) {
             let wrapper_name = class_name + "_" + method_name
             let rename_key = rename_prefix + "@" + class_name + "@" + method_name
-            dict_set<string>(self.impl_method_renames!, rename_key, wrapper_name)
-            dict_set<string>(self.impl_method_renames!, class_name + "." + method_name, wrapper_name)
+            self.impl_method_renames!.set(sym(rename_key), wrapper_name)
+            self.impl_method_renames!.set(sym(class_name + "." + method_name), wrapper_name)
             let lf = self.lower_func_with_receiver(mapping.inline_func, class_name)
             if !isnull(lf) {
               let mut f = lf!
@@ -807,8 +807,8 @@ forge lowerer {
 
           // Register rename with @-delimited key
           let rename_key = rename_prefix + "@" + class_name + "@" + method_name
-          dict_set<string>(self.impl_method_renames!, rename_key, concrete_name)
-          dict_set<string>(self.impl_method_renames!, class_name + "." + method_name, concrete_name)
+          self.impl_method_renames!.set(sym(rename_key), concrete_name)
+          self.impl_method_renames!.set(sym(class_name + "." + method_name), concrete_name)
 
           let self_param = LParam { name: "self", typ: self_type, mutable: false }
 
@@ -869,10 +869,10 @@ forge lowerer {
     return result
   }
 
-  func Lowerer.subst_impl_type(self, t: LType?, argmap: Dict<LType>) -> LType? {
+  func Lowerer.subst_impl_type(self, t: LType?, argmap: Dict<Sym, LType>) -> LType? {
     if isnull(t) { return t }
     if t!.kind is TyTypeVar {
-      let sub_entry = dict_get<LType>(argmap, t!.name)
+      let sub_entry = argmap.get(sym(t!.name))
       if !isnull(sub_entry) { return sub_entry!.value }
       return t
     }
@@ -926,7 +926,7 @@ forge lowerer {
     // Params
     let mut params: [LParam] = []
     let old_scope = self.scope
-    self.scope = Dict<LType> {}
+    self.scope = Dict<Sym, LType> {}
     // Copy old scope entries? No — functions have their own scope.
 
     // Add self param for methods
@@ -981,8 +981,8 @@ forge lowerer {
 
     // Receiver type params
     let mut recv_tps: [LTypeParam] = []
-    if receiver != "" && dict_has<ClassDecl>(self.classes!, receiver) {
-      let cd_entry = dict_get<ClassDecl>(self.classes!, receiver)
+    if receiver != "" && self.classes!.has(sym(receiver)) {
+      let cd_entry = self.classes!.get(sym(receiver))
       let cd = if !isnull(cd_entry) { cd_entry!.value } else { nil }
       if !isnull(cd) {
         for tp in cd!.ctp_children() {
@@ -1741,7 +1741,7 @@ forge lowerer {
 
     // Group arms by outer variant name
     let group_keys: [string] = []
-    let group_arms = dict_new<[MatchArm]>()
+    let group_arms = Dict<Sym, [MatchArm]>()
     for arm in arms {
       let mut key = ""
       if !isnull(arm.pattern) {
@@ -1754,19 +1754,19 @@ forge lowerer {
           _ => {}
         }
       }
-      let existing = dict_get<[MatchArm]>(group_arms, key)
+      let existing = group_arms.get(sym(key))
       if existing != nil {
         append(existing!.value, arm)
-        dict_set<[MatchArm]>(group_arms, key, existing!.value)
+        group_arms.set(sym(key), existing!.value)
       } else {
         append(group_keys, key)
-        dict_set<[MatchArm]>(group_arms, key, [arm])
+        group_arms.set(sym(key), [arm])
       }
     }
 
     let mut cases: [LSwitchCase] = []
     for gk in group_keys {
-      let g_arms = dict_get<[MatchArm]>(group_arms, gk)!.value
+      let g_arms = group_arms.get(sym(gk))!.value
 
       // Simple arm with no nesting — use normal lowering
       if len(g_arms) == 1 && !self.arm_has_nested_variant(g_arms[0]) {
@@ -2094,7 +2094,7 @@ forge lowerer {
 
     if check_enum != "" {
       let key = check_enum + "." + n
-      if dict_has<bool>(self.unit_variants!, key) {
+      if self.unit_variants!.has(sym(key)) {
         let tag = self.find_variant_tag(check_enum, n)
         let vc = LExpr {
           kind: ExVariantConstruct,
@@ -2106,15 +2106,16 @@ forge lowerer {
     }
 
     // Fallback: scan all registered enums for this variant name
-    let enum_keys = dict_keys<EnumDecl>(self.enums!)
+    let enum_keys = self.enums!.keys()
     for ek in enum_keys {
-      let key = ek + "." + n
-      if dict_has<bool>(self.unit_variants!, key) {
-        let tag = self.find_variant_tag(ek, n)
+      let ekn = ek.get_name()
+      let key = ekn + "." + n
+      if self.unit_variants!.has(sym(key)) {
+        let tag = self.find_variant_tag(ekn, n)
         let vc = LExpr {
           kind: ExVariantConstruct,
-          typ: LType { kind: TyTaggedUnion, name: ek, bits: 0, is_exported: false },
-          variant_construct: LVariantConstructData { enum_name: ek, variant: n, tag: tag, fields: [] }
+          typ: LType { kind: TyTaggedUnion, name: ekn, bits: 0, is_exported: false },
+          variant_construct: LVariantConstructData { enum_name: ekn, variant: n, tag: tag, fields: [] }
         }
         return self.emit_temp(vc)
       }
@@ -2201,14 +2202,15 @@ forge lowerer {
       }
 
       // Try with resolved enum, then scan all enums
-      let enum_keys = dict_keys<EnumDecl>(self.enums!)
+      let enum_keys = self.enums!.keys()
       for ek in enum_keys {
-        let key = ek + "." + func_name
-        if !dict_has<i32>(self.enum_variant_tags!, key) { continue }
+        let ekn = ek.get_name()
+        let key = ekn + "." + func_name
+        if !self.enum_variant_tags!.has(sym(key)) { continue }
         // Skip unit variants (they're handled in lower_ident, not calls)
-        if dict_has<bool>(self.unit_variants!, key) { continue }
+        if self.unit_variants!.has(sym(key)) { continue }
         // Disambiguation: prefer target_enum if available
-        let enum_name = if target_enum != "" { target_enum } else { ek }
+        let enum_name = if target_enum != "" { target_enum } else { ekn }
         let tag = self.find_variant_tag(enum_name, func_name)
         let mut vargs: [LValue?] = []
         for a in args {
@@ -2224,9 +2226,9 @@ forge lowerer {
     }
 
     // Check class constructor (struct literal syntax used for classes too)
-    if func_name != "" && dict_has<ClassDecl>(self.classes!, func_name) {
+    if func_name != "" && self.classes!.has(sym(func_name)) {
       // This is actually a class allocation — lower args as positional fields
-      let cd_entry2 = dict_get<ClassDecl>(self.classes!, func_name)
+      let cd_entry2 = self.classes!.get(sym(func_name))
       if isnull(cd_entry2) { return nil }
       let cd = cd_entry2!.value
       let mut finits: [LFieldInit] = []
@@ -2323,7 +2325,7 @@ forge lowerer {
     if !isnull(receiver) && receiver!.kind is Ident {
       match receiver!.kind {
         Ident(id) => {
-          if dict_has<string>(self.import_aliases!, id.name) {
+          if self.import_aliases!.has(sym(id.name)) {
             let func_name = id.name + "." + method_name
             let mut call_args: [LValue?] = []
             for a in args {
@@ -2438,7 +2440,7 @@ forge lowerer {
     // Build param types for the method
     let mut ptypes: [LType?] = []
     let sig_key = if !isnull(recv_type) { recv_type!.name + "." + method_name } else { method_name }
-    let sig = dict_get<FuncDecl>(self.func_sigs!, sig_key)
+    let sig = self.func_sigs!.get(sym(sig_key))
     if !isnull(sig) {
       for p in sig!.value.param_children() {
         if !isnull(p.name) && !p.is_self {
@@ -2635,10 +2637,6 @@ forge lowerer {
     if name == "isnull" { return true }
     if name == "new_dict" { return true }
     if name == "new_string_builder" { return true }
-    if name == "dict_get" { return true }
-    if name == "dict_set" { return true }
-    if name == "dict_has" { return true }
-    if name == "dict_keys" { return true }
     if name == "str_contains" { return true }
     if name == "str_starts_with" { return true }
     if name == "str_ends_with" { return true }
@@ -2762,22 +2760,22 @@ forge lowerer {
 
     let mut finits: [LFieldInit] = []
     // Collect explicitly provided fields
-    let mut provided: Dict<bool> = dict_new<bool>()
+    let mut provided: Dict<Sym, bool> = Dict<Sym, bool>()
     for f in fields {
       let fname = if !isnull(f.name) { f.name!.name } else { "" }
       let fv = self.lower_expr(f.value)
       append(finits, LFieldInit { name: fname, value: fv })
       if fname != "" {
-        dict_set<bool>(provided, fname, true)
+        provided.set(sym(fname), true)
       }
     }
 
     // For classes, fill in default values for missing fields
-    if dict_has<ClassDecl>(self.classes!, tname) {
-      let cd = dict_get<ClassDecl>(self.classes!, tname)
+    if self.classes!.has(sym(tname)) {
+      let cd = self.classes!.get(sym(tname))
       if !isnull(cd) {
         for f in cd!.value.cf_children() {
-          if !isnull(f.name) && !dict_has<bool>(provided, f.name!.name) && !isnull(f.default_value) {
+          if !isnull(f.name) && !provided.has(sym(f.name!.name)) && !isnull(f.default_value) {
             let dv = self.lower_expr(f.default_value)
             append(finits, LFieldInit { name: f.name!.name, value: dv })
           }
@@ -2813,7 +2811,7 @@ forge lowerer {
   ) -> LValue? {
     let mut lparams: [LParam] = []
     let old_scope = self.scope
-    self.scope = Dict<LType> {}
+    self.scope = Dict<Sym, LType> {}
 
     for p in params {
       if !isnull(p.name) {
@@ -3155,7 +3153,7 @@ forge lowerer {
 
   func Lowerer.find_variant_tag(self, enum_name: string, variant_name: string) -> i32 {
     let key = enum_name + "." + variant_name
-    let tag = dict_get<i32>(self.enum_variant_tags!, key)
+    let tag = self.enum_variant_tags!.get(sym(key))
     if !isnull(tag) {
       return tag!.value
     }
@@ -3164,7 +3162,7 @@ forge lowerer {
 
   func Lowerer.find_variant_field_name(self, enum_name: string, variant_name: string, field_idx: i32) -> string {
     let key = enum_name + "." + variant_name
-    let vfields = dict_get<[TupleField]>(self.enum_variant_fields!, key)
+    let vfields = self.enum_variant_fields!.get(sym(key))
     if !isnull(vfields) {
       let fields = vfields!.value
       if field_idx < len(fields) as i32 {
@@ -3180,7 +3178,7 @@ forge lowerer {
 
   func Lowerer.get_variant_field_type(self, enum_name: string, variant_name: string, field_idx: i32) -> LType? {
     let key = enum_name + "." + variant_name
-    let vfields = dict_get<[TupleField]>(self.enum_variant_fields!, key)
+    let vfields = self.enum_variant_fields!.get(sym(key))
     if !isnull(vfields) {
       let fields = vfields!.value
       if field_idx < len(fields) as i32 {
@@ -3192,7 +3190,7 @@ forge lowerer {
   }
 
   func Lowerer.find_variant_enum(self, variant_name: string) -> string {
-    let e = dict_get<string>(self.variant_to_enum!, variant_name)
+    let e = self.variant_to_enum!.get(sym(variant_name))
     if !isnull(e) { return e!.value }
     return ""
   }

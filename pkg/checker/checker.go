@@ -1471,29 +1471,37 @@ func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 	if recvType.Kind == TyStruct || recvType.Kind == TyClass || recvType.Kind == TyInterface {
 		if info := c.registry.Lookup(recvType.Name); info != nil {
 			if methType, ok := info.Methods[mc.Method]; ok && methType.Kind == TyFunc {
+				// Substitute type args for generic class method params and return
+				subst := c.buildTypeArgSubst(recvType)
+				paramTypes := methType.Params
+				if subst != nil {
+					paramTypes = make([]*Type, len(methType.Params))
+					for i, p := range methType.Params {
+						paramTypes[i] = substituteType(p, subst)
+					}
+				}
 				// Check argument types and propagate expected types
 				for i := range mc.Args {
 					argType := c.checkExpr(&mc.Args[i])
-					if methType.Params != nil && i < len(methType.Params) {
-						if !c.assignableTo(argType, methType.Params[i]) && argType.Kind != TyError {
-							c.error(mc.Args[i].Span, "%s.%s: argument %d: expected %s, got %s", recvType.Name, mc.Method, i+1, methType.Params[i], argType)
+					if paramTypes != nil && i < len(paramTypes) {
+						if !c.assignableTo(argType, paramTypes[i]) && argType.Kind != TyError {
+							c.error(mc.Args[i].Span, "%s.%s: argument %d: expected %s, got %s", recvType.Name, mc.Method, i+1, paramTypes[i], argType)
 						}
 						// Propagate expected type to empty slice literals
 						if mc.Args[i].Kind == ast.ExprListLit {
 							lit := mc.Args[i].Data.(*ast.ListLitExpr)
-							if len(lit.Elems) == 0 && methType.Params[i].Kind == TyList {
-								mc.Args[i].ResolvedType = methType.Params[i]
+							if len(lit.Elems) == 0 && paramTypes[i].Kind == TyList {
+								mc.Args[i].ResolvedType = paramTypes[i]
 							}
 						}
 						// Propagate expected type to nil args
 						if mc.Args[i].Kind == ast.ExprNil {
-							mc.Args[i].ResolvedType = methType.Params[i]
+							mc.Args[i].ResolvedType = paramTypes[i]
 						}
 					}
 				}
 				retType := methType.Return
-				// Substitute type args for generic class instances
-				if subst := c.buildTypeArgSubst(recvType); subst != nil {
+				if subst != nil {
 					retType = substituteType(retType, subst)
 				}
 				return retType
@@ -2562,11 +2570,8 @@ func (c *Checker) satisfiesConstraint(t *Type, constraint string) bool {
 		// Equatable: comparable in Go (==)
 		return t.IsNumeric() || t.Kind == TyString || t.Kind == TyBool
 	case "Hashable":
-		// Check if type has get_hash method (either built-in or user-defined)
-		if t.IsNumeric() || t.Kind == TyString || t.Kind == TyBool {
-			return true
-		}
-		// Check registry for type with get_hash method
+		// Only types with an explicit get_hash method satisfy Hashable.
+		// Primitives (string, int, bool) are NOT Hashable — use Sym for hash keys.
 		if info := c.registry.Lookup(t.Name); info != nil {
 			_, hasGetHash := info.Methods["get_hash"]
 			return hasGetHash
@@ -3982,6 +3987,19 @@ func (c *Checker) checkStructLit(expr *ast.Expr) *Type {
 		} else {
 			c.error(expr.Span, "struct %s has no field %q", sl.TypeName, sl.Fields[i].Name)
 		}
+	}
+	// If the struct literal has explicit type arguments (e.g., Dict<Sym, LType> {}),
+	// return a type WITH TypeArgs so downstream (lowerer, monomorphizer) can mangle
+	// correctly. Without this, variable types are bare "Dict" and classRenames
+	// last-writer-wins produces wrong mangled names.
+	if len(sl.TypeArgs) > 0 {
+		result := *info.Type
+		result.TypeArgs = nil
+		for _, ta := range sl.TypeArgs {
+			resolved := c.resolveTypeExpr(&ta)
+			result.TypeArgs = append(result.TypeArgs, resolved)
+		}
+		return &result
 	}
 	return info.Type
 }
