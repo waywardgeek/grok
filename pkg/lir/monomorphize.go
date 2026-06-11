@@ -1130,8 +1130,7 @@ func (m *monoPass) rewriteExpr(e *LExpr) {
 				}
 			}
 			// Update expression type from specialized function's return type
-			recvName := d.Receiver.Type.Name
-			// Use per-function ClassRenameMap (correct) instead of global classRenames (last-writer-wins)
+			recvName := d.Receiver.Type.Name			// Use per-function ClassRenameMap (correct) instead of global classRenames (last-writer-wins)
 			if len(m.currentClassRenameMap) > 0 {
 				if renamed, ok := m.currentClassRenameMap[recvName]; ok {
 					recvName = renamed
@@ -1329,6 +1328,9 @@ func substType(t *LType, subst map[string]*LType) *LType {
 func (m *monoPass) substTypeRemoveVars(t *LType) *LType {
 	if t == nil {
 		return nil
+	}
+	if t.Kind == LTyTypeVar {
+		return t
 	}
 	// Rewrite generic class/struct handles that have TypeArgs into their mangled names
 	if (t.Kind == LTyClassHandle || t.Kind == LTyStruct) && len(t.TypeArgs) > 0 && !hasTypeVars(t.TypeArgs) {

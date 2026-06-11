@@ -3381,13 +3381,24 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 		}
 	}
 
+	// Build return type: for generic classes, include type params as TypeArgs
+	// so substituteType can resolve them at call sites (e.g., Dict<Sym, i32>())
+	ctorReturn := info.Type
+	if len(typeParamNames) > 0 {
+		typeArgs := make([]*Type, len(typeParamNames))
+		for i, name := range typeParamNames {
+			typeArgs[i] = &Type{Kind: TyVar, Name: name}
+		}
+		ctorReturn = &Type{Kind: info.Type.Kind, Name: info.Type.Name, TypeArgs: typeArgs}
+	}
+
 	if hasExplicitCtor {
 		// Explicit constructor: define class name as a function
 		c.scope.Define(cls.Name, &Type{
 			Kind:                 TyFunc,
 			Name:                 cls.Name,
 			Params:               ctorParams,
-			Return:               info.Type,
+			Return:               ctorReturn,
 			TypeParamNames:       typeParamNames,
 			TypeParamConstraints: typeParamConstraints,
 		})
@@ -3396,7 +3407,7 @@ func (c *Checker) registerClass(cls *ast.ClassDecl) {
 		c.scope.Define(cls.Name, &Type{
 			Kind:                 TyFunc,
 			Name:                 cls.Name,
-			Return:               info.Type,
+			Return:               ctorReturn,
 			TypeParamNames:       typeParamNames,
 			TypeParamConstraints: typeParamConstraints,
 		})
