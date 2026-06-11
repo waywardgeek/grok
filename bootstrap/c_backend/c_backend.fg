@@ -51,6 +51,16 @@ class CGen {
   // Tuple type tracking
   tuple_types: Dict<Sym, string>?    // "field_types_key" → typedef name
   tuple_count: i32
+
+  // Generator function lookup (pre-built)
+  gen_funcs: Dict<Sym, bool>?
+
+  // Method name → receiver lookup for unknown-receiver calls
+  method_to_receiver: Dict<Sym, string>?
+
+  // Struct/class lookup by name
+  struct_by_name: Dict<Sym, LStructDecl>?
+  class_by_name: Dict<Sym, LClassDecl>?
 }
 
 struct CLambda {
@@ -104,6 +114,10 @@ func new_cgen(prog: LProgram?) -> CGen? {
     simple_enums: Dict<Sym, bool>(),
     tuple_types: Dict<Sym, string>(),
     tuple_count: 0,
+    gen_funcs: Dict<Sym, bool>(),
+    method_to_receiver: Dict<Sym, string>(),
+    struct_by_name: Dict<Sym, LStructDecl>(),
+    class_by_name: Dict<Sym, LClassDecl>(),
   }
   // Build interface lookup
   let ifaces = prog!.interfaces
@@ -112,13 +126,21 @@ func new_cgen(prog: LProgram?) -> CGen? {
     g.iface_by_name!.set(sym(ifaces[i].name), ifaces[i])
     i = i + 1
   }
-  // Build implements map from class declarations
+  // Build implements map and class lookup from class declarations
   let classes = prog!.classes
   i = 0
   while i < len(classes) {
+    g.class_by_name!.set(sym(classes[i].name), classes[i])
     if len(classes[i].implements) > 0 {
       g.impl_map!.set(sym(classes[i].name), classes[i].implements)
     }
+    i = i + 1
+  }
+  // Build struct lookup
+  let structs = prog!.structs
+  i = 0
+  while i < len(structs) {
+    g.struct_by_name!.set(sym(structs[i].name), structs[i])
     i = i + 1
   }
   // Build function lookup
@@ -128,8 +150,14 @@ func new_cgen(prog: LProgram?) -> CGen? {
     let mut key = funcs[i].name
     if funcs[i].receiver != "" {
       key = f"{funcs[i].receiver}.{funcs[i].name}"
+      // Build method→receiver reverse index
+      g.method_to_receiver!.set(sym(funcs[i].name), funcs[i].receiver)
     }
     g.func_by_name!.set(sym(key), funcs[i])
+    // Track generator functions
+    if !isnull(funcs[i].return_type) && funcs[i].return_type!.kind is TyGenerator {
+      g.gen_funcs!.set(sym(funcs[i].name), true)
+    }
     i = i + 1
   }
   return g
@@ -223,35 +251,7 @@ func sanitize_c_type_name(s: string) -> string {
   return sb.to_string()
 }
 
-// String prefix/suffix helpers (until deep == on slices is implemented)
-func str_starts_with(s: string, prefix: string) -> bool {
-  if len(prefix) > len(s) {
-    return false
-  }
-  let mut i = 0
-  while i < len(prefix) {
-    if s[i] != prefix[i] {
-      return false
-    }
-    i = i + 1
-  }
-  return true
-}
 
-func str_ends_with(s: string, suffix: string) -> bool {
-  if len(suffix) > len(s) {
-    return false
-  }
-  let offset = len(s) - len(suffix)
-  let mut i = 0
-  while i < len(suffix) {
-    if s[offset + i] != suffix[i] {
-      return false
-    }
-    i = i + 1
-  }
-  return true
-}
 
 func lc_first(s: string) -> string {
   if len(s) == 0 {
@@ -974,33 +974,27 @@ func CGen.resolve_field_type(self, owner_type: LType?, field: string) -> LType? 
       name = ren!.value
     }
   }
-  let structs = self.prog!.structs
-  let mut i = 0
-  while i < len(structs) {
-    if structs[i].name == name {
-      let mut j = 0
-      while j < len(structs[i].fields) {
-        if structs[i].fields[j].name == field {
-          return structs[i].fields[j].typ
-        }
-        j = j + 1
+  let s_entry = self.struct_by_name!.get(sym(name))
+  if !isnull(s_entry) {
+    let s = s_entry!.value
+    let mut j = 0
+    while j < len(s.fields) {
+      if s.fields[j].name == field {
+        return s.fields[j].typ
       }
+      j = j + 1
     }
-    i = i + 1
   }
-  let classes = self.prog!.classes
-  i = 0
-  while i < len(classes) {
-    if classes[i].name == name {
-      let mut j = 0
-      while j < len(classes[i].fields) {
-        if classes[i].fields[j].name == field {
-          return classes[i].fields[j].typ
-        }
-        j = j + 1
+  let c_entry = self.class_by_name!.get(sym(name))
+  if !isnull(c_entry) {
+    let c = c_entry!.value
+    let mut j = 0
+    while j < len(c.fields) {
+      if c.fields[j].name == field {
+        return c.fields[j].typ
       }
+      j = j + 1
     }
-    i = i + 1
   }
   return null
 }
@@ -1265,6 +1259,13 @@ func CGen.emit_builtin(self, d: LBuiltinData?) -> string {
       let elem_arg = self.emit_value(args[1])
       let slice_type = self.slice_type_name_from_value(args[0])
       return f"({{ forge_push(&{slice_arg}, {elem_arg}, {slice_type}); {slice_arg}; }})"
+    }
+  }
+  if name == "push_bytes" {
+    if len(args) >= 2 {
+      let dst_arg = self.emit_value(args[0])
+      let src_arg = self.emit_value(args[1])
+      return f"({{ forge_push_bytes(&{dst_arg}, {src_arg}); {dst_arg}; }})"
     }
   }
   if name == "pop" || name == "slice_pop" {
@@ -1903,15 +1904,10 @@ func CGen.emit_method_call_expr(self, e: LExpr?) -> string {
     }
   }
   if class_name == "" {
-    // Search for matching method
-    let funcs = self.prog!.functions
-    let mut i = 0
-    while i < len(funcs) {
-      if funcs[i].receiver != "" && funcs[i].name == d.method {
-        class_name = funcs[i].receiver
-        i = len(funcs) // break
-      }
-      i = i + 1
+    // Search for matching method via reverse index
+    let recv_entry = self.method_to_receiver!.get(sym(d.method))
+    if !isnull(recv_entry) {
+      class_name = recv_entry!.value
     }
   }
   let method_name = f"{class_name}_{d.method}"
@@ -1926,14 +1922,9 @@ func CGen.emit_class_alloc_expr(self, e: LExpr?) -> string {
   let name = d.class_name
   // Look up class fields for optional wrapping
   let mut class_fields: [LField] = []
-  let classes = self.prog!.classes
-  let mut i = 0
-  while i < len(classes) {
-    if classes[i].name == name {
-      class_fields = classes[i].fields
-      i = len(classes)
-    }
-    i = i + 1
+  let c_entry = self.class_by_name!.get(sym(name))
+  if !isnull(c_entry) {
+    class_fields = c_entry!.value.fields
   }
   let sb = new_string_builder()
   sb.write(f"({{ {name}* _p = malloc(sizeof({name})); *_p = ({name}){{")
@@ -2144,15 +2135,8 @@ func CGen.emit_func_lit_expr(self, e: LExpr?) -> string {
 }
 
 func CGen.is_gen_func_by_name(self, name: string) -> bool {
-  let funcs = self.prog!.functions
-  let mut i = 0
-  while i < len(funcs) {
-    if self.func_name(funcs[i]) == name && self.is_generator_func(funcs[i]) {
-      return true
-    }
-    i = i + 1
-  }
-  return false
+  let entry = self.gen_funcs!.get(sym(name))
+  return !isnull(entry)
 }
 
 func CGen.emit_args_boxed(self, func_name: string, args: [LValue?]) -> string {
@@ -2256,6 +2240,12 @@ func CGen.emit_side_effect(self, e: LExpr?) -> string {
       self.line(f"forge_push(&{slice_arg}, {elem_arg}, {slice_type});")
       return ""
     }
+    if d.name == "push_bytes" && len(d.args) >= 2 {
+      let dst_arg = self.emit_value(d.args[0])
+      let src_arg = self.emit_value(d.args[1])
+      self.line(f"forge_push_bytes(&{dst_arg}, {src_arg});")
+      return ""
+    }
   }
   return self.emit_expr_str(e)
 }
@@ -2276,17 +2266,12 @@ func CGen.emit_multi_assign(self, names: [string], types: [LType?], expr: LExpr?
   // Also check if the call is to a function that returns ErrorResult
   if !is_error_result && !isnull(expr) && expr!.kind is ExCall && !isnull(expr!.call) {
     let call_name = expr!.call!.func_name
-    let funcs = self.prog!.functions
-    let mut fi = 0
-    while fi < len(funcs) {
-      if self.func_name(funcs[fi]) == call_name && !isnull(funcs[fi].return_type) && funcs[fi].return_type!.kind is TyErrorResult {
-        is_error_result = true
-        if !isnull(funcs[fi].return_type!.elem) {
-          expr!.typ = funcs[fi].return_type
-        }
-        fi = len(funcs)  // break
+    let fn_entry = self.func_by_name!.get(sym(call_name))
+    if !isnull(fn_entry) && !isnull(fn_entry!.value.return_type) && fn_entry!.value.return_type!.kind is TyErrorResult {
+      is_error_result = true
+      if !isnull(fn_entry!.value.return_type!.elem) {
+        expr!.typ = fn_entry!.value.return_type
       }
-      fi = fi + 1
     }
   }
   if len(names) == 2 && is_error_result {
@@ -2743,10 +2728,10 @@ func CGen.resolve_tag_constant(self, d: LTypeSwitchData, case_type: LType?) -> s
   if !isnull(case_type) && case_type!.name != "" {
     variant_name = case_type!.name
     let prefix = f"{enum_name}_"
-    if str_starts_with(variant_name, prefix) {
+    if str_has_prefix(variant_name, prefix) {
       variant_name = variant_name[len(prefix):len(variant_name)]
       // Strip _Data suffix if present
-      if str_ends_with(variant_name, "_Data") {
+      if str_has_suffix(variant_name, "_Data") {
         variant_name = variant_name[0:len(variant_name) - 5]
       }
     }
@@ -3031,13 +3016,9 @@ func CGen.infer_expr_type(self, e: LExpr?) -> LType? {
   // Try to infer from call
   if e!.kind is ExCall {
     let d = e!.call!
-    let funcs = self.prog!.functions
-    let mut i = 0
-    while i < len(funcs) {
-      if funcs[i].name == d.func_name && !isnull(funcs[i].return_type) && !(funcs[i].return_type!.kind is TyAny) {
-        return funcs[i].return_type
-      }
-      i = i + 1
+    let fn_entry = self.func_by_name!.get(sym(d.func_name))
+    if !isnull(fn_entry) && !isnull(fn_entry!.value.return_type) && !(fn_entry!.value.return_type!.kind is TyAny) {
+      return fn_entry!.value.return_type
     }
   }
   // Try method call
@@ -3052,16 +3033,10 @@ func CGen.infer_expr_type(self, e: LExpr?) -> LType? {
           type_name = ren!.value
         }
       }
-      let funcs = self.prog!.functions
-      let mut i = 0
-      while i < len(funcs) {
-        if funcs[i].receiver == type_name && funcs[i].name == d.method {
-          if !isnull(funcs[i].return_type) && !(funcs[i].return_type!.kind is TyAny) {
-            return funcs[i].return_type
-          }
-          i = len(funcs)
-        }
-        i = i + 1
+      let key = f"{type_name}.{d.method}"
+      let fn_entry = self.func_by_name!.get(sym(key))
+      if !isnull(fn_entry) && !isnull(fn_entry!.value.return_type) && !(fn_entry!.value.return_type!.kind is TyAny) {
+        return fn_entry!.value.return_type
       }
     }
   }

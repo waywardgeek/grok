@@ -95,9 +95,7 @@ func compile_pipeline(inputs: [string], output: string) -> bool {
 
   // Desugar
   desugar_all(merged!)
-
-
-  // Check
+  eprintln("phase: check")
   let checker = check_file(merged!)
   if len(checker.errors) > 0 {
     let mut j = 0
@@ -108,7 +106,7 @@ func compile_pipeline(inputs: [string], output: string) -> bool {
     return false
   }
 
-  // Lower
+  eprintln("phase: lower")
   let lowerer = new_lowerer()
   let prog = lowerer.lower_file(merged)
   if isnull(prog) {
@@ -116,18 +114,17 @@ func compile_pipeline(inputs: [string], output: string) -> bool {
     return false
   }
 
-  // Optimize
+  eprintln("phase: optimize")
   optimize(prog!)
-
-  // Monomorphize
+  eprintln("phase: mono")
   monomorphize(prog)
+  eprintln("phase: validate")
   validate_post_mono(prog)
-
-  // Rewrite impl renames
+  eprintln("phase: rewrite")
   rewrite_impl_renames(prog)
-
-  // Emit C
+  eprintln("phase: emit_c")
   let c_src = emit_c(prog)
+  eprintln("phase: write")
 
   // Write output
   let ok = write_file(output, c_src)

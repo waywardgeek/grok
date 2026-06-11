@@ -44,11 +44,17 @@
 /* Create an empty slice */
 #define forge_slice_empty(SliceName) ((SliceName){.data = NULL, .len = 0, .cap = 0})
 
-/* Push an element (grows by 2x when full) */
+/* Push an element (grows by 2x when full).
+ * When cap==0, always malloc fresh (data may point to a static string literal). */
 #define forge_push(slice_ptr, elem, SliceName) do { \
     if ((slice_ptr)->len >= (slice_ptr)->cap) { \
         int32_t _newcap = (slice_ptr)->cap == 0 ? 4 : (slice_ptr)->cap * 2; \
-        (slice_ptr)->data = realloc((slice_ptr)->data, sizeof(*(slice_ptr)->data) * _newcap); \
+        void* _old = (slice_ptr)->cap == 0 ? NULL : (slice_ptr)->data; \
+        void* _new = realloc(_old, sizeof(*(slice_ptr)->data) * _newcap); \
+        if ((slice_ptr)->cap == 0 && (slice_ptr)->len > 0) { \
+            memcpy(_new, (slice_ptr)->data, sizeof(*(slice_ptr)->data) * (slice_ptr)->len); \
+        } \
+        (slice_ptr)->data = _new; \
         (slice_ptr)->cap = _newcap; \
     } \
     (slice_ptr)->data[(slice_ptr)->len++] = (elem); \
@@ -115,6 +121,27 @@ FORGE_SLICE_DEF(forge_string, ForgeSlice_forge_string)
 })
 
 #define FORGE_STR_EMPTY ((forge_string){.data = NULL, .len = 0, .cap = 0})
+
+/* Bulk-append bytes from src string to dst string.
+ * Grows dst with doubling strategy, then memcpy.
+ * Handles cap==0 (static string literal data) safely. */
+static inline void forge_push_bytes(forge_string* dst, forge_string src) {
+    if (src.len == 0) return;
+    int32_t needed = dst->len + src.len;
+    if (needed > dst->cap) {
+        int32_t newcap = dst->cap == 0 ? 64 : dst->cap;
+        while (newcap < needed) newcap *= 2;
+        uint8_t* old = dst->cap == 0 ? NULL : dst->data;
+        uint8_t* buf = (uint8_t*)realloc(old, newcap);
+        if (dst->cap == 0 && dst->len > 0) {
+            memcpy(buf, dst->data, dst->len);
+        }
+        dst->data = buf;
+        dst->cap = newcap;
+    }
+    memcpy(dst->data + dst->len, src.data, src.len);
+    dst->len = needed;
+}
 
 /* Create from null-terminated C string (heap-copies) */
 static inline forge_string forge_str_from_cstr(const char* s) {

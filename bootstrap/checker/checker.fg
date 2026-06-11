@@ -1721,7 +1721,7 @@ forge checker {
           if m.target_member != nil {
             let target = sym_to_string(m.target_member!)
             if target != method_name {
-              if str_starts_with(method_name, "set_") {
+              if str_has_prefix(method_name, "set_") {
                 // Setter: set_next → set_from_next
                 let prefixed = "set_" + target
                 let existing2 = class_info!.methods.get(sym(prefixed))
@@ -3004,7 +3004,6 @@ forge checker {
     if name == "char_to_string" { return make_string_type() }
     if name == "string_to_bytes" { return make_sequence_type(make_uint_type(8)) }
     if name == "bytes_to_string" { return make_string_type() }
-    if name == "range" { return make_generator_type(make_int_type(32)) }
     if name == "make_channel" {
       if len(type_args) > 0 {
         return make_channel_type(self.resolve_type_expr(type_args[0]))
@@ -3057,7 +3056,7 @@ forge checker {
     }
 
     // String builtins
-    if name == "str_contains" || name == "str_starts_with" || name == "str_ends_with" {
+    if name == "str_contains" {
       return make_bool_type()
     }
     if name == "str_index" || name == "str_len" || name == "str_index_of" { return make_int_type(32) }

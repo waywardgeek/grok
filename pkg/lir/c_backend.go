@@ -1783,6 +1783,12 @@ func (g *cGen) emitSideEffect(e *LExpr) string {
 			g.linef("forge_push(&%s, %s, %s);", sliceArg, elemArg, sliceType)
 			return ""
 		}
+		if d.Name == "push_bytes" && len(d.Args) >= 2 {
+			dstArg := g.emitValue(&d.Args[0])
+			srcArg := g.emitValue(&d.Args[1])
+			g.linef("forge_push_bytes(&%s, %s);", dstArg, srcArg)
+			return ""
+		}
 	}
 	return g.emitExprStr(e)
 }
@@ -2485,6 +2491,15 @@ func (g *cGen) emitBuiltin(d *LBuiltinData) string {
 				sliceArg, elemArg, sliceType, sliceArg)
 		}
 		return "/* append: missing args */"
+
+	case "push_bytes":
+		if len(d.Args) >= 2 {
+			dstArg := g.emitValue(&d.Args[0])
+			srcArg := g.emitValue(&d.Args[1])
+			return fmt.Sprintf("({ forge_push_bytes(&%s, %s); %s; })",
+				dstArg, srcArg, dstArg)
+		}
+		return "/* push_bytes: missing args */"
 
 	case "pop", "slice_pop":
 		if len(d.Args) > 0 {
@@ -3862,7 +3877,7 @@ func (g *cGen) inferExprType(e *LExpr) *LType {
 			if len(d.Args) > 0 && d.Args[0].Type != nil && d.Args[0].Type.Kind == LTySlice {
 				return d.Args[0].Type.Elem
 			}
-		case "push", "append", "slice_push", "slice_append":
+		case "push", "append", "slice_push", "slice_append", "push_bytes":
 			if len(d.Args) > 0 && d.Args[0].Type != nil && d.Args[0].Type.Kind == LTySlice {
 				return d.Args[0].Type
 			}

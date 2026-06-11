@@ -138,6 +138,7 @@ func is_side_effect_expr(e: LExpr) -> bool {
           b!.name == "eprint" ||
           b!.name == "append" ||
           b!.name == "slice_push" ||
+          b!.name == "push_bytes" ||
           b!.name == "slice_pop" ||
           b!.name == "slice_clear" ||
           b!.name == "slice_reverse" ||

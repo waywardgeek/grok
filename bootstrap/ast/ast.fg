@@ -464,7 +464,7 @@ func load_stdlib(dir: string) -> File? {
     let mut combined: File? = nil
     for i in range(0, len(entries)) {
         let entry = entries[i]
-        if str_ends_with(entry, ".fg") {
+        if str_has_suffix(entry, ".fg") {
             let path = f"{dir}/{entry}"
             let read_result = read_file(path)
             let src = read_result._0

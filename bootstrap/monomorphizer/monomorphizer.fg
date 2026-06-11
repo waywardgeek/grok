@@ -2464,11 +2464,11 @@ func type_to_mangle(t: LType?) -> string {
       }
       return name
     }
-    TySlice => { return "slice_{type_to_mangle(t!.elem)}" }
-    TyMap => { return "map_{type_to_mangle(t!.key)}_{type_to_mangle(t!.elem)}" }
-    TyOptional => { return "opt_{type_to_mangle(t!.elem)}" }
+    TySlice => { return f"slice_{type_to_mangle(t!.elem)}" }
+    TyMap => { return f"map_{type_to_mangle(t!.key)}_{type_to_mangle(t!.elem)}" }
+    TyOptional => { return f"opt_{type_to_mangle(t!.elem)}" }
     TyTaggedUnion => { return f"E{t!.name}" }
-    TyErrorResult => { return "res_{type_to_mangle(t!.elem)}" }
+    TyErrorResult => { return f"res_{type_to_mangle(t!.elem)}" }
     TyAny => {
       if t!.name != "" {
         return f"I{t!.name}"
