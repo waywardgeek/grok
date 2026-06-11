@@ -1163,6 +1163,9 @@ func subst_type(t: LType?, subst: Dict<Sym, LType?>?) -> LType? {
   if isnull(t) {
     return nil
   }
+  if isnull(subst) {
+    return t
+  }
   if t!.kind is TyTypeVar {
     let concrete = subst!.get(sym(t!.name))
     if !isnull(concrete) {
@@ -2383,9 +2386,12 @@ func clone_expr(e: LExpr?, subst: Dict<Sym, LType?>?) -> LExpr? {
         }
       }
     }
-    _ => {}
+    _ => {
+      // Fallback — substitute type but keep data as-is (e.g. MakeSlice, MakeMap, Const)
+      e!.typ = typ
+    }
   }
-  // Fallback — return as-is (e.g. MakeSlice, MakeMap)
+  // Fallback — return with substituted type
   return e
 }
 
