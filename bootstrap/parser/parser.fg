@@ -161,18 +161,45 @@ forge parser {
 
   func Parser.parse_forge_block(self) -> (ForgeBlock?, error) {
     let start = self.peek().span.start
-    self.expect(KForge)?
-    let name_tok = self.expect(LIdent)?
-    let block = ForgeBlock { name: sym(name_tok!.text), span: Span { start: start, end: start } }
-    self.expect(PLBrace)?
-    self.skip_newlines()
 
-    while self.peek().kind != PRBrace && self.peek().kind != SEOF {
-      self.parse_forge_item(block)?
-      self.skip_newlines()
+    // Implicit forge block: if file doesn't start with `forge`, derive name from filename
+    let implicit = self.peek().kind != KForge
+    let mut block: ForgeBlock
+
+    if implicit {
+      // Derive module name from filename: "/path/foo.fg" -> "foo"
+      let fname = self.lex!.filename!.get_name()
+      let parts = str_split(fname, "/")
+      let mut base = parts[len(parts) - 1]
+      let dot_parts = str_split(base, ".")
+      base = dot_parts[0]
+      if len(base) == 0 {
+        base = "main"
+      }
+      block = ForgeBlock { name: sym(base), span: Span { start: start, end: start } }
+    } else {
+      self.expect(KForge)?
+      let name_tok = self.expect(LIdent)?
+      block = ForgeBlock { name: sym(name_tok!.text), span: Span { start: start, end: start } }
+      self.expect(PLBrace)?
     }
 
-    self.expect(PRBrace)?
+    self.skip_newlines()
+
+    let end_kind = PRBrace
+    if implicit {
+      while self.peek().kind != SEOF {
+        self.parse_forge_item(block)?
+        self.skip_newlines()
+      }
+    } else {
+      while self.peek().kind != PRBrace && self.peek().kind != SEOF {
+        self.parse_forge_item(block)?
+        self.skip_newlines()
+      }
+      self.expect(PRBrace)?
+    }
+
     block.span = self.make_span(start)
     return (block, null)
   }
@@ -892,6 +919,22 @@ forge parser {
       }
     }
 
+    // Optional where clause
+    self.skip_newlines()
+    while self.peek().kind == KWhere {
+      self.next()
+      while true {
+        let wc = self.parse_where_clause()?
+        array_append<ClassDecl, WhereClause>(cls, wc!)
+        if self.peek().kind == PComma {
+          self.next()
+        } else {
+          break
+        }
+      }
+      self.skip_newlines()
+    }
+
     // Optional implements
     if self.peek().kind == KImplements || (!isnull(self.peek_annotation()) && self.peek_annotation()! == KImplements) {
       self.next()
@@ -1142,9 +1185,15 @@ forge parser {
   func Parser.parse_const_decl(self) -> (ConstDecl?, error) {
     let start = self.peek().span.start
     self.next()  // consume 'let'
+    let mut is_mut = false
+    if self.peek().kind == KMut {
+      self.next()
+      is_mut = true
+    }
     let name = self.expect_ident()?
     let decl = ConstDecl {
       name: sym(name!.text),
+      is_public: false,
       span: Span { start: start, end: start },
     }
 

@@ -365,6 +365,17 @@ forge parser {
         self.next()
         return self.parse_fstring(tok)
       }
+      LBacktickSym => {
+        self.next()
+        // Desugar `name` → sym("name")
+        let sym_name = sym("sym")
+        let sym_ident = Expr { kind: Ident(sym_name), span: tok.span }
+        let str_arg = Expr { kind: StringLit(tok.text), span: tok.span }
+        let args: [Expr] = [str_arg]
+        let type_args: [TypeExpr] = []
+        let mut_args: [bool] = []
+        return (Expr { kind: Call(sym_ident, type_args, args, mut_args), span: tok.span }, null)
+      }
       KTrue => {
         self.next()
         return (Expr { BoolLit(true), span: tok.span }, null)

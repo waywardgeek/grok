@@ -321,6 +321,7 @@ func loadStdlib(dir string) *ast.File {
 		}
 		file, err := parser.ParseFile(string(src), path)
 		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to parse stdlib file %s: %v\n", path, err)
 			continue
 		}
 		if combined == nil {

@@ -21,7 +21,7 @@ forge lexer {
     KLet KIf KElse KFor KIn KWhile KMatch KReturn KBreak KContinue
     KCascade KSpawn KSelect KCase KLock KYield
     // Literals
-    LIdent LIntLit LFloatLit LStringLit LTripleString LFString LCharLit
+    LIdent LIntLit LFloatLit LStringLit LTripleString LFString LCharLit LBacktickSym
     // Punctuation
     PLParen PRParen PLBrace PRBrace PLBracket PRBracket
     PComma PColon PDot PArrow PFatArrow PBiArrow PPipe PQuestion PLt PGt
@@ -328,6 +328,23 @@ forge lexer {
     return make_token(LCharLit, buf.to_string(), start, self.current_pos())
   }
 
+  func Lexer.scan_backtick_sym(self, start: Pos) -> Token {
+    self.advance()  // opening `
+    let buf = new_string_builder()
+    while self.pos < len(self.src) {
+      let ch = self.peek_char()
+      if ch == '`' {
+        self.advance()  // closing `
+        break
+      }
+      if ch == '\n' {
+        break  // unterminated
+      }
+      buf.write_byte(self.advance())
+    }
+    return make_token(LBacktickSym, buf.to_string(), start, self.current_pos())
+  }
+
   func Lexer.scan_string(self, start: Pos) -> Token {
     self.advance()  // opening "
 
@@ -547,6 +564,11 @@ forge lexer {
     // Character literal
     if ch == '\'' {
       return self.scan_char_lit(start)
+    }
+
+    // Backtick symbol literal: `name` → desugared to sym("name") in parser
+    if ch == '`' {
+      return self.scan_backtick_sym(start)
     }
 
     // Number

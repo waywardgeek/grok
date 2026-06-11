@@ -121,6 +121,7 @@ forge ast {
   relation ArrayList ClassDecl:ctp owns [TypeParam:ctp]
   relation ArrayList ClassDecl:cf owns [Field:cf]
   relation ArrayList ClassDecl:cm owns [FuncDecl:cm]
+  relation ArrayList ClassDecl:cwc owns [WhereClause:cwc]
 
   class StructDecl {
     name: Sym?
@@ -469,14 +470,17 @@ func load_stdlib(dir: string) -> File? {
             let src = read_result._0
             let result = parse_file(src, path)
             let file = result._0
-            if file != nil {
-                if combined == nil {
-                    combined = file
-                } else {
-                    let blocks = file!.fb_children()
-                    for j in range(0, len(blocks)) {
-                        array_append<File, ForgeBlock>(combined!, blocks[j])
-                    }
+            let err = result._1
+            if file == nil {
+                eprintln(f"warning: failed to parse stdlib file {path}")
+                continue
+            }
+            if combined == nil {
+                combined = file
+            } else {
+                let blocks = file!.fb_children()
+                for j in range(0, len(blocks)) {
+                    array_append<File, ForgeBlock>(combined!, blocks[j])
                 }
             }
         }
@@ -803,6 +807,207 @@ func ast_collect_call_names_block(block: Block, names: Dict<Sym, bool>) {
     }
 }
 
+// --- collect variable references (for constant merging) ---
+
+func ast_collect_var_refs_in_expr(expr: Expr?, names: Dict<Sym, bool>) {
+    if expr == nil {
+        return
+    }
+    match expr!.kind {
+        Ident(id_name) => {
+            names.set(sym(id_name.name), true)
+        }
+        Call(func_expr, type_args, args, mut_args) => {
+            ast_collect_var_refs_in_expr(func_expr, names)
+            for i in range(0, len(args)) {
+                ast_collect_var_refs_in_expr(args[i], names)
+            }
+        }
+        Binary(left, op, right) => {
+            ast_collect_var_refs_in_expr(left, names)
+            ast_collect_var_refs_in_expr(right, names)
+        }
+        Unary(op, operand) => {
+            ast_collect_var_refs_in_expr(operand, names)
+        }
+        FieldAccess(receiver, field_name) => {
+            ast_collect_var_refs_in_expr(receiver, names)
+        }
+        MethodCall(receiver, method, type_args, args, mut_args) => {
+            ast_collect_var_refs_in_expr(receiver, names)
+            for i in range(0, len(args)) {
+                ast_collect_var_refs_in_expr(args[i], names)
+            }
+        }
+        Index(receiver, index) => {
+            ast_collect_var_refs_in_expr(receiver, names)
+            ast_collect_var_refs_in_expr(index, names)
+        }
+        StructLit(type_name, type_args, fields) => {
+            for i in range(0, len(fields)) {
+                ast_collect_var_refs_in_expr(fields[i].value, names)
+            }
+        }
+        Lambda(params, return_type, body) => {
+            ast_collect_var_refs_in_block(body, names)
+        }
+        Slice(receiver, low, high) => {
+            ast_collect_var_refs_in_expr(receiver, names)
+            ast_collect_var_refs_in_expr(low, names)
+            ast_collect_var_refs_in_expr(high, names)
+        }
+        ListLit(elems) => {
+            for i in range(0, len(elems)) {
+                ast_collect_var_refs_in_expr(elems[i], names)
+            }
+        }
+        MapLit(keys, values) => {
+            for i in range(0, len(keys)) {
+                ast_collect_var_refs_in_expr(keys[i], names)
+                ast_collect_var_refs_in_expr(values[i], names)
+            }
+        }
+        TupleLit(elems) => {
+            for i in range(0, len(elems)) {
+                ast_collect_var_refs_in_expr(elems[i], names)
+            }
+        }
+        Cast(target_type, operand) => {
+            ast_collect_var_refs_in_expr(operand, names)
+        }
+        Unwrap(operand) => {
+            ast_collect_var_refs_in_expr(operand, names)
+        }
+        Try(operand) => {
+            ast_collect_var_refs_in_expr(operand, names)
+        }
+        Is(operand, variant) => {
+            ast_collect_var_refs_in_expr(operand, names)
+        }
+        IfElse(cond, then_block, else_ifs, else_block) => {
+            ast_collect_var_refs_in_expr(cond, names)
+            ast_collect_var_refs_in_block(then_block, names)
+            ast_collect_var_refs_in_block(else_block, names)
+            for i in range(0, len(else_ifs)) {
+                ast_collect_var_refs_in_expr(else_ifs[i].condition, names)
+                if else_ifs[i].body != nil {
+                    ast_collect_var_refs_in_block(else_ifs[i].body!, names)
+                }
+            }
+        }
+        StringInterp(parts) => {
+            for i in range(0, len(parts)) {
+                ast_collect_var_refs_in_expr(parts[i], names)
+            }
+        }
+        Match(value, arms) => {
+            ast_collect_var_refs_in_expr(value, names)
+            for i in range(0, len(arms)) {
+                if arms[i].body != nil {
+                    ast_collect_var_refs_in_block(arms[i].body!, names)
+                }
+                ast_collect_var_refs_in_expr(arms[i].guard, names)
+            }
+        }
+        _ => {}
+    }
+}
+
+func ast_collect_var_refs_in_stmt(stmt: Stmt, names: Dict<Sym, bool>) {
+    match stmt.kind {
+        VarDecl(name, names_list, type_expr, is_mut, value) => {
+            if value != nil {
+                ast_collect_var_refs_in_expr(value, names)
+            }
+        }
+        Assign(target, value) => {
+            ast_collect_var_refs_in_expr(target, names)
+            ast_collect_var_refs_in_expr(value, names)
+        }
+        Return(value) => {
+            if value != nil {
+                ast_collect_var_refs_in_expr(value, names)
+            }
+        }
+        ExprStmt(expr) => {
+            ast_collect_var_refs_in_expr(expr, names)
+        }
+        If(condition, then_block, else_ifs, else_block) => {
+            ast_collect_var_refs_in_expr(condition, names)
+            ast_collect_var_refs_in_block(then_block, names)
+            if else_block != nil {
+                ast_collect_var_refs_in_block(else_block!, names)
+            }
+            for i in range(0, len(else_ifs)) {
+                ast_collect_var_refs_in_expr(else_ifs[i].condition, names)
+                if else_ifs[i].body != nil {
+                    ast_collect_var_refs_in_block(else_ifs[i].body!, names)
+                }
+            }
+        }
+        For(var_name, index_var, collection, body) => {
+            ast_collect_var_refs_in_expr(collection, names)
+            ast_collect_var_refs_in_block(body, names)
+        }
+        While(condition, body) => {
+            ast_collect_var_refs_in_expr(condition, names)
+            ast_collect_var_refs_in_block(body, names)
+        }
+        Match(value, arms) => {
+            ast_collect_var_refs_in_expr(value, names)
+            for i in range(0, len(arms)) {
+                if arms[i].body != nil {
+                    ast_collect_var_refs_in_block(arms[i].body!, names)
+                }
+                ast_collect_var_refs_in_expr(arms[i].guard, names)
+            }
+        }
+        BlockStmt(block) => {
+            ast_collect_var_refs_in_block(block, names)
+        }
+        Cascade(body) => {
+            ast_collect_var_refs_in_block(body, names)
+        }
+        Spawn(body) => {
+            ast_collect_var_refs_in_block(body, names)
+        }
+        Yield(value) => {
+            ast_collect_var_refs_in_expr(value, names)
+        }
+        IfLet(pattern, value, then_block, else_block) => {
+            ast_collect_var_refs_in_expr(value, names)
+            ast_collect_var_refs_in_block(then_block, names)
+            if else_block != nil {
+                ast_collect_var_refs_in_block(else_block!, names)
+            }
+        }
+        LetElse(pattern, value, else_block) => {
+            ast_collect_var_refs_in_expr(value, names)
+            ast_collect_var_refs_in_block(else_block, names)
+        }
+        Lock(mutex, body) => {
+            ast_collect_var_refs_in_expr(mutex, names)
+            ast_collect_var_refs_in_block(body, names)
+        }
+        Select(cases) => {
+            for i in range(0, len(cases)) {
+                ast_collect_var_refs_in_expr(cases[i].expr, names)
+                if cases[i].body != nil {
+                    ast_collect_var_refs_in_block(cases[i].body!, names)
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+func ast_collect_var_refs_in_block(block: Block, names: Dict<Sym, bool>) {
+    let stmts = block.bs_children()
+    for i in range(0, len(stmts)) {
+        ast_collect_var_refs_in_stmt(stmts[i], names)
+    }
+}
+
 // --- collect used function names from user code ---
 
 func ast_collect_used_func_names(file: File?) -> Dict<Sym, bool> {
@@ -956,6 +1161,21 @@ func merge_stdlib(file: File?, std_file: File?) {
         let entry = std_class_map.get(type_keys[i])
         if entry != nil {
             std_classes = append(std_classes, entry!.value)
+        }
+    }
+
+    // Also merge classes called as constructors (e.g. Dict<Sym, i32>())
+    // — class names appear in usedFuncNames since constructors look like function calls
+    let func_name_keys = used_func_names.keys()
+    for i in range(0, len(func_name_keys)) {
+        let fname = func_name_keys[i]
+        let cls_entry = std_class_map.get(fname)
+        if cls_entry != nil {
+            let already = used_types.get(fname)
+            if already == nil {
+                used_types.set(fname, true)
+                std_classes = append(std_classes, cls_entry!.value)
+            }
         }
     }
 
@@ -1143,8 +1363,89 @@ func merge_stdlib(file: File?, std_file: File?) {
         }
     }
 
+    // Also merge external methods (func T.method) whose receiver type is a merged class
+    for bi in range(0, len(std_blocks)) {
+        let fns = std_blocks[bi].fd_children()
+        for i in range(0, len(fns)) {
+            if fns[i].receiver_type != nil {
+                let recv_name = fns[i].receiver_type!.name
+                let recv_merged = merged_classes.get(sym(recv_name))
+                if recv_merged != nil {
+                    let fn_name = fns[i].name!.name
+                    let already = merged_funcs.get(sym(fn_name))
+                    if already == nil {
+                        merged_funcs.set(sym(fn_name), true)
+                        std_funcs = append(std_funcs, fns[i])
+                    }
+                }
+            }
+        }
+    }
+
+    // Merge interfaces referenced by where clauses on merged classes and functions
+    for i in range(0, len(std_classes)) {
+        let wheres = std_classes[i].cwc_children()
+        for wi in range(0, len(wheres)) {
+            if wheres[wi].constraint != nil {
+                let cname = wheres[wi].constraint!.name
+                let already = used_ifaces.get(sym(cname))
+                if already == nil {
+                    used_ifaces.set(sym(cname), true)
+                    let iface_entry = std_iface_map.get(sym(cname))
+                    if iface_entry != nil {
+                        std_ifaces = append(std_ifaces, iface_entry!.value)
+                    }
+                }
+            }
+        }
+    }
+    for i in range(0, len(std_funcs)) {
+        let wheres = std_funcs[i].where_children()
+        for wi in range(0, len(wheres)) {
+            if wheres[wi].constraint != nil {
+                let cname = wheres[wi].constraint!.name
+                let already = used_ifaces.get(sym(cname))
+                if already == nil {
+                    used_ifaces.set(sym(cname), true)
+                    let iface_entry = std_iface_map.get(sym(cname))
+                    if iface_entry != nil {
+                        std_ifaces = append(std_ifaces, iface_entry!.value)
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect stdlib constants referenced by merged functions
+    let std_const_map = Dict<Sym, ConstDecl>()
+    for bi in range(0, len(std_blocks)) {
+        let consts = std_blocks[bi].con_children()
+        for i in range(0, len(consts)) {
+            if consts[i].name != nil {
+                std_const_map.set(sym(consts[i].name!.name), consts[i])
+            }
+        }
+    }
+    let merged_var_refs = Dict<Sym, bool>()
+    for i in range(0, len(std_funcs)) {
+        if std_funcs[i].body != nil {
+            ast_collect_var_refs_in_block(std_funcs[i].body!, merged_var_refs)
+        }
+    }
+    let mut std_constants: [ConstDecl] = []
+    let const_keys = std_const_map.keys()
+    for i in range(0, len(const_keys)) {
+        let ref_entry = merged_var_refs.get(const_keys[i])
+        if ref_entry != nil {
+            let c_entry = std_const_map.get(const_keys[i])
+            if c_entry != nil {
+                std_constants = append(std_constants, c_entry!.value)
+            }
+        }
+    }
+
     // Nothing to merge
-    let total = (len(std_ifaces) + len(std_classes) + len(std_funcs) + len(std_relations))
+    let total = (len(std_ifaces) + len(std_classes) + len(std_funcs) + len(std_relations) + len(std_constants))
     if total == 0 {
         return
     }
@@ -1163,6 +1464,9 @@ func merge_stdlib(file: File?, std_file: File?) {
         }
         for i in range(0, len(std_relations)) {
             array_append<ForgeBlock, RelationDecl>(block0, std_relations[i])
+        }
+        for i in range(0, len(std_constants)) {
+            array_append<ForgeBlock, ConstDecl>(block0, std_constants[i])
         }
     }
 }
