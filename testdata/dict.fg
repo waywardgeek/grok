@@ -32,13 +32,6 @@ forge dict_test {
       println("y removed")
     }
 
-    // String convenience methods
-    let d2 = Dict<Sym, i32>()
-    d2.set_str("hello", 99)
-    if d2.has_str("hello") {
-      println("has hello")
-    }
-
     // Sym interning - reference equality
     let a = sym("hello")
     let b = sym("hello")

@@ -497,23 +497,6 @@ forge std {
     return result
   }
 
-  // String convenience methods (auto-intern via sym())
-  pub func Dict.set_str<V>(self, key: string, value: V) {
-    self.set(sym(key), value)
-  }
-
-  pub func Dict.get_str<V>(self, key: string) -> DictEntry<Sym, V>? {
-    return self.get(sym(key))
-  }
-
-  pub func Dict.has_str<V>(self, key: string) -> bool {
-    return self.has(sym(key))
-  }
-
-  pub func Dict.remove_str<V>(self, key: string) -> bool {
-    return self.remove(sym(key))
-  }
-
   // --- Parsing ---
 
   // Parse a string as an integer. Returns 0 on failure.
