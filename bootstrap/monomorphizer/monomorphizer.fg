@@ -2387,8 +2387,24 @@ func clone_expr(e: LExpr?, subst: Dict<Sym, LType?>?) -> LExpr? {
       }
     }
     _ => {
-      // Fallback — substitute type but keep data as-is (e.g. MakeSlice, MakeMap, Const)
-      e!.typ = typ
+      // Fallback — create NEW expr with substituted type, preserving data
+      // MUST NOT mutate e — it may be cloned again for other specializations
+      return LExpr {
+        kind: e!.kind,
+        typ: typ,
+        bin_op: e!.bin_op, un_op: e!.un_op, cast: e!.cast,
+        struct_field: e!.struct_field, class_get: e!.class_get,
+        index_get: e!.index_get, slice_data: e!.slice_data,
+        call: e!.call, method_call: e!.method_call, builtin: e!.builtin,
+        struct_lit: e!.struct_lit, class_alloc: e!.class_alloc,
+        make_channel: e!.make_channel, wrap_opt: e!.wrap_opt,
+        unwrap_opt: e!.unwrap_opt, is_null: e!.is_null,
+        variant_construct: e!.variant_construct, variant_tag: e!.variant_tag,
+        variant_data: e!.variant_data, extract_value: e!.extract_value,
+        extract_error: e!.extract_error, make_result: e!.make_result,
+        env_get: e!.env_get, func_ref: e!.func_ref, func_lit: e!.func_lit,
+        format: e!.format,
+      }
     }
   }
   // Fallback — return with substituted type

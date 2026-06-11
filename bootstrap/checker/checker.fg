@@ -828,6 +828,26 @@ forge checker {
       ErrorResult(ok, err) => {
         return make_error_result_type(substitute_type(ok, bindings), substitute_type(err, bindings))
       }
+      Class(name) => {
+        if len(t.type_args) > 0 {
+          let mut new_args: [Type] = []
+          for a in t.type_args {
+            append(new_args, substitute_type(a, bindings))
+          }
+          return Type { kind: t.kind, bits: t.bits, type_args: new_args }
+        }
+        return t
+      }
+      Struct(name) => {
+        if len(t.type_args) > 0 {
+          let mut new_args: [Type] = []
+          for a in t.type_args {
+            append(new_args, substitute_type(a, bindings))
+          }
+          return Type { kind: t.kind, bits: t.bits, type_args: new_args }
+        }
+        return t
+      }
       _ => { return t }
     }
     return t
@@ -1133,6 +1153,14 @@ forge checker {
       return info!.type_val
     }
 
+    // Check if this might be a type variable from a generic class/function context.
+    // Type variables are short uppercase names not in scope or registry.
+    // The Go checker never hits this because it uses internal Type objects directly;
+    // the bootstrap sometimes round-trips through type_to_type_expr → resolve_type_expr.
+    if span.start.line == 0 && span.start.column == 0 {
+      // Zero-span means this TypeExpr came from type_to_type_expr (synthetic)
+      return make_typevar_type(name)
+    }
     eprintln(f"checker: unknown type: {name} at {span.start.file}:{itoa(span.start.line as i64)}:{itoa(span.start.column as i64)}")
     os_exit(1)
     return make_error_type()
@@ -1468,11 +1496,19 @@ forge checker {
     }
 
     let ctparams = cls.ctp_children()
+    let mut type_var_args: [Type] = []
     for tp in ctparams {
       if tp.name != nil {
         let tpname = sym_to_string(tp.name!)
         append(info.type_param_names, tpname)
+        append(type_var_args, make_typevar_type(tpname))
       }
+    }
+    // Build constructor return type with TypeVar args (separate from info.type_val)
+    let ctor_return = if len(type_var_args) > 0 {
+      Type { kind: Class(cname), bits: 0, type_args: type_var_args }
+    } else {
+      info.type_val
     }
 
     // Push scope for type params during field/method resolution
@@ -1547,10 +1583,10 @@ forge checker {
     }
 
     if has_explicit_ctor {
-      self.scope.define(cname, make_func_type(ctor_params, info.type_val, tpnames))
+      self.scope.define(cname, make_func_type(ctor_params, ctor_return, tpnames))
     } else {
       // No explicit constructor — struct-literal construction
-      self.scope.define(cname, make_func_type([], info.type_val, tpnames))
+      self.scope.define(cname, make_func_type([], ctor_return, tpnames))
     }
   }
 
@@ -1865,6 +1901,34 @@ forge checker {
       let cname = sym_to_string(c.name!)
       let class_info = self.registry.lookup(cname)
 
+      // Process class-level where clauses for type_var_methods
+      // (e.g., class Dict<K, V> where K: Hashable grants K.get_hash())
+      let prev_tvm = self.type_var_methods
+      self.type_var_methods = null
+      let cwcs = c.cwc_children()
+      for wc in cwcs {
+        if wc.variable != nil && wc.constraint != nil {
+          let iface_name = sym_to_string(wc.constraint!)
+          let iface_entry = self.iface_decls.get(sym(iface_name))
+          if iface_entry != nil {
+            if self.type_var_methods == nil {
+              self.type_var_methods = Dict<Sym, Dict<Sym, Type>>()
+            }
+            let tv_name = sym_to_string(wc.variable!)
+            let existing = self.type_var_methods!.get(sym(tv_name))
+            let mut methods_dict = if existing != nil { existing!.value } else { Dict<Sym, Type>() }
+            let iface_methods = iface_entry!.value.im_children()
+            for im in iface_methods {
+              if im.name != nil {
+                let mtype = self.func_decl_to_type(im)
+                methods_dict.set(im.name!, mtype)
+              }
+            }
+            self.type_var_methods!.set(sym(tv_name), methods_dict)
+          }
+        }
+      }
+
       let cmethods = c.cm_children()
       for m in cmethods {
         if m.body == nil { continue }
@@ -1883,6 +1947,7 @@ forge checker {
         self.check_func_body(m)
         self.pop_scope()
       }
+      self.type_var_methods = prev_tvm
     }
   }
 
@@ -1906,8 +1971,9 @@ forge checker {
       }
     }
 
-    // Process relational where clauses to populate type_var_methods
+    // Process where clauses to populate type_var_methods
     let prev_tvm = self.type_var_methods
+    let inherited = self.type_var_methods
     self.type_var_methods = null
     let wheres = f.where_children()
     for wc in wheres {
@@ -1917,7 +1983,56 @@ forge checker {
         if len(args) > 0 {
           self.grant_relational_methods(sym_to_string(wc.constraint!), args)
         }
-      } else {
+      } else if wc.variable != nil && wc.constraint != nil {
+        // Single-type constraint: where K: Hashable
+        let iface_name = sym_to_string(wc.constraint!)
+        let iface_entry = self.iface_decls.get(sym(iface_name))
+        if iface_entry != nil {
+          if self.type_var_methods == nil {
+            self.type_var_methods = Dict<Sym, Dict<Sym, Type>>()
+          }
+          let tv_name = sym_to_string(wc.variable!)
+          let existing = self.type_var_methods!.get(sym(tv_name))
+          let mut methods_dict = if existing != nil { existing!.value } else { Dict<Sym, Type>() }
+          let iface_methods = iface_entry!.value.im_children()
+          for im in iface_methods {
+            if im.name != nil {
+              let mtype = self.func_decl_to_type(im)
+              methods_dict.set(im.name!, mtype)
+            }
+          }
+          self.type_var_methods!.set(sym(tv_name), methods_dict)
+        }
+      }
+    }
+    // Merge inherited type var methods (from class-level where clauses)
+    if inherited != nil {
+      if self.type_var_methods == nil {
+        self.type_var_methods = Dict<Sym, Dict<Sym, Type>>()
+      }
+      let inh_keys = inherited!.keys()
+      let mut ki = 0
+      while ki < len(inh_keys) {
+        let tv_sym = inh_keys[ki]
+        let inh_entry = inherited!.get(tv_sym)
+        if inh_entry != nil {
+          let inh_methods = inh_entry!.value
+          let cur_entry = self.type_var_methods!.get(tv_sym)
+          let mut cur_methods = if cur_entry != nil { cur_entry!.value } else { Dict<Sym, Type>() }
+          let mk = inh_methods.keys()
+          let mut mi = 0
+          while mi < len(mk) {
+            if cur_methods.get(mk[mi]) == nil {
+              let inh_m_entry = inh_methods.get(mk[mi])
+              if inh_m_entry != nil {
+                cur_methods.set(mk[mi], inh_m_entry!.value)
+              }
+            }
+            mi = mi + 1
+          }
+          self.type_var_methods!.set(tv_sym, cur_methods)
+        }
+        ki = ki + 1
       }
     }
 
@@ -2999,27 +3114,41 @@ forge checker {
         if mt != nil {
           match mt!.value.kind {
             Func(params, ret, tpnames) => {
+              // Build substitution: class type args first, then infer method-specific
+              let class_subst = self.build_type_arg_subst(recv_type)
+              let mut bindings = if class_subst != nil { class_subst! } else { Dict<Sym, Type>() }
               if len(tpnames) > 0 {
-                let bindings = self.infer_type_args(mt!.value, arg_types)
+                let inferred = self.infer_type_args(mt!.value, arg_types)
+                // Merge inferred bindings (don't override class-provided ones)
+                let ikeys = inferred.keys()
+                let mut ik = 0
+                while ik < len(ikeys) {
+                  if bindings.get(ikeys[ik]) == nil {
+                    let ie = inferred.get(ikeys[ik])
+                    if ie != nil {
+                      bindings.set(ikeys[ik], ie!.value)
+                    }
+                  }
+                  ik = ik + 1
+                }
                 // Store inferred type args for lowerer
                 if len(type_args) == 0 {
-                  let mut inferred: [TypeExpr] = []
+                  let mut inferred_ta: [TypeExpr] = []
                   for tpn in tpnames {
                     let bound = bindings.get(sym(tpn))
                     if bound != nil {
-                      append(inferred, type_to_type_expr(bound!.value))
+                      append(inferred_ta, type_to_type_expr(bound!.value))
                     }
                   }
-                  call_expr.inferred_type_args = inferred
+                  call_expr.inferred_type_args = inferred_ta
                 }
-                return substitute_type(ret, bindings)
               }
-              // Method has no own type params — substitute class type args
-              let class_subst = self.build_type_arg_subst(recv_type)
-              if class_subst != nil {
-                return substitute_type(ret, class_subst!)
+              // Substitute params for argument checking
+              let mut sub_params: [Type] = []
+              for p in params {
+                append(sub_params, substitute_type(p, bindings))
               }
-              return ret
+              return substitute_type(ret, bindings)
             }
             _ => { return mt!.value }
           }

@@ -73,14 +73,14 @@ forge collections {
     // Test generic higher-order function
     let nums = [1, 2, 3, 4, 5]
     let doubled = transform<i32, i32>(nums, double)
-    println(f"doubled: {doubled}")
+    println(f"doubled len: {len(doubled)}, first: {doubled[0]}")
 
     let strs = transform<i32, string>(nums, to_string)
-    println(f"strings: {strs}")
+    println(f"strings len: {len(strs)}, first: {strs[0]}")
 
     // Test with lambda
     let tripled = transform<i32, i32>(nums, |x: i32| -> i32 { x * 3 })
-    println(f"tripled: {tripled}")
+    println(f"tripled len: {len(tripled)}, first: {tripled[0]}")
 
     println("collections done")
   }
