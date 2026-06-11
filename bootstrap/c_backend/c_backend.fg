@@ -2615,6 +2615,19 @@ func CGen.emit_return_stmt(self, s: LStmt?) {
     }
     return
   }
+  // Multi-value return for tuple types — construct tuple struct
+  if !isnull(self.current_func) && !isnull(self.current_func!.return_type) && self.current_func!.return_type!.kind is TyTuple {
+    let tuple_name = self.c_tuple_type(self.current_func!.return_type)
+    let mut fields = ""
+    let mut fi = 0
+    while fi < len(d.values) {
+      if fi > 0 { fields = fields + ", " }
+      fields = fields + f"._{fi} = {self.emit_value(d.values[fi])}"
+      fi = fi + 1
+    }
+    self.line(f"return ({tuple_name}){{ {fields} }};")
+    return
+  }
   self.line(f"return {self.emit_value(d.values[0])};")
 }
 
@@ -4021,30 +4034,6 @@ pub func emit_c(prog: LProgram?) -> string {
   prog_ref.enums = dedup_enums(prog_ref.enums)
   prog_ref.functions = dedup_funcs(prog_ref.functions)
 
-  // Emit tuple typedefs (before forward declarations that reference them)
-  let tuple_keys = g.tuple_types!.keys()
-  let mut tk = 0
-  while tk < len(tuple_keys) {
-    let tuple_entry = g.tuple_types!.get(tuple_keys[tk])
-    if !isnull(tuple_entry) {
-      let tname = tuple_entry!.value
-      let field_types = str_split(tuple_keys[tk].get_name(), ",")
-      g.line(f"typedef struct {tname} {{")
-      g.indent = g.indent + 1
-      let mut ti = 0
-      while ti < len(field_types) {
-        g.line(f"{field_types[ti]} _{ti};")
-        ti = ti + 1
-      }
-      g.indent = g.indent - 1
-      g.line(f"}} {tname};")
-    }
-    tk = tk + 1
-  }
-  if len(tuple_keys) > 0 {
-    g.line("")
-  }
-
   // Forward-declare structs, classes, enums
   let structs = prog_ref.structs
   let mut i = 0
@@ -4131,6 +4120,30 @@ pub func emit_c(prog: LProgram?) -> string {
   while i < len(sorted_structs) {
     g.emit_struct_decl(sorted_structs[i])
     i = i + 1
+  }
+
+  // Emit tuple typedefs (after struct definitions so struct types are known)
+  let tuple_keys = g.tuple_types!.keys()
+  let mut tk = 0
+  while tk < len(tuple_keys) {
+    let tuple_entry = g.tuple_types!.get(tuple_keys[tk])
+    if !isnull(tuple_entry) {
+      let tname = tuple_entry!.value
+      let field_types = str_split(tuple_keys[tk].get_name(), ",")
+      g.line(f"typedef struct {tname} {{")
+      g.indent = g.indent + 1
+      let mut ti = 0
+      while ti < len(field_types) {
+        g.line(f"{field_types[ti]} _{ti};")
+        ti = ti + 1
+      }
+      g.indent = g.indent - 1
+      g.line(f"}} {tname};")
+    }
+    tk = tk + 1
+  }
+  if len(tuple_keys) > 0 {
+    g.line("")
   }
 
   // Emit opt/result typedefs

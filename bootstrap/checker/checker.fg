@@ -3323,15 +3323,15 @@ forge checker {
 
     match recv_type.kind {
       Tuple(fields) => {
-        // Numeric field access: .0, .1, .2
-        if field_str == "0" && len(fields) > 0 && fields[0].type_val != nil {
-          return fields[0].type_val!
-        }
-        if field_str == "1" && len(fields) > 1 && fields[1].type_val != nil {
-          return fields[1].type_val!
-        }
-        if field_str == "2" && len(fields) > 2 && fields[2].type_val != nil {
-          return fields[2].type_val!
+        // Numeric field access: ._0, ._1, ._2 (with _ prefix like Go checker)
+        if str_has_prefix(field_str, "_") {
+          let idx_str = field_str[1:len(field_str)]
+          let idx_result = atoi(idx_str)
+          let idx = idx_result._0
+          let ok = idx_result._1
+          if ok && idx >= 0 && idx < len(fields) && fields[idx].type_val != nil {
+            return fields[idx].type_val!
+          }
         }
         // Named fields
         for f in fields {
