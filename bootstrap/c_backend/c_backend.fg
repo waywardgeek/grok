@@ -1094,6 +1094,44 @@ func CGen.emit_fprint(self, stream: string, args: [LValue?], newline: bool) -> s
     }
     return f"fprintf({stream}, \"\")"
   }
+  // Check if any arg is a union — requires special handling
+  let mut has_union = false
+  let mut j = 0
+  while j < len(args) {
+    let t = self.resolve_value_type(args[j])
+    if !isnull(t) && t!.kind is TyUnion {
+      has_union = true
+    }
+    j = j + 1
+  }
+  if has_union {
+    let stmts = new_string_builder()
+    let mut i = 0
+    while i < len(args) {
+      if i > 0 {
+        if stmts.len() > 0 { stmts.write("; ") }
+        stmts.write(f"fprintf({stream}, \" \")")
+      }
+      let t = self.resolve_value_type(args[i])
+      if !isnull(t) && t!.kind is TyUnion {
+        if stmts.len() > 0 { stmts.write("; ") }
+        stmts.write(f"forge_union_fprint({stream}, {self.emit_value(args[i])})")
+      } else {
+        let result = self.printf_spec_and_arg(args[i])
+        if stmts.len() > 0 { stmts.write("; ") }
+        if result._1 != "" {
+          stmts.write(f"fprintf({stream}, \"{result._0}\", {result._1})")
+        } else {
+          stmts.write(f"fprintf({stream}, \"{result._0}\")")
+        }
+      }
+      i = i + 1
+    }
+    if newline {
+      stmts.write(f"; fprintf({stream}, \"\\n\")")
+    }
+    return stmts.to_string()
+  }
   let fmt_sb = new_string_builder()
   let arg_sb = new_string_builder()
   let mut arg_count = 0
@@ -1466,19 +1504,109 @@ func CGen.emit_builtin(self, d: LBuiltinData?) -> string {
   if name == "map_len" { return "0 /* map_len: maps not supported */" }
   if name == "map_contains_key" || name == "contains_key" { return "false /* contains_key: not supported */" }
 
-  // Fallback: emit as regular function call
-  let sb = new_string_builder()
-  sb.write(f"{name}(")
-  let mut i = 0
-  while i < len(args) {
-    if i > 0 {
-      sb.write(", ")
+  // I/O builtins
+  if name == "read_file" {
+    if len(args) > 0 {
+      return f"forge_read_file({self.emit_value(args[0])})"
     }
-    sb.write(self.emit_value(args[i]))
-    i = i + 1
   }
-  sb.write(")")
-  return sb.to_string()
+  if name == "write_file" {
+    if len(args) >= 2 {
+      return f"forge_write_file({self.emit_value(args[0])}, {self.emit_value(args[1])})"
+    }
+  }
+  if name == "os_args" {
+    self.needs_os_args = true
+    return "_forge_os_args(_argc, _argv)"
+  }
+  if name == "os_exit" {
+    if len(args) > 0 {
+      return f"exit({self.emit_value(args[0])})"
+    }
+    return "exit(0)"
+  }
+  if name == "os_getwd" {
+    return "forge_getwd()"
+  }
+  if name == "list_dir" {
+    if len(args) > 0 {
+      return f"forge_list_dir({self.emit_value(args[0])})"
+    }
+  }
+  if name == "file_exists" {
+    if len(args) > 0 {
+      return f"forge_file_exists({self.emit_value(args[0])})"
+    }
+  }
+  if name == "mkdtemp" {
+    if len(args) > 0 {
+      return f"forge_mkdtemp({self.emit_value(args[0])})"
+    }
+  }
+  if name == "itoa" {
+    if len(args) > 0 {
+      return f"forge_itoa({self.emit_value(args[0])})"
+    }
+  }
+  if name == "atoi" {
+    if len(args) > 0 {
+      return f"forge_atoi({self.emit_value(args[0])})"
+    }
+  }
+  if name == "char_to_string" {
+    if len(args) > 0 {
+      return f"forge_char_to_string({self.emit_value(args[0])})"
+    }
+  }
+  if name == "hash_string" {
+    if len(args) > 0 {
+      return f"forge_hash_string({self.emit_value(args[0])})"
+    }
+  }
+  if name == "exec_command" {
+    self.needs_exec_cmd = true
+    if len(args) >= 2 {
+      return f"_forge_exec_command({self.emit_value(args[0])}, {self.emit_value(args[1])})"
+    }
+  }
+  if name == "path_join" {
+    self.needs_path_join = true
+    if len(args) > 0 {
+      return f"_forge_path_join({self.emit_value(args[0])})"
+    }
+  }
+  if name == "path_dir" {
+    if len(args) > 0 {
+      return f"forge_path_dir({self.emit_value(args[0])})"
+    }
+  }
+  if name == "path_base" {
+    if len(args) > 0 {
+      return f"forge_path_base({self.emit_value(args[0])})"
+    }
+  }
+  if name == "path_ext" {
+    if len(args) > 0 {
+      return f"forge_path_ext({self.emit_value(args[0])})"
+    }
+  }
+
+  if name == "new_string_builder" {
+    return "new_string_builder()"
+  }
+  if name == "new_dict" {
+    return "/* new_dict */"
+  }
+  if name == "to_string" {
+    if len(args) > 0 {
+      return f"forge_to_string({self.emit_value(args[0])})"
+    }
+  }
+
+  // No fallback — unhandled builtins must be added explicitly above
+  eprintln(f"c_backend: unhandled builtin: {name}")
+  os_exit(1)
+  return ""
 }
 
 // ---------------------------------------------------------------------------
@@ -2034,7 +2162,13 @@ func CGen.emit_args_boxed(self, func_name: string, args: [LValue?]) -> string {
     // Check if arg needs boxing (concrete → interface)
     if !isnull(fn_entry) && i < len(fn_entry!.value.params) {
       let pt = fn_entry!.value.params[i].typ
-      if !isnull(pt) && pt!.kind is TyAny && pt!.name != "" {
+      if !isnull(pt) && pt!.kind is TyUnion {
+        // Union param: wrap concrete arg in forge_union_*()
+        let arg_type = self.resolve_value_type(args[i])
+        if !isnull(arg_type) && !(arg_type!.kind is TyUnion) {
+          arg_str = self.c_wrap_union(arg_str, arg_type)
+        }
+      } else if !isnull(pt) && pt!.kind is TyAny && pt!.name != "" {
         let iface_e = self.iface_by_name!.get(sym(pt!.name))
         if !isnull(iface_e) {
           let concrete_class = self.resolve_concrete_class(args[i])
@@ -2063,9 +2197,14 @@ func CGen.emit_args_boxed_mut(self, func_name: string, args: [LValue?], mut_args
     if len(mut_args) > i && mut_args[i] {
       arg_str = "&" + arg_str
     } else if !isnull(fn_entry) && i < len(fn_entry!.value.params) {
-      // Check if arg needs boxing (concrete → interface)
+      // Check if arg needs boxing (concrete → interface or concrete → union)
       let pt = fn_entry!.value.params[i].typ
-      if !isnull(pt) && pt!.kind is TyAny && pt!.name != "" {
+      if !isnull(pt) && pt!.kind is TyUnion {
+        let arg_type = self.resolve_value_type(args[i])
+        if !isnull(arg_type) && !(arg_type!.kind is TyUnion) {
+          arg_str = self.c_wrap_union(arg_str, arg_type)
+        }
+      } else if !isnull(pt) && pt!.kind is TyAny && pt!.name != "" {
         let iface_e = self.iface_by_name!.get(sym(pt!.name))
         if !isnull(iface_e) {
           let concrete_class = self.resolve_concrete_class(args[i])

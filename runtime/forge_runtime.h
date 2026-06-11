@@ -464,6 +464,18 @@ static inline ForgeUnion forge_union_bool(bool v)         { return (ForgeUnion){
 static inline ForgeUnion forge_union_string(forge_string v){ return (ForgeUnion){FORGE_UNION_TAG_STRING, {.as_string = v}}; }
 static inline ForgeUnion forge_union_ptr(void* v)         { return (ForgeUnion){FORGE_UNION_TAG_PTR, {.as_ptr = v}}; }
 
+static inline void forge_union_fprint(FILE* f, ForgeUnion u) {
+    switch (u.tag) {
+    case FORGE_UNION_TAG_I32:    fprintf(f, "%d", u.data.as_i32); break;
+    case FORGE_UNION_TAG_I64:    fprintf(f, "%lld", (long long)u.data.as_i64); break;
+    case FORGE_UNION_TAG_F32:    fprintf(f, "%g", u.data.as_f32); break;
+    case FORGE_UNION_TAG_F64:    fprintf(f, "%g", u.data.as_f64); break;
+    case FORGE_UNION_TAG_BOOL:   fprintf(f, "%s", u.data.as_bool ? "true" : "false"); break;
+    case FORGE_UNION_TAG_STRING: fprintf(f, "%.*s", (int)u.data.as_string.len, (const char*)u.data.as_string.data); break;
+    case FORGE_UNION_TAG_PTR:    fprintf(f, "%p", u.data.as_ptr); break;
+    }
+}
+
 /* -------------------------------------------------------------------------
  * File I/O
  * -------------------------------------------------------------------------

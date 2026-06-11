@@ -2741,6 +2741,25 @@ forge lowerer {
     if name == "assert_eq" { return true }
     if name == "exit" { return true }
     if name == "format" { return true }
+    if name == "read_file" { return true }
+    if name == "write_file" { return true }
+    if name == "list_dir" { return true }
+    if name == "file_exists" { return true }
+    if name == "mkdtemp" { return true }
+    if name == "os_args" { return true }
+    if name == "os_exit" { return true }
+    if name == "os_getwd" { return true }
+    if name == "itoa" { return true }
+    if name == "atoi" { return true }
+    if name == "char_to_string" { return true }
+    if name == "eprint" { return true }
+    if name == "eprintln" { return true }
+    if name == "hash_string" { return true }
+    if name == "exec_command" { return true }
+    if name == "path_join" { return true }
+    if name == "path_dir" { return true }
+    if name == "path_base" { return true }
+    if name == "path_ext" { return true }
     return false
   }
 

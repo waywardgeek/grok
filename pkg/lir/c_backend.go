@@ -2962,6 +2962,39 @@ func (g *cGen) emitFprint(stream string, args []LValue, newline bool) string {
 		}
 		return fmt.Sprintf(`fprintf(%s, "")`, stream)
 	}
+	// Check if any arg is a union — requires special handling (can't use printf for unions)
+	hasUnion := false
+	for _, a := range args {
+		t := g.resolveValueType(&a)
+		if t != nil && t.Kind == LTyUnion {
+			hasUnion = true
+			break
+		}
+	}
+	if hasUnion {
+		// Emit sequence of fprintf/forge_union_fprint calls
+		var stmts []string
+		for i, a := range args {
+			t := g.resolveValueType(&a)
+			if i > 0 {
+				stmts = append(stmts, fmt.Sprintf(`fprintf(%s, " ")`, stream))
+			}
+			if t != nil && t.Kind == LTyUnion {
+				stmts = append(stmts, fmt.Sprintf("forge_union_fprint(%s, %s)", stream, g.emitValue(&a)))
+			} else {
+				spec, argExpr := g.printfSpecAndArg(&a)
+				if argExpr != "" {
+					stmts = append(stmts, fmt.Sprintf(`fprintf(%s, "%s", %s)`, stream, spec, argExpr))
+				} else {
+					stmts = append(stmts, fmt.Sprintf(`fprintf(%s, "%s")`, stream, spec))
+				}
+			}
+		}
+		if newline {
+			stmts = append(stmts, fmt.Sprintf(`fprintf(%s, "\n")`, stream))
+		}
+		return strings.Join(stmts, "; ")
+	}
 	var fmtParts []string
 	var argParts []string
 	for _, a := range args {
@@ -3109,7 +3142,16 @@ func (g *cGen) emitArgsBoxed(funcName string, args []LValue, mutArgs []bool) str
 		// Check if this arg needs boxing (concrete → interface)
 		if fn != nil && i < len(fn.Params) {
 			pt := fn.Params[i].Type
-			if pt != nil && pt.Kind == LTyAny {
+			if pt != nil && pt.Kind == LTyUnion {
+				// Union param: wrap concrete arg in forge_union_*()
+				argType := a.Type
+				if argType == nil {
+					argType = g.inferLValType(&a)
+				}
+				if argType != nil && argType.Kind != LTyUnion {
+					argStr = g.cWrapUnion(argStr, argType)
+				}
+			} else if pt != nil && pt.Kind == LTyAny {
 				if pt.Name != "" {
 					if _, isIface := g.ifaceByName[pt.Name]; isIface {
 						// Resolve concrete type of the argument

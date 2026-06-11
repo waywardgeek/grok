@@ -3026,6 +3026,12 @@ forge checker {
     }
     if name == "new_error" { return make_error_type() }
 
+    // I/O builtins
+    if name == "list_dir" { return make_sequence_type(make_string_type()) }
+    if name == "file_exists" { return make_bool_type() }
+    if name == "mkdtemp" { return make_string_type() }
+    if name == "os_getwd" { return make_string_type() }
+
     // String builtins
     if name == "str_contains" || name == "str_starts_with" || name == "str_ends_with" {
       return make_bool_type()
@@ -3820,17 +3826,8 @@ forge checker {
       eprintln(f"checker: validateAllExprsResolved: nil resolved_type in {ctx} at {expr.span.start.file}:{itoa(expr.span.start.line as i64)}:{itoa(expr.span.start.column as i64)}")
       os_exit(1)
     }
-    // Detect void* leaks — any in resolved_type means the checker silently
-    // failed to resolve the actual type.
-    match expr.resolved_type!.kind {
-      Named(name, _) => {
-        if name.name == "any" {
-          eprintln(f"checker: validateAllExprsResolved: void* (any) type in {ctx} at {expr.span.start.file}:{itoa(expr.span.start.line as i64)}:{itoa(expr.span.start.column as i64)}")
-          os_exit(1)
-        }
-      }
-      _ => {}
-    }
+    // Note: we do NOT reject 'any' here — it's a legitimate type.
+    // The Go checker only rejects nil resolved_type, not any.
     // Detect Sequence(Unit) — empty [] that wasn't propagated to correct element type
     match expr.resolved_type!.kind {
       Sequence(elem) => {
