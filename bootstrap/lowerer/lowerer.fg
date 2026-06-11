@@ -1691,7 +1691,7 @@ forge lowerer {
           self.lower_block(arm.body)
           let body = self.stmts
           self.restore_stmts(saved)
-          append(cases, LSwitchCase { tag: -1, binding: "_", body: body })
+          append(cases, LSwitchCase { tag: -1, binding: "", body: body })
         }
         _ => {}
       }
@@ -1800,7 +1800,7 @@ forge lowerer {
             self.lower_arm_body(arm.body, result_name, result_type)
             let body = self.stmts
             self.restore_stmts(saved)
-            append(cases, LSwitchCase { tag: -1, binding: "_", body: body })
+            append(cases, LSwitchCase { tag: -1, binding: "", body: body })
           }
           _ => {}
         }
@@ -2964,7 +2964,7 @@ forge lowerer {
               self.lower_arm_body(arm.body, result_name, rt)
               let body = self.stmts
               self.restore_stmts(saved)
-              append(cases, LSwitchCase { tag: -1, binding: "_", body: body })
+              append(cases, LSwitchCase { tag: -1, binding: "", body: body })
             }
             _ => {
               self.restore_stmts(saved)

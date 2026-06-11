@@ -1357,7 +1357,18 @@ forge parser {
         self.next()
         let ret = self.parse_type_expr()?
         let mut params: [TypeExpr] = []
-        params = append(params, left!)
+        // If left is a tuple like (T, U), unwrap fields as params
+        // If left is a single type like T, treat as single param
+        match left!.kind {
+          Tuple(fields) => {
+            for f in fields {
+              append(params, f.type_expr!)
+            }
+          }
+          _ => {
+            append(params, left!)
+          }
+        }
         return (TypeExpr {
           Func(params, ret!),
           span: self.make_span(start)

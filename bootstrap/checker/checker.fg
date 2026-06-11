@@ -2459,7 +2459,7 @@ forge checker {
     self.check_expr(index)
     match recv_type.kind {
       Sequence(elem) => { return elem }
-      String => { return make_string_type() }
+      String => { return make_uint_type(8) }  // string indexing returns u8
       Map(_, value) => { return make_optional_type(value) }
       _ => {
         self.error_at(receiver.span, "cannot index into this type")
@@ -3109,7 +3109,7 @@ forge checker {
     if method == "push" || method == "append" || method == "sort" || method == "remove" {
       return make_void_type()
     }
-    if method == "pop" { return make_optional_type(elem) }
+    if method == "pop" { return elem }
     if method == "length" || method == "len" { return make_int_type(32) }
     if method == "contains" { return make_bool_type() }
     if method == "slice" { return make_sequence_type(elem) }

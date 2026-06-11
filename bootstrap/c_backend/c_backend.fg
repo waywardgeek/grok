@@ -1703,6 +1703,21 @@ func CGen.emit_call_expr(self, e: LExpr?) -> string {
   if name == "itoa" || name == "strconv.Itoa" {
     return f"forge_itoa({self.emit_args(d.args)})"
   }
+  if name == "strings.ToUpper" {
+    if len(d.args) > 0 {
+      return f"forge_toupper({self.emit_value(d.args[0])})"
+    }
+  }
+  if name == "strings.ToLower" {
+    if len(d.args) > 0 {
+      return f"forge_tolower({self.emit_value(d.args[0])})"
+    }
+  }
+  if name == "strings.Contains" {
+    if len(d.args) >= 2 {
+      return f"(strstr({self.emit_value(d.args[0])}, {self.emit_value(d.args[1])}) != NULL)"
+    }
+  }
   if name == "char_to_string" {
     return f"forge_char_to_string({self.emit_args(d.args)})"
   }
