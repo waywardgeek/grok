@@ -1,4 +1,4 @@
-// main.fg — Forge bootstrap compiler CLI
+// main.fg — Forge Forge compiler CLI
 // Commands: compile, test, fmt, help
 // Ports cmd/forge/main.go (compile, test) and cmd/forge/fmt.go
 

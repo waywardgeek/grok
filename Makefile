@@ -7,7 +7,7 @@
 #   make            — build the forge binary
 #   make test       — run test suite
 #   make self-test  — verify fixed-point (forge compiles itself to identical C)
-#   make update     — regenerate forge.c from bootstrap source
+#   make update     — regenerate forge.c from src source
 #   make clean      — remove build artifacts
 
 CC      ?= gcc
@@ -15,17 +15,17 @@ CFLAGS  ?= -std=gnu11 -O2 -w
 RUNTIME  = runtime
 
 BOOTSTRAP_FILES = \
-  bootstrap/ast/ast.fg bootstrap/ast/modules.fg \
-  bootstrap/lexer/lexer.fg \
-  bootstrap/parser/parser.fg bootstrap/parser/expr_parser.fg \
-  bootstrap/desugar/desugar.fg \
-  bootstrap/checker/checker.fg \
-  bootstrap/lir/lir.fg \
-  bootstrap/lowerer/lowerer.fg \
-  bootstrap/optimizer/optimizer.fg \
-  bootstrap/monomorphizer/monomorphizer.fg \
-  bootstrap/c_backend/c_backend.fg \
-  bootstrap/main/main.fg
+  src/ast/ast.fg src/ast/modules.fg \
+  src/lexer/lexer.fg \
+  src/parser/parser.fg src/parser/expr_parser.fg \
+  src/desugar/desugar.fg \
+  src/checker/checker.fg \
+  src/lir/lir.fg \
+  src/lowerer/lowerer.fg \
+  src/optimizer/optimizer.fg \
+  src/monomorphizer/monomorphizer.fg \
+  src/c_backend/c_backend.fg \
+  src/main/main.fg
 
 .PHONY: all test self-test update clean
 
@@ -40,7 +40,7 @@ test: forge
 self-test: forge
 	@bash test_self_compile.sh
 
-# Regenerate forge.c from bootstrap Forge source using the current forge binary
+# Regenerate forge.c from src Forge source using the current forge binary
 update: forge
 	./forge compile $(BOOTSTRAP_FILES) -o forge.c
 	@echo "forge.c updated ($$(wc -l < forge.c) lines)"

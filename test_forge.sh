@@ -68,10 +68,10 @@ for fg in testdata/*.fg; do
   # Determine dependencies for unit tests
   DEPS=""
   case "$name" in
-    test_lexer.fg) DEPS="bootstrap/lexer/lexer.fg bootstrap/ast/ast.fg bootstrap/parser/parser.fg bootstrap/parser/expr_parser.fg" ;;
-    test_parser.fg) DEPS="bootstrap/parser/parser.fg bootstrap/parser/expr_parser.fg bootstrap/lexer/lexer.fg bootstrap/ast/ast.fg" ;;
-    test_desugar.fg) DEPS="bootstrap/desugar/desugar.fg bootstrap/parser/parser.fg bootstrap/parser/expr_parser.fg bootstrap/lexer/lexer.fg bootstrap/ast/ast.fg" ;;
-    test_min.fg) DEPS="bootstrap/parser/parser.fg bootstrap/parser/expr_parser.fg bootstrap/lexer/lexer.fg bootstrap/ast/ast.fg" ;;
+    test_lexer.fg) DEPS="src/lexer/lexer.fg src/ast/ast.fg src/parser/parser.fg src/parser/expr_parser.fg" ;;
+    test_parser.fg) DEPS="src/parser/parser.fg src/parser/expr_parser.fg src/lexer/lexer.fg src/ast/ast.fg" ;;
+    test_desugar.fg) DEPS="src/desugar/desugar.fg src/parser/parser.fg src/parser/expr_parser.fg src/lexer/lexer.fg src/ast/ast.fg" ;;
+    test_min.fg) DEPS="src/parser/parser.fg src/parser/expr_parser.fg src/lexer/lexer.fg src/ast/ast.fg" ;;
   esac
 
   out_c="$TMPDIR/${name%.fg}.c"

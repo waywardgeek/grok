@@ -1,25 +1,25 @@
 #!/bin/bash
-# test_self_compile.sh — Two-stage bootstrap self-compilation test
-# Stage 1: Build forge from checked-in forge.c, compile bootstrap → forge_stage2.c
-# Stage 2: Build from forge_stage2.c, compile bootstrap → forge_stage3.c
+# test_self_compile.sh — Two-stage src self-compilation test
+# Stage 1: Build forge from checked-in forge.c, compile src → forge_stage2.c
+# Stage 2: Build from forge_stage2.c, compile src → forge_stage3.c
 # Fixed point: forge_stage2.c == forge_stage3.c
 set -e
 
 cd "$(dirname "$0")"
 
 BOOTSTRAP_FILES=(
-  bootstrap/ast/ast.fg bootstrap/ast/modules.fg
-  bootstrap/lexer/lexer.fg
-  bootstrap/parser/parser.fg
-  bootstrap/parser/expr_parser.fg
-  bootstrap/desugar/desugar.fg
-  bootstrap/checker/checker.fg
-  bootstrap/lir/lir.fg
-  bootstrap/lowerer/lowerer.fg
-  bootstrap/optimizer/optimizer.fg
-  bootstrap/monomorphizer/monomorphizer.fg
-  bootstrap/c_backend/c_backend.fg
-  bootstrap/main/main.fg
+  src/ast/ast.fg src/ast/modules.fg
+  src/lexer/lexer.fg
+  src/parser/parser.fg
+  src/parser/expr_parser.fg
+  src/desugar/desugar.fg
+  src/checker/checker.fg
+  src/lir/lir.fg
+  src/lowerer/lowerer.fg
+  src/optimizer/optimizer.fg
+  src/monomorphizer/monomorphizer.fg
+  src/c_backend/c_backend.fg
+  src/main/main.fg
 )
 
 TMPDIR=$(mktemp -d)
