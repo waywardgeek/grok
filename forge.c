@@ -18471,62 +18471,70 @@ ForgeResult_Fieldptr Parser_parse_field(Parser* self) {
     Field* field = _t23;
     Token* _t24 = Parser_peek(self);
     TokenKind _t25 = _t24->kind;
-    TokenKind _t26 = TokenKind_AGuardedBy;
+    TokenKind _t26 = TokenKind_LIdent;
     bool _t27 = (_t25 == _t26);
-    if (_t27) {
-        Token* _t28 = Parser_next(self);
-        _t28;
-        TokenKind _t29 = TokenKind_PLParen;
-        ForgeResult_Tokenptr _t30 = Parser_expect(self, _t29);
-        const char* _t31 = _t30.error;
-        bool _t32 = (_t31 == NULL);
-        bool _t33 = (!_t32);
-        if (_t33) {
-            return forge_err(_t31, ForgeResult_Fieldptr);
-        }
-        Token* _t34 = _t30.value;
-        _t34;
-        TokenKind _t35 = TokenKind_LIdent;
-        ForgeResult_Tokenptr _t36 = Parser_expect(self, _t35);
-        const char* _t37 = _t36.error;
-        bool _t38 = (_t37 == NULL);
-        bool _t39 = (!_t38);
-        if (_t39) {
-            return forge_err(_t37, ForgeResult_Fieldptr);
-        }
-        Token* _t40 = _t36.value;
-        Token* lock = _t40;
-        Token* _t41 = lock;
-        forge_string _t42 = _t41->text;
-        Sym* _t43 = sym(_t42);
-        field->guarded_by = _t43;
-        TokenKind _t44 = TokenKind_PRParen;
-        ForgeResult_Tokenptr _t45 = Parser_expect(self, _t44);
-        const char* _t46 = _t45.error;
-        bool _t47 = (_t46 == NULL);
-        bool _t48 = (!_t47);
-        if (_t48) {
-            return forge_err(_t46, ForgeResult_Fieldptr);
-        }
-        Token* _t49 = _t45.value;
-        _t49;
+    bool _sc28 = false;
+    _sc28 = _t27;
+    if (_sc28) {
+        Token* _t29 = Parser_peek(self);
+        forge_string _t30 = _t29->text;
+        bool _t31 = forge_str_eq(_t30, FORGE_STR("guarded_by"));
+        _sc28 = _t31;
     }
-    Token* _t50 = Parser_peek(self);
-    TokenKind _t51 = _t50->kind;
-    TokenKind _t52 = TokenKind_OAssign;
-    bool _t53 = (_t51 == _t52);
-    if (_t53) {
-        Token* _t54 = Parser_next(self);
-        _t54;
-        ForgeResult_Exprptr _t55 = Parser_parse_expr(self);
-        const char* _t56 = _t55.error;
-        bool _t57 = (_t56 == NULL);
-        bool _t58 = (!_t57);
-        if (_t58) {
-            return forge_err(_t56, ForgeResult_Fieldptr);
+    if (_sc28) {
+        Token* _t32 = Parser_next(self);
+        _t32;
+        TokenKind _t33 = TokenKind_PLParen;
+        ForgeResult_Tokenptr _t34 = Parser_expect(self, _t33);
+        const char* _t35 = _t34.error;
+        bool _t36 = (_t35 == NULL);
+        bool _t37 = (!_t36);
+        if (_t37) {
+            return forge_err(_t35, ForgeResult_Fieldptr);
         }
-        Expr* _t59 = _t55.value;
-        Expr* def_expr = _t59;
+        Token* _t38 = _t34.value;
+        _t38;
+        TokenKind _t39 = TokenKind_LIdent;
+        ForgeResult_Tokenptr _t40 = Parser_expect(self, _t39);
+        const char* _t41 = _t40.error;
+        bool _t42 = (_t41 == NULL);
+        bool _t43 = (!_t42);
+        if (_t43) {
+            return forge_err(_t41, ForgeResult_Fieldptr);
+        }
+        Token* _t44 = _t40.value;
+        Token* lock = _t44;
+        Token* _t45 = lock;
+        forge_string _t46 = _t45->text;
+        Sym* _t47 = sym(_t46);
+        field->guarded_by = _t47;
+        TokenKind _t48 = TokenKind_PRParen;
+        ForgeResult_Tokenptr _t49 = Parser_expect(self, _t48);
+        const char* _t50 = _t49.error;
+        bool _t51 = (_t50 == NULL);
+        bool _t52 = (!_t51);
+        if (_t52) {
+            return forge_err(_t50, ForgeResult_Fieldptr);
+        }
+        Token* _t53 = _t49.value;
+        _t53;
+    }
+    Token* _t54 = Parser_peek(self);
+    TokenKind _t55 = _t54->kind;
+    TokenKind _t56 = TokenKind_OAssign;
+    bool _t57 = (_t55 == _t56);
+    if (_t57) {
+        Token* _t58 = Parser_next(self);
+        _t58;
+        ForgeResult_Exprptr _t59 = Parser_parse_expr(self);
+        const char* _t60 = _t59.error;
+        bool _t61 = (_t60 == NULL);
+        bool _t62 = (!_t61);
+        if (_t62) {
+            return forge_err(_t60, ForgeResult_Fieldptr);
+        }
+        Expr* _t63 = _t59.value;
+        Expr* def_expr = _t63;
         field->default_value = def_expr;
     }
     return forge_ok(field, ForgeResult_Fieldptr);
@@ -21860,151 +21868,159 @@ ForgeResult_TypeExprptr Parser_parse_base_type(Parser* self) {
             return forge_ok(_t171, ForgeResult_TypeExprptr);
         }
         forge_string _t172 = name->text;
-        bool _t173 = forge_str_eq(_t172, FORGE_STR("unit"));
+        bool _t173 = forge_str_eq(_t172, FORGE_STR("lock"));
         if (_t173) {
-            TypeExprKind _t174 = (TypeExprKind){.tag = TypeExprKind_Unit};
+            TypeExprKind _t174 = (TypeExprKind){.tag = TypeExprKind_Lock};
             Span _t175 = Parser_make_span(self, start);
             TypeExpr* _t176 = ({ TypeExpr* _p = malloc(sizeof(TypeExpr)); *_p = (TypeExpr){.kind = _t174, .span = _t175}; _p; });
             return forge_ok(_t176, ForgeResult_TypeExprptr);
         }
         forge_string _t177 = name->text;
-        forge_string type_name = _t177;
-        Token* _t178 = Parser_peek(self);
-        TokenKind _t179 = _t178->kind;
-        TokenKind _t180 = TokenKind_PDot;
-        bool _t181 = (_t179 == _t180);
-        if (_t181) {
-            Token* _t182 = Parser_next(self);
-            _t182;
-            TokenKind _t183 = TokenKind_LIdent;
-            ForgeResult_Tokenptr _t184 = Parser_expect(self, _t183);
-            const char* _t185 = _t184.error;
-            bool _t186 = (_t185 == NULL);
-            bool _t187 = (!_t186);
-            if (_t187) {
-                return forge_err(_t185, ForgeResult_TypeExprptr);
-            }
-            Token* _t188 = _t184.value;
-            Token* sub = _t188;
-            forge_string _t189 = forge_str_concat(type_name, FORGE_STR("."));
-            Token* _t190 = sub;
-            forge_string _t191 = _t190->text;
-            forge_string _t192 = forge_str_concat(_t189, _t191);
-            type_name = _t192;
+        bool _t178 = forge_str_eq(_t177, FORGE_STR("unit"));
+        if (_t178) {
+            TypeExprKind _t179 = (TypeExprKind){.tag = TypeExprKind_Unit};
+            Span _t180 = Parser_make_span(self, start);
+            TypeExpr* _t181 = ({ TypeExpr* _p = malloc(sizeof(TypeExpr)); *_p = (TypeExpr){.kind = _t179, .span = _t180}; _p; });
+            return forge_ok(_t181, ForgeResult_TypeExprptr);
         }
-        ForgeSlice_TypeExprptr _t193 = forge_slice_empty(ForgeSlice_TypeExprptr);
-        ForgeSlice_TypeExprptr args = _t193;
-        Token* _t194 = Parser_peek(self);
-        TokenKind _t195 = _t194->kind;
-        TokenKind _t196 = TokenKind_PLt;
-        bool _t197 = (_t195 == _t196);
-        if (_t197) {
-            Token* _t198 = Parser_next(self);
-            _t198;
+        forge_string _t182 = name->text;
+        forge_string type_name = _t182;
+        Token* _t183 = Parser_peek(self);
+        TokenKind _t184 = _t183->kind;
+        TokenKind _t185 = TokenKind_PDot;
+        bool _t186 = (_t184 == _t185);
+        if (_t186) {
+            Token* _t187 = Parser_next(self);
+            _t187;
+            TokenKind _t188 = TokenKind_LIdent;
+            ForgeResult_Tokenptr _t189 = Parser_expect(self, _t188);
+            const char* _t190 = _t189.error;
+            bool _t191 = (_t190 == NULL);
+            bool _t192 = (!_t191);
+            if (_t192) {
+                return forge_err(_t190, ForgeResult_TypeExprptr);
+            }
+            Token* _t193 = _t189.value;
+            Token* sub = _t193;
+            forge_string _t194 = forge_str_concat(type_name, FORGE_STR("."));
+            Token* _t195 = sub;
+            forge_string _t196 = _t195->text;
+            forge_string _t197 = forge_str_concat(_t194, _t196);
+            type_name = _t197;
+        }
+        ForgeSlice_TypeExprptr _t198 = forge_slice_empty(ForgeSlice_TypeExprptr);
+        ForgeSlice_TypeExprptr args = _t198;
+        Token* _t199 = Parser_peek(self);
+        TokenKind _t200 = _t199->kind;
+        TokenKind _t201 = TokenKind_PLt;
+        bool _t202 = (_t200 == _t201);
+        if (_t202) {
+            Token* _t203 = Parser_next(self);
+            _t203;
             while (1) {
-                Token* _t199 = Parser_peek(self);
-                TokenKind _t200 = _t199->kind;
-                TokenKind _t201 = TokenKind_PGt;
-                bool _t202 = (_t200 != _t201);
-                bool _sc203 = false;
-                _sc203 = _t202;
-                if (_sc203) {
-                    Token* _t204 = Parser_peek(self);
-                    TokenKind _t205 = _t204->kind;
-                    TokenKind _t206 = TokenKind_OShr;
-                    bool _t207 = (_t205 != _t206);
-                    _sc203 = _t207;
-                }
+                Token* _t204 = Parser_peek(self);
+                TokenKind _t205 = _t204->kind;
+                TokenKind _t206 = TokenKind_PGt;
+                bool _t207 = (_t205 != _t206);
                 bool _sc208 = false;
-                _sc208 = _sc203;
+                _sc208 = _t207;
                 if (_sc208) {
                     Token* _t209 = Parser_peek(self);
                     TokenKind _t210 = _t209->kind;
-                    TokenKind _t211 = TokenKind_SEOF;
+                    TokenKind _t211 = TokenKind_OShr;
                     bool _t212 = (_t210 != _t211);
                     _sc208 = _t212;
                 }
-                if (!(_sc208)) break;
-                ForgeResult_TypeExprptr _t213 = Parser_parse_type_expr(self);
-                const char* _t214 = _t213.error;
-                bool _t215 = (_t214 == NULL);
-                bool _t216 = (!_t215);
-                if (_t216) {
-                    return forge_err(_t214, ForgeResult_TypeExprptr);
+                bool _sc213 = false;
+                _sc213 = _sc208;
+                if (_sc213) {
+                    Token* _t214 = Parser_peek(self);
+                    TokenKind _t215 = _t214->kind;
+                    TokenKind _t216 = TokenKind_SEOF;
+                    bool _t217 = (_t215 != _t216);
+                    _sc213 = _t217;
                 }
-                TypeExpr* _t217 = _t213.value;
-                TypeExpr* arg = _t217;
-                TypeExpr* _t218 = arg;
-                ForgeSlice_TypeExprptr _t219 = ({ forge_push(&args, _t218, ForgeSlice_TypeExprptr); args; });
-                args = _t219;
-                Token* _t220 = Parser_peek(self);
-                TokenKind _t221 = _t220->kind;
-                TokenKind _t222 = TokenKind_PComma;
-                bool _t223 = (_t221 == _t222);
-                if (_t223) {
-                    Token* _t224 = Parser_next(self);
-                    _t224;
+                if (!(_sc213)) break;
+                ForgeResult_TypeExprptr _t218 = Parser_parse_type_expr(self);
+                const char* _t219 = _t218.error;
+                bool _t220 = (_t219 == NULL);
+                bool _t221 = (!_t220);
+                if (_t221) {
+                    return forge_err(_t219, ForgeResult_TypeExprptr);
+                }
+                TypeExpr* _t222 = _t218.value;
+                TypeExpr* arg = _t222;
+                TypeExpr* _t223 = arg;
+                ForgeSlice_TypeExprptr _t224 = ({ forge_push(&args, _t223, ForgeSlice_TypeExprptr); args; });
+                args = _t224;
+                Token* _t225 = Parser_peek(self);
+                TokenKind _t226 = _t225->kind;
+                TokenKind _t227 = TokenKind_PComma;
+                bool _t228 = (_t226 == _t227);
+                if (_t228) {
+                    Token* _t229 = Parser_next(self);
+                    _t229;
                 }
             }
-            Token* _t225 = Parser_peek(self);
-            TokenKind _t226 = _t225->kind;
-            TokenKind _t227 = TokenKind_OShr;
-            bool _t228 = (_t226 == _t227);
-            if (_t228) {
-                Token* _t229 = Parser_next(self);
-                Token* shr_tok = _t229;
-                TokenKind _t230 = TokenKind_PGt;
-                Span _t231 = shr_tok->span;
-                Pos _t232 = _t231.start;
-                Sym* _t233 = _t232.file;
-                Span _t234 = shr_tok->span;
-                Pos _t235 = _t234.start;
-                int32_t _t236 = _t235.line;
-                Span _t237 = shr_tok->span;
-                Pos _t238 = _t237.start;
-                int32_t _t239 = _t238.column;
-                int32_t _t240 = (_t239 + 1);
-                Pos _t241 = (Pos){.file = _t233, .line = _t236, .column = _t240};
+            Token* _t230 = Parser_peek(self);
+            TokenKind _t231 = _t230->kind;
+            TokenKind _t232 = TokenKind_OShr;
+            bool _t233 = (_t231 == _t232);
+            if (_t233) {
+                Token* _t234 = Parser_next(self);
+                Token* shr_tok = _t234;
+                TokenKind _t235 = TokenKind_PGt;
+                Span _t236 = shr_tok->span;
+                Pos _t237 = _t236.start;
+                Sym* _t238 = _t237.file;
+                Span _t239 = shr_tok->span;
+                Pos _t240 = _t239.start;
+                int32_t _t241 = _t240.line;
                 Span _t242 = shr_tok->span;
-                Pos _t243 = _t242.end;
-                Span _t244 = (Span){.start = _t241, .end = _t243};
-                Token* _t245 = ({ Token* _p = malloc(sizeof(Token)); *_p = (Token){.kind = _t230, .text = FORGE_STR(">"), .span = _t244}; _p; });
-                Parser_push_back(self, _t245);
+                Pos _t243 = _t242.start;
+                int32_t _t244 = _t243.column;
+                int32_t _t245 = (_t244 + 1);
+                Pos _t246 = (Pos){.file = _t238, .line = _t241, .column = _t245};
+                Span _t247 = shr_tok->span;
+                Pos _t248 = _t247.end;
+                Span _t249 = (Span){.start = _t246, .end = _t248};
+                Token* _t250 = ({ Token* _p = malloc(sizeof(Token)); *_p = (Token){.kind = _t235, .text = FORGE_STR(">"), .span = _t249}; _p; });
+                Parser_push_back(self, _t250);
             } else {
-                TokenKind _t247 = TokenKind_PGt;
-                ForgeResult_Tokenptr _t248 = Parser_expect(self, _t247);
-                const char* _t249 = _t248.error;
-                bool _t250 = (_t249 == NULL);
-                bool _t251 = (!_t250);
-                if (_t251) {
-                    return forge_err(_t249, ForgeResult_TypeExprptr);
+                TokenKind _t252 = TokenKind_PGt;
+                ForgeResult_Tokenptr _t253 = Parser_expect(self, _t252);
+                const char* _t254 = _t253.error;
+                bool _t255 = (_t254 == NULL);
+                bool _t256 = (!_t255);
+                if (_t256) {
+                    return forge_err(_t254, ForgeResult_TypeExprptr);
                 }
-                Token* _t252 = _t248.value;
-                _t252;
+                Token* _t257 = _t253.value;
+                _t257;
             }
         }
-        Sym* _t253 = sym(type_name);
-        TypeExprKind _t254 = (TypeExprKind){.tag = TypeExprKind_Named, .data.named = {_t253, args}};
-        Span _t255 = Parser_make_span(self, start);
-        TypeExpr* _t256 = ({ TypeExpr* _p = malloc(sizeof(TypeExpr)); *_p = (TypeExpr){.kind = _t254, .span = _t255}; _p; });
-        return forge_ok(_t256, ForgeResult_TypeExprptr);
+        Sym* _t258 = sym(type_name);
+        TypeExprKind _t259 = (TypeExprKind){.tag = TypeExprKind_Named, .data.named = {_t258, args}};
+        Span _t260 = Parser_make_span(self, start);
+        TypeExpr* _t261 = ({ TypeExpr* _p = malloc(sizeof(TypeExpr)); *_p = (TypeExpr){.kind = _t259, .span = _t260}; _p; });
+        return forge_ok(_t261, ForgeResult_TypeExprptr);
         break;
     }
     case 40: {
         Parser_next(self);
-        TypeExprKind _t258 = (TypeExprKind){.tag = TypeExprKind_Lock};
-        Span _t259 = Parser_make_span(self, start);
-        TypeExpr* _t260 = ({ TypeExpr* _p = malloc(sizeof(TypeExpr)); *_p = (TypeExpr){.kind = _t258, .span = _t259}; _p; });
-        return forge_ok(_t260, ForgeResult_TypeExprptr);
+        TypeExprKind _t263 = (TypeExprKind){.tag = TypeExprKind_Lock};
+        Span _t264 = Parser_make_span(self, start);
+        TypeExpr* _t265 = ({ TypeExpr* _p = malloc(sizeof(TypeExpr)); *_p = (TypeExpr){.kind = _t263, .span = _t264}; _p; });
+        return forge_ok(_t265, ForgeResult_TypeExprptr);
         break;
     }
     default: {
-        Span _t261 = tok->span;
-        TokenKind _t262 = tok->kind;
-        forge_string _t263 = tok->text;
-        forge_string _t264 = forge_sprintf("expected type, got %.*s (%.*s)", (int)TokenKind_to_string(_t262).len, (const char*)TokenKind_to_string(_t262).data, (int)_t263.len, (const char*)_t263.data);
-        Error* _t265 = Parser_make_error(self, _t261, _t264);
-        return forge_err((const char*)_t265->msg.data, ForgeResult_TypeExprptr);
+        Span _t266 = tok->span;
+        TokenKind _t267 = tok->kind;
+        forge_string _t268 = tok->text;
+        forge_string _t269 = forge_sprintf("expected type, got %.*s (%.*s)", (int)TokenKind_to_string(_t267).len, (const char*)TokenKind_to_string(_t267).data, (int)_t268.len, (const char*)_t268.data);
+        Error* _t270 = Parser_make_error(self, _t266, _t269);
+        return forge_err((const char*)_t270->msg.data, ForgeResult_TypeExprptr);
         break;
     }
     }

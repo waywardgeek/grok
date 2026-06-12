@@ -31,7 +31,7 @@ make -s forge
 FORGE="./forge"
 echo ""
 
-SKIP_FILES="guarded_by.fg"
+SKIP_FILES=""
 
 PASS=0
 FAIL=0

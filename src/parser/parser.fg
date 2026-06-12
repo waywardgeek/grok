@@ -417,8 +417,8 @@ forge parser {
       type_expr: typ,
       span: self.make_span(start)
     }
-    // Optional guarded_by
-    if self.peek().kind == AGuardedBy {
+    // Optional guarded_by (contextual keyword — lexer emits LIdent)
+    if self.peek().kind == LIdent && self.peek().text == "guarded_by" {
       self.next()
       self.expect(PLParen)?
       let lock = self.expect(LIdent)?
@@ -1486,6 +1486,11 @@ forge parser {
           TypeExprKind.Channel(elem!),
           span: self.make_span(start)
         }, null)
+      }
+
+      // lock (contextual keyword — type for mutexes)
+      if name.text == "lock" {
+        return (TypeExpr { Lock, self.make_span(start) }, null)
       }
 
       // unit
