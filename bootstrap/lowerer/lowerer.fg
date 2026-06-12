@@ -1733,6 +1733,17 @@ forge lowerer {
                 self.restore_stmts(s2)
                 append(cases, LSwitchCase { tag: t2, binding: "", body: b2 })
               }
+              Ident(n2) => {
+                // Unit variant (e.g. Nil) in multi-pattern
+                let t2 = self.find_variant_tag(enum_name, n2.name)
+                if t2 >= 0 {
+                  let s2 = self.save_stmts()
+                  self.lower_block(arm.body)
+                  let b2 = self.stmts
+                  self.restore_stmts(s2)
+                  append(cases, LSwitchCase { tag: t2, binding: "", body: b2 })
+                }
+              }
               _ => {}
             }
           }
