@@ -680,6 +680,19 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
         vd.typ = self.subst_type_remove_vars(vd.typ)
         if !isnull(vd.init) {
           vd.init!.typ = self.subst_type_remove_vars(vd.init!.typ)
+          // Sync VarDecl type from init when init has a more specific mangled type.
+          if !isnull(vd.init!.typ) && !isnull(vd.typ) {
+            let init_t = vd.init!.typ!
+            let decl_t = vd.typ!
+            if init_t.kind == decl_t.kind {
+              let is_class_or_struct = (decl_t.kind is TyClassHandle || decl_t.kind is TyStruct)
+              if is_class_or_struct && init_t.name != decl_t.name {
+                if decl_t.name != "" && init_t.name != "" {
+                  vd.typ = vd.init!.typ
+                }
+              }
+            }
+          }
         }
         s.var_decl = vd
       }
