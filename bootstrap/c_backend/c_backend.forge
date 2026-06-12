@@ -12,6 +12,7 @@ forge c_backend {
     "Function bodies collected to separate buffer for lambda hoisting"
     "spawn_captures redirect variable references to (*_ctx->name)"
     "in_generator redirects variable references to _gen->name"
+    "mut params: emit_value returns (*name) for all types, StAssign targets (*name)"
   }
 
   doc "Architecture" {
