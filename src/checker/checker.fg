@@ -1129,6 +1129,9 @@ forge checker {
   // =====================================================================
 
   func Checker.resolve_named_type(self, name: string, args: [TypeExpr], span: Span) -> Type {
+    // Check built-in types first
+    if name == "Lock" { return make_lock_type() }
+
     // Check scope first (type vars, aliases, modules)
     let sv = self.scope.lookup(name)
     if sv != nil {

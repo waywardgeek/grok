@@ -443,6 +443,33 @@ static inline forge_string forge_str_trim(forge_string s) {
         pthread_cond_broadcast(&ch->not_full); \
         pthread_mutex_unlock(&ch->mu); \
     } \
+    static inline bool forge_chan_tryrecv_##Suffix(ChanName* ch, ElemType* out) { \
+        pthread_mutex_lock(&ch->mu); \
+        if (ch->len == 0) { \
+            pthread_mutex_unlock(&ch->mu); \
+            return false; \
+        } \
+        ElemType val = ch->buf[ch->head]; \
+        ch->head = (ch->head + 1) % ch->cap; \
+        ch->len--; \
+        pthread_cond_signal(&ch->not_full); \
+        pthread_mutex_unlock(&ch->mu); \
+        if (out) *out = val; \
+        return true; \
+    } \
+    static inline bool forge_chan_trysend_##Suffix(ChanName* ch, ElemType val) { \
+        pthread_mutex_lock(&ch->mu); \
+        if (ch->len >= ch->cap || ch->closed) { \
+            pthread_mutex_unlock(&ch->mu); \
+            return false; \
+        } \
+        ch->buf[ch->tail] = val; \
+        ch->tail = (ch->tail + 1) % ch->cap; \
+        ch->len++; \
+        pthread_cond_signal(&ch->not_empty); \
+        pthread_mutex_unlock(&ch->mu); \
+        return true; \
+    } \
     static inline void forge_chan_free_##Suffix(ChanName* ch) { \
         pthread_mutex_destroy(&ch->mu); \
         pthread_cond_destroy(&ch->not_empty); \

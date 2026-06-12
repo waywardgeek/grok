@@ -714,6 +714,14 @@ forge parser {
         return (Stmt { BlockStmt(blk!), span: blk!.span }, null)
       }
       _ => {
+        // Check contextual keywords that the lexer emits as LIdent
+        let ann = self.peek_annotation()
+        if !isnull(ann) {
+          match ann! {
+            KLock => { return self.parse_lock() }
+            _ => {}
+          }
+        }
         return self.parse_expr_or_assign()
       }
     }

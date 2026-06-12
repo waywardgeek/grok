@@ -30,7 +30,7 @@ FORGE="./forge"
 echo ""
 
 # Skip files that use features not yet implemented (channels, spawn, select, lock)
-SKIP_FILES="channels.fg spawn.fg select.fg lock.fg guarded_by.fg"
+SKIP_FILES="guarded_by.fg"
 
 PASS=0
 FAIL=0

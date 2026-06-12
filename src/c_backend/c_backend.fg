@@ -27,6 +27,9 @@ class CGen {
   gen_struct_name: string
   gen_yield_count: i32
 
+  // Select label uniqueness
+  select_id: i32
+
   // Spawn support
   spawn_id: i32
   spawn_funcs: [CSpawnFunc]
@@ -2543,10 +2546,135 @@ func CGen.emit_stmt(self, s: LStmt?) {
       self.line(f"forge_chan_send_{suffix}({self.emit_value(d.channel)}, {self.emit_value(d.value)});")
     }
     StSpawn => {
-      self.line("/* spawn: not fully implemented in bootstrap C backend */")
+      let d = s!.spawn_data!
+      self.spawn_id = self.spawn_id + 1
+      let func_name = f"_spawn_{self.spawn_id}"
+
+      // Auto-detect captured variables: used in body but not declared within it
+      let used = collect_used_vars(d.body)
+      let declared = collect_declared_vars(d.body)
+      let mut captures: [CCapture] = []
+      let used_keys = used!.keys()
+      let mut ci = 0
+      while ci < len(used_keys) {
+        let var_name = used_keys[ci].get_name()
+        let decl_entry = declared!.get(used_keys[ci])
+        if isnull(decl_entry) {
+          let mut ctyp = "void*"
+          let vt_entry = self.var_types!.get(used_keys[ci])
+          if !isnull(vt_entry) && !isnull(vt_entry!.value) {
+            ctyp = self.c_type(vt_entry!.value)
+          }
+          append(captures, CCapture { name: var_name, typ: ctyp })
+        }
+        ci = ci + 1
+      }
+
+      // Emit the body into a separate buffer with capture awareness
+      let saved_buf = self.buf
+      let saved_indent = self.indent
+      let saved_captures = self.spawn_captures
+      self.buf = new_string_builder()
+      self.indent = 1
+      let capture_set = Dict<Sym, bool>()
+      let mut ci2 = 0
+      while ci2 < len(captures) {
+        capture_set.set(sym(captures[ci2].name), true)
+        ci2 = ci2 + 1
+      }
+      self.spawn_captures = capture_set
+      self.emit_stmts(d.body)
+      let body_str = self.buf!.to_string()
+      self.buf = saved_buf
+      self.indent = saved_indent
+      self.spawn_captures = saved_captures
+
+      append(self.spawn_funcs, CSpawnFunc {
+        name: func_name,
+        body_str: body_str,
+        captures: captures,
+      })
+
+      // Emit spawn call site — pass pointers to original variables
+      if len(captures) > 0 {
+        self.line("{")
+        self.indent = self.indent + 1
+        self.line(f"{func_name}_ctx* _ctx = ({func_name}_ctx*)malloc(sizeof({func_name}_ctx));")
+        let mut ci3 = 0
+        while ci3 < len(captures) {
+          self.line(f"_ctx->{captures[ci3].name} = &{captures[ci3].name};")
+          ci3 = ci3 + 1
+        }
+        self.line(f"forge_spawn({func_name}, _ctx);")
+        self.indent = self.indent - 1
+        self.line("}")
+      } else {
+        self.line(f"forge_spawn({func_name}, NULL);")
+      }
     }
     StSelect => {
-      self.line("/* select: channels not supported in C backend */")
+      let d = s!.select_data!
+      let sid = self.select_id
+      self.select_id = self.select_id + 1
+      let label = f"_sel_done_{sid}"
+      // Select: try each case in a polling loop
+      self.line("for (;;) {")
+      self.indent = self.indent + 1
+      let mut si = 0
+      while si < len(d.cases) {
+        let sc = d.cases[si]
+        match sc.kind {
+          SelDefault => {
+            self.emit_stmts(sc.body)
+            self.line(f"goto {label};")
+          }
+          SelRecv => {
+            let chan_type = self.resolve_value_type(sc.channel)
+            let mut suffix = "void"
+            if !isnull(chan_type) && chan_type!.kind is TyChannel && !isnull(chan_type!.elem) {
+              suffix = self.chan_suffix(chan_type!.elem)
+            }
+            let ch_val = self.emit_value(sc.channel)
+            if sc.binding != "" {
+              let elem_ctype = if !isnull(chan_type) && chan_type!.kind is TyChannel && !isnull(chan_type!.elem) {
+                self.c_type(chan_type!.elem)
+              } else { "int32_t" }
+              self.line(f"{{ {elem_ctype} _sel_val; if (forge_chan_tryrecv_{suffix}({ch_val}, &_sel_val)) {{")
+              self.indent = self.indent + 1
+              self.line(f"{elem_ctype} {c_safe_name(sc.binding)} = _sel_val;")
+              self.emit_stmts(sc.body)
+              self.indent = self.indent - 1
+              self.line(f"goto {label}; }} }}")
+            } else {
+              self.line(f"if (forge_chan_tryrecv_{suffix}({ch_val}, NULL)) {{")
+              self.indent = self.indent + 1
+              self.emit_stmts(sc.body)
+              self.indent = self.indent - 1
+              self.line(f"goto {label}; }}")
+            }
+          }
+          SelSend => {
+            let chan_type = self.resolve_value_type(sc.channel)
+            let mut suffix = "void"
+            if !isnull(chan_type) && chan_type!.kind is TyChannel && !isnull(chan_type!.elem) {
+              suffix = self.chan_suffix(chan_type!.elem)
+            }
+            let ch_val = self.emit_value(sc.channel)
+            let send_val = self.emit_value(sc.value)
+            self.line(f"if (forge_chan_trysend_{suffix}({ch_val}, {send_val})) {{")
+            self.indent = self.indent + 1
+            self.emit_stmts(sc.body)
+            self.indent = self.indent - 1
+            self.line(f"goto {label}; }}")
+          }
+        }
+        si = si + 1
+      }
+      // If no default case, sleep briefly and retry
+      self.line("usleep(100);")
+      self.indent = self.indent - 1
+      self.line("}")
+      self.line(f"{label}:;")
     }
     StDefer => {
       let d = s!.defer_data!
@@ -4019,6 +4147,229 @@ func CGen.emit_os_helpers(self) {
 }
 
 // ---------------------------------------------------------------------------
+// Spawn capture collection helpers
+// ---------------------------------------------------------------------------
+
+func collect_val_vars(v: LValue?, used: Dict<Sym, bool>?) {
+  if isnull(v) { return }
+  if v!.kind is ValVar {
+    used!.set(sym(v!.name), true)
+  }
+}
+
+func collect_expr_vars(e: LExpr?, used: Dict<Sym, bool>?) {
+  if isnull(e) { return }
+  match e!.kind {
+    ExCall => {
+      let d = e!.call!
+      let mut i = 0
+      while i < len(d.args) {
+        collect_val_vars(d.args[i], used)
+        i = i + 1
+      }
+    }
+    ExMethodCall => {
+      let d = e!.method_call!
+      collect_val_vars(d.receiver, used)
+      let mut i = 0
+      while i < len(d.args) {
+        collect_val_vars(d.args[i], used)
+        i = i + 1
+      }
+    }
+    ExBuiltin => {
+      let d = e!.builtin!
+      let mut i = 0
+      while i < len(d.args) {
+        collect_val_vars(d.args[i], used)
+        i = i + 1
+      }
+    }
+    ExBinOp => {
+      let d = e!.bin_op!
+      collect_val_vars(d.left, used)
+      collect_val_vars(d.right, used)
+    }
+    ExUnOp => {
+      let d = e!.un_op!
+      collect_val_vars(d.operand, used)
+    }
+    ExCast => {
+      let d = e!.cast!
+      collect_val_vars(d.operand, used)
+    }
+    ExStructField => {
+      let d = e!.struct_field!
+      collect_val_vars(d.receiver, used)
+    }
+    ExClassGet => {
+      let d = e!.class_get!
+      collect_val_vars(d.handle, used)
+    }
+    ExIndexGet => {
+      let d = e!.index_get!
+      collect_val_vars(d.collection, used)
+      collect_val_vars(d.index, used)
+    }
+    ExWrapOptional => {
+      let d = e!.wrap_opt!
+      collect_val_vars(d.value, used)
+    }
+    ExMakeChannel => {
+      let d = e!.make_channel!
+      collect_val_vars(d.buf_size, used)
+    }
+    ExIsNull => {
+      let d = e!.is_null!
+      collect_val_vars(d.value, used)
+    }
+    ExUnwrapOptional => {
+      let d = e!.unwrap_opt!
+      collect_val_vars(d.value, used)
+    }
+    _ => {}
+  }
+}
+
+func collect_used_vars_stmts(stmts: [LStmt?], used: Dict<Sym, bool>?) {
+  let mut i = 0
+  while i < len(stmts) {
+    let s = stmts[i]
+    if isnull(s) {
+      i = i + 1
+      continue
+    }
+    match s!.kind {
+      StTempDef => {
+        let d = s!.temp_def!
+        collect_expr_vars(d.expr, used)
+      }
+      StVarDecl => {
+        let d = s!.var_decl!
+        collect_val_vars(d.init, used)
+      }
+      StAssign => {
+        let d = s!.assign!
+        used!.set(sym(d.target), true)
+        collect_val_vars(d.value, used)
+      }
+      StSideEffect => {
+        let d = s!.side_effect!
+        collect_expr_vars(d.expr, used)
+      }
+      StSend => {
+        let d = s!.send_data!
+        collect_val_vars(d.channel, used)
+        collect_val_vars(d.value, used)
+      }
+      StIf => {
+        let d = s!.if_data!
+        collect_used_vars_stmts(d.then_body, used)
+        collect_used_vars_stmts(d.else_body, used)
+      }
+      StWhile => {
+        let d = s!.while_data!
+        collect_used_vars_stmts(d.cond_block, used)
+        collect_used_vars_stmts(d.body, used)
+      }
+      StFor => {
+        let d = s!.for_data!
+        collect_val_vars(d.collection, used)
+        collect_used_vars_stmts(d.body, used)
+      }
+      StBlock => {
+        let d = s!.block!
+        collect_used_vars_stmts(d.stmts, used)
+      }
+      StLock => {
+        let d = s!.lock_data!
+        collect_val_vars(d.mutex, used)
+        collect_used_vars_stmts(d.body, used)
+      }
+      StReturn => {
+        let d = s!.ret!
+        let mut j = 0
+        while j < len(d.values) {
+          collect_val_vars(d.values[j], used)
+          j = j + 1
+        }
+      }
+      StStructSet => {
+        let d = s!.struct_set!
+        collect_val_vars(d.receiver, used)
+        collect_val_vars(d.value, used)
+      }
+      StClassSet => {
+        let d = s!.class_set!
+        collect_val_vars(d.handle, used)
+        collect_val_vars(d.value, used)
+      }
+      StIndexSet => {
+        let d = s!.index_set!
+        collect_val_vars(d.collection, used)
+        collect_val_vars(d.index, used)
+        collect_val_vars(d.value, used)
+      }
+      _ => {}
+    }
+    i = i + 1
+  }
+}
+
+func collect_used_vars(stmts: [LStmt?]) -> Dict<Sym, bool>? {
+  let used = Dict<Sym, bool>()
+  collect_used_vars_stmts(stmts, used)
+  return used
+}
+
+func collect_declared_vars_stmts(stmts: [LStmt?], decl: Dict<Sym, bool>?) {
+  let mut i = 0
+  while i < len(stmts) {
+    let s = stmts[i]
+    if isnull(s) {
+      i = i + 1
+      continue
+    }
+    match s!.kind {
+      StVarDecl => {
+        let d = s!.var_decl!
+        decl!.set(sym(d.name), true)
+      }
+      StIf => {
+        let d = s!.if_data!
+        collect_declared_vars_stmts(d.then_body, decl)
+        collect_declared_vars_stmts(d.else_body, decl)
+      }
+      StWhile => {
+        let d = s!.while_data!
+        collect_declared_vars_stmts(d.body, decl)
+      }
+      StFor => {
+        let d = s!.for_data!
+        decl!.set(sym(d.var_name), true)
+        collect_declared_vars_stmts(d.body, decl)
+      }
+      StBlock => {
+        let d = s!.block!
+        collect_declared_vars_stmts(d.stmts, decl)
+      }
+      StLock => {
+        let d = s!.lock_data!
+        collect_declared_vars_stmts(d.body, decl)
+      }
+      _ => {}
+    }
+    i = i + 1
+  }
+}
+
+func collect_declared_vars(stmts: [LStmt?]) -> Dict<Sym, bool>? {
+  let decl = Dict<Sym, bool>()
+  collect_declared_vars_stmts(stmts, decl)
+  return decl
+}
+
+// ---------------------------------------------------------------------------
 // Top-level generation — EmitC entry point
 // ---------------------------------------------------------------------------
 
@@ -4413,15 +4764,46 @@ pub func emit_c(prog: LProgram?) -> string {
     i = i + 1
   }
 
-  // Emit channel implementations
+  // Emit channel implementations (before spawn funcs — spawn bodies may use channels)
   i = 0
   while i < len(chan_keys) {
     let entry = g.chan_types!.get(chan_keys[i])
     if !isnull(entry) {
       let chan_name = f"ForgeChan_{entry!.value}"
-      g.line(f"FORGE_CHAN_IMPL({chan_keys[i]}, {chan_name}, {entry!.value})")
+      g.line(f"FORGE_CHAN_IMPL({chan_keys[i].get_name()}, {chan_name}, {entry!.value})")
       g.line("")
     }
+    i = i + 1
+  }
+
+  // Emit hoisted spawn wrapper functions
+  i = 0
+  while i < len(g.spawn_funcs) {
+    let sf = g.spawn_funcs[i]
+    if len(sf.captures) > 0 {
+      g.line(f"typedef struct {sf.name}_ctx {{")
+      g.indent = g.indent + 1
+      let mut ci = 0
+      while ci < len(sf.captures) {
+        g.line(f"{sf.captures[ci].typ}* {sf.captures[ci].name};")
+        ci = ci + 1
+      }
+      g.indent = g.indent - 1
+      g.line(f"}} {sf.name}_ctx;")
+    }
+    g.line(f"static void* {sf.name}(void* _arg) {{")
+    g.indent = g.indent + 1
+    if len(sf.captures) > 0 {
+      g.line(f"{sf.name}_ctx* _ctx = ({sf.name}_ctx*)_arg;")
+    }
+    g.write_raw(sf.body_str)
+    if len(sf.captures) > 0 {
+      g.line("free(_ctx);")
+    }
+    g.line("return NULL;")
+    g.indent = g.indent - 1
+    g.line("}")
+    g.line("")
     i = i + 1
   }
 

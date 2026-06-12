@@ -1049,7 +1049,7 @@ forge lowerer {
       }
       ExprStmt(expr) => {
         let v = self.lower_expr(expr)
-        if !isnull(v) {
+        if !isnull(v) && !(v!.kind is ValLitNull) {
           self.emit(LStmt { kind: StExpr, expr_stmt: LExprStmtData { temp_id: v!.temp_id } })
         }
       }
@@ -1428,17 +1428,42 @@ forge lowerer {
           body: body
         })
       } else {
-        let ch_val = self.lower_expr(c.expr)
         let bind = if !isnull(c.bind_var) { c.bind_var!.name } else { "" }
         let body = self.lower_block_as_stmts(c.body)
-        // Detect send vs recv based on expression
-        let sk = if !isnull(c.expr) && c.expr!.kind is MethodCall { SelSend } else { SelRecv }
-        append(lcases, LSelectCase {
-          kind: sk,
-          channel: ch_val,
-          binding: bind,
-          body: body
-        })
+        // Pattern-match on AST to extract channel without executing the operation
+        match c.expr!.kind {
+          MethodCall(receiver, method, type_args, args, mut_args) => {
+            let ch_val = self.lower_expr(receiver)
+            if method.get_name() == "send" {
+              let send_val = self.lower_expr(args[0])
+              append(lcases, LSelectCase {
+                kind: SelSend,
+                channel: ch_val,
+                value: send_val,
+                binding: bind,
+                body: body
+              })
+            } else {
+              // receive
+              append(lcases, LSelectCase {
+                kind: SelRecv,
+                channel: ch_val,
+                binding: bind,
+                body: body
+              })
+            }
+          }
+          _ => {
+            // Fallback: treat as recv
+            let ch_val = self.lower_expr(c.expr)
+            append(lcases, LSelectCase {
+              kind: SelRecv,
+              channel: ch_val,
+              binding: bind,
+              body: body
+            })
+          }
+        }
       }
     }
     self.emit(LStmt { kind: StSelect, select_data: LSelectData { cases: lcases } })
@@ -2379,6 +2404,31 @@ forge lowerer {
       return self.emit_temp(alloc)
     }
 
+    // make_channel<T>(bufSize)
+    if func_name == "make_channel" {
+      let result_type = self.expr_type(orig)
+      let mut elem_type: LType? = nil
+      if !isnull(result_type) && result_type!.kind is TyChannel {
+        elem_type = result_type!.elem
+      }
+      if isnull(elem_type) && len(type_args) > 0 {
+        elem_type = self.lower_type(type_args[0])
+      }
+      if isnull(elem_type) {
+        elem_type = LType { kind: TyAny, name: "", bits: 0, is_exported: false }
+      }
+      let mut buf_size: LValue? = nil
+      if len(args) > 0 {
+        buf_size = self.lower_expr(args[0])
+      }
+      let mc = LExpr {
+        kind: ExMakeChannel,
+        typ: result_type,
+        make_channel: LMakeChannelData { elem_type: elem_type, buf_size: buf_size }
+      }
+      return self.emit_temp(mc)
+    }
+
     // Check builtin functions
     if is_builtin_func(func_name) {
       // Special case: append with field access needs write-back
@@ -2582,16 +2632,28 @@ forge lowerer {
 
     // Channel methods
     if !isnull(recv_type) && recv_type!.kind is TyChannel {
-      if method_name == "send" || method_name == "recv" || method_name == "close" {
-        let mut bargs: [LValue?] = [recv]
-        for a in args {
-          append(bargs, self.lower_expr(a))
-        }
+      if method_name == "send" {
+        // ch.send(val) → LStmtSend
+        let val = self.lower_expr(args[0])
+        self.emit(LStmt { kind: StSend, send_data: LSendData { channel: recv, value: val } })
+        return LValue { kind: ValLitNull, name: "", int_val: 0, uint_val: 0, float_val: 0.0, str_val: "", temp_id: 0, bool_val: false,
+          typ: LType { kind: TyUnit, name: "", bits: 0, is_exported: false } }
+      }
+      if method_name == "receive" {
         let rt = self.expr_type(orig)
         let builtin = LExpr {
           kind: ExBuiltin,
           typ: rt,
-          builtin: LBuiltinData { name: "chan_" + method_name, args: bargs }
+          builtin: LBuiltinData { name: "channel_receive", args: [recv] }
+        }
+        return self.emit_temp(builtin)
+      }
+      if method_name == "close" {
+        let rt = self.expr_type(orig)
+        let builtin = LExpr {
+          kind: ExBuiltin,
+          typ: rt,
+          builtin: LBuiltinData { name: "channel_close", args: [recv] }
         }
         return self.emit_temp(builtin)
       }

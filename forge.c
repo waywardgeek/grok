@@ -2325,6 +2325,7 @@ struct CGen {
     bool in_generator;
     forge_string gen_struct_name;
     int32_t gen_yield_count;
+    int32_t select_id;
     int32_t spawn_id;
     ForgeSlice_CSpawnFunc spawn_funcs;
     Dict_CSym_bool* spawn_captures;
@@ -5963,6 +5964,9 @@ static forge_string CGen_to_string(CGen* v) {
     _result = forge_str_concat(_result, FORGE_STR("gen_yield_count: "));
     _result = forge_str_concat(_result, forge_sprintf("%d", v->gen_yield_count));
     _result = forge_str_concat(_result, FORGE_STR(", "));
+    _result = forge_str_concat(_result, FORGE_STR("select_id: "));
+    _result = forge_str_concat(_result, forge_sprintf("%d", v->select_id));
+    _result = forge_str_concat(_result, FORGE_STR(", "));
     _result = forge_str_concat(_result, FORGE_STR("spawn_id: "));
     _result = forge_str_concat(_result, forge_sprintf("%d", v->spawn_id));
     _result = forge_str_concat(_result, FORGE_STR(", "));
@@ -7796,6 +7800,12 @@ void CGen_emit_func_decl(CGen* self, LFuncDecl f);
 void CGen_emit_to_string_functions(CGen* self);
 void CGen_emit_field_dump_to_string(CGen* self, forge_string type_name, ForgeSlice_LField fields, forge_string prefix);
 void CGen_emit_os_helpers(CGen* self);
+void collect_val_vars(LValue* v, Dict_CSym_bool* used);
+void collect_expr_vars(LExpr* e, Dict_CSym_bool* used);
+void collect_used_vars_stmts(ForgeSlice_LStmtptr stmts, Dict_CSym_bool* used);
+Dict_CSym_bool* collect_used_vars(ForgeSlice_LStmtptr stmts);
+void collect_declared_vars_stmts(ForgeSlice_LStmtptr stmts, Dict_CSym_bool* decl);
+Dict_CSym_bool* collect_declared_vars(ForgeSlice_LStmtptr stmts);
 forge_string emit_c(LProgram* prog);
 forge_string emit_test_runner(ForgeSlice_forge_string test_funcs);
 forge_str_bool_t resolve_command(forge_string prefix);
@@ -24196,8 +24206,26 @@ ForgeResult_Stmtptr Parser_parse_stmt(Parser* self) {
         break;
     }
     default: {
-        ForgeResult_Stmtptr _t32 = Parser_parse_expr_or_assign(self);
-        return _t32;
+        ForgeOpt_TokenKind _t32 = Parser_peek_annotation(self);
+        ForgeOpt_TokenKind ann = _t32;
+        bool _t33 = forge_isnull(ann);
+        bool _t34 = (!_t33);
+        if (_t34) {
+            TokenKind _t35 = forge_unwrap(ann);
+            int32_t _t36 = _t35;
+            switch (_t36) {
+            case 40: {
+                ForgeResult_Stmtptr _t37 = Parser_parse_lock(self);
+                return _t37;
+                break;
+            }
+            default: {
+                break;
+            }
+            }
+        }
+        ForgeResult_Stmtptr _t38 = Parser_parse_expr_or_assign(self);
+        return _t38;
         break;
     }
     }
@@ -31707,23 +31735,28 @@ Type* Checker_resolve_type_expr(Checker* self, TypeExpr* te) {
 }
 
 Type* Checker_resolve_named_type(Checker* self, forge_string name, ForgeSlice_TypeExprptr args, Span span) {
-    Scope* _t0 = self->scope;
-    Type* _t1 = Scope_lookup(_t0, name);
-    Type* sv = _t1;
-    bool _t2 = (sv != 0);
-    if (_t2) {
-        Type* _t3 = sv;
-        TypeKind _t4 = _t3->kind;
-        int32_t _t5 = _t4.tag;
-        switch (_t5) {
+    bool _t0 = forge_str_eq(name, FORGE_STR("Lock"));
+    if (_t0) {
+        Type* _t1 = make_lock_type();
+        return _t1;
+    }
+    Scope* _t2 = self->scope;
+    Type* _t3 = Scope_lookup(_t2, name);
+    Type* sv = _t3;
+    bool _t4 = (sv != 0);
+    if (_t4) {
+        Type* _t5 = sv;
+        TypeKind _t6 = _t5->kind;
+        int32_t _t7 = _t6.tag;
+        switch (_t7) {
         case 19: {
-            Type* _t6 = sv;
-            return _t6;
+            Type* _t8 = sv;
+            return _t8;
             break;
         }
         case 23: {
-            Type* _t7 = sv;
-            return _t7;
+            Type* _t9 = sv;
+            return _t9;
             break;
         }
         default: {
@@ -31731,84 +31764,84 @@ Type* Checker_resolve_named_type(Checker* self, forge_string name, ForgeSlice_Ty
         }
         }
     }
-    Registry* _t8 = self->registry;
-    TypeInfo* _t9 = Registry_lookup(_t8, name);
-    TypeInfo* info = _t9;
-    bool _t10 = (info != 0);
-    if (_t10) {
-        int32_t _t11 = args.len;
-        bool _t12 = (_t11 > 0);
-        bool _sc13 = false;
-        _sc13 = _t12;
-        if (_sc13) {
-            TypeInfo* _t14 = info;
-            ForgeSlice_forge_string _t15 = _t14->type_param_names;
-            int32_t _t16 = _t15.len;
-            bool _t17 = (_t16 > 0);
-            _sc13 = _t17;
+    Registry* _t10 = self->registry;
+    TypeInfo* _t11 = Registry_lookup(_t10, name);
+    TypeInfo* info = _t11;
+    bool _t12 = (info != 0);
+    if (_t12) {
+        int32_t _t13 = args.len;
+        bool _t14 = (_t13 > 0);
+        bool _sc15 = false;
+        _sc15 = _t14;
+        if (_sc15) {
+            TypeInfo* _t16 = info;
+            ForgeSlice_forge_string _t17 = _t16->type_param_names;
+            int32_t _t18 = _t17.len;
+            bool _t19 = (_t18 > 0);
+            _sc15 = _t19;
         }
-        if (_sc13) {
-            Dict_CSym_CType* _t18 = ({ Dict_CSym_CType* _p = malloc(sizeof(Dict_CSym_CType)); *_p = (Dict_CSym_CType){}; _p; });
-            Dict_CSym_CType* bindings = _t18;
-            TypeInfo* _t19 = info;
-            ForgeSlice_forge_string _t20 = _t19->type_param_names;
-            int32_t _t21 = _t20.len;
-            int32_t limit = _t21;
-            int32_t _t22 = args.len;
-            bool _t23 = (_t22 < limit);
-            if (_t23) {
-                int32_t _t24 = args.len;
-                limit = _t24;
+        if (_sc15) {
+            Dict_CSym_CType* _t20 = ({ Dict_CSym_CType* _p = malloc(sizeof(Dict_CSym_CType)); *_p = (Dict_CSym_CType){}; _p; });
+            Dict_CSym_CType* bindings = _t20;
+            TypeInfo* _t21 = info;
+            ForgeSlice_forge_string _t22 = _t21->type_param_names;
+            int32_t _t23 = _t22.len;
+            int32_t limit = _t23;
+            int32_t _t24 = args.len;
+            bool _t25 = (_t24 < limit);
+            if (_t25) {
+                int32_t _t26 = args.len;
+                limit = _t26;
             }
-            ForgeSlice_Typeptr _t25 = forge_slice_empty(ForgeSlice_Typeptr);
-            ForgeSlice_Typeptr resolved_args = _t25;
-            void* /* generator */ _t26 = range_init(0, limit);
-            range_gen_t* _gen_iter_181 = _t26;
+            ForgeSlice_Typeptr _t27 = forge_slice_empty(ForgeSlice_Typeptr);
+            ForgeSlice_Typeptr resolved_args = _t27;
+            void* /* generator */ _t28 = range_init(0, limit);
+            range_gen_t* _gen_iter_181 = _t28;
             while (range_next(_gen_iter_181)) {
                 int32_t i = _gen_iter_181->_value;
-                TypeExpr* _t27 = args.data[i];
-                Type* _t28 = Checker_resolve_type_expr(self, _t27);
-                Type* resolved = _t28;
-                TypeInfo* _t29 = info;
-                ForgeSlice_forge_string _t30 = _t29->type_param_names;
-                forge_string _t31 = _t30.data[i];
-                Sym* _t32 = sym(_t31);
-                Dict_CSym_CType_set(bindings, _t32, resolved);
-                ForgeSlice_Typeptr _t34 = ({ forge_push(&resolved_args, resolved, ForgeSlice_Typeptr); resolved_args; });
-                _t34;
+                TypeExpr* _t29 = args.data[i];
+                Type* _t30 = Checker_resolve_type_expr(self, _t29);
+                Type* resolved = _t30;
+                TypeInfo* _t31 = info;
+                ForgeSlice_forge_string _t32 = _t31->type_param_names;
+                forge_string _t33 = _t32.data[i];
+                Sym* _t34 = sym(_t33);
+                Dict_CSym_CType_set(bindings, _t34, resolved);
+                ForgeSlice_Typeptr _t36 = ({ forge_push(&resolved_args, resolved, ForgeSlice_Typeptr); resolved_args; });
+                _t36;
             }
             free(_gen_iter_181);
-            TypeInfo* _t35 = info;
-            Type* _t36 = _t35->type_val;
-            TypeKind _t37 = _t36->kind;
-            TypeInfo* _t38 = info;
-            Type* _t39 = _t38->type_val;
-            int32_t _t40 = _t39->bits;
-            Type* _t41 = ({ Type* _p = malloc(sizeof(Type)); *_p = (Type){.kind = _t37, .bits = _t40, .type_args = resolved_args}; _p; });
-            Type* result = _t41;
+            TypeInfo* _t37 = info;
+            Type* _t38 = _t37->type_val;
+            TypeKind _t39 = _t38->kind;
+            TypeInfo* _t40 = info;
+            Type* _t41 = _t40->type_val;
+            int32_t _t42 = _t41->bits;
+            Type* _t43 = ({ Type* _p = malloc(sizeof(Type)); *_p = (Type){.kind = _t39, .bits = _t42, .type_args = resolved_args}; _p; });
+            Type* result = _t43;
             return result;
         }
-        TypeInfo* _t42 = info;
-        Type* _t43 = _t42->type_val;
-        return _t43;
+        TypeInfo* _t44 = info;
+        Type* _t45 = _t44->type_val;
+        return _t45;
     }
-    Pos _t44 = span.start;
-    int32_t _t45 = _t44.line;
-    bool _t46 = (_t45 == 0);
-    bool _sc47 = false;
-    _sc47 = _t46;
-    if (_sc47) {
-        Pos _t48 = span.start;
-        int32_t _t49 = _t48.column;
-        bool _t50 = (_t49 == 0);
-        _sc47 = _t50;
+    Pos _t46 = span.start;
+    int32_t _t47 = _t46.line;
+    bool _t48 = (_t47 == 0);
+    bool _sc49 = false;
+    _sc49 = _t48;
+    if (_sc49) {
+        Pos _t50 = span.start;
+        int32_t _t51 = _t50.column;
+        bool _t52 = (_t51 == 0);
+        _sc49 = _t52;
     }
-    if (_sc47) {
-        Type* _t51 = make_typevar_type(name);
-        return _t51;
+    if (_sc49) {
+        Type* _t53 = make_typevar_type(name);
+        return _t53;
     }
-    Type* _t52 = make_typevar_type(name);
-    return _t52;
+    Type* _t54 = make_typevar_type(name);
+    return _t54;
 }
 
 Type* Checker_func_decl_to_type(Checker* self, FuncDecl* f) {
@@ -42270,156 +42303,166 @@ void Lowerer_lower_stmt(Lowerer* self, Stmt* s) {
         LValue* v = _t16;
         bool _t17 = (v == NULL);
         bool _t18 = (!_t17);
-        if (_t18) {
-            LStmtKind _t19 = LStmtKind_StExpr;
+        bool _sc19 = false;
+        _sc19 = _t18;
+        if (_sc19) {
             LValue* _t20 = v;
-            int32_t _t21 = _t20->temp_id;
-            LExprStmtData _t22 = (LExprStmtData){.temp_id = _t21};
-            LStmt* _t23 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t19, .expr_stmt = forge_some(_t22, ForgeOpt_LExprStmtData)}; _p; });
-            Lowerer_emit(self, _t23);
+            LValueKind _t21 = _t20->kind;
+            int32_t _t22 = _t21;
+            bool _t23 = (_t22 == 8);
+            bool _t24 = (!_t23);
+            _sc19 = _t24;
+        }
+        if (_sc19) {
+            LStmtKind _t25 = LStmtKind_StExpr;
+            LValue* _t26 = v;
+            int32_t _t27 = _t26->temp_id;
+            LExprStmtData _t28 = (LExprStmtData){.temp_id = _t27};
+            LStmt* _t29 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t25, .expr_stmt = forge_some(_t28, ForgeOpt_LExprStmtData)}; _p; });
+            Lowerer_emit(self, _t29);
         }
         break;
     }
     case 4: {
-        Expr* _t25 = _t2.data.if_.condition;
-        Expr* condition = _t25;
-        Block* _t26 = _t2.data.if_.then_block;
-        Block* then_block = _t26;
-        ForgeSlice_ElseIfptr _t27 = _t2.data.if_.else_ifs;
-        ForgeSlice_ElseIfptr else_ifs = _t27;
-        Block* _t28 = _t2.data.if_.else_block;
-        Block* else_block = _t28;
+        Expr* _t31 = _t2.data.if_.condition;
+        Expr* condition = _t31;
+        Block* _t32 = _t2.data.if_.then_block;
+        Block* then_block = _t32;
+        ForgeSlice_ElseIfptr _t33 = _t2.data.if_.else_ifs;
+        ForgeSlice_ElseIfptr else_ifs = _t33;
+        Block* _t34 = _t2.data.if_.else_block;
+        Block* else_block = _t34;
         Lowerer_lower_if(self, condition, then_block, else_ifs, else_block);
         break;
     }
     case 5: {
-        Sym* _t30 = _t2.data.for_.var_name;
-        Sym* var_name = _t30;
-        Sym* _t31 = _t2.data.for_.index_var;
-        Sym* index_var = _t31;
-        Expr* _t32 = _t2.data.for_.collection;
-        Expr* collection = _t32;
-        Block* _t33 = _t2.data.for_.body;
-        Block* body = _t33;
+        Sym* _t36 = _t2.data.for_.var_name;
+        Sym* var_name = _t36;
+        Sym* _t37 = _t2.data.for_.index_var;
+        Sym* index_var = _t37;
+        Expr* _t38 = _t2.data.for_.collection;
+        Expr* collection = _t38;
+        Block* _t39 = _t2.data.for_.body;
+        Block* body = _t39;
         Lowerer_lower_for(self, var_name, index_var, collection, body);
         break;
     }
     case 6: {
-        Expr* _t35 = _t2.data.while_.condition;
-        Expr* condition = _t35;
-        Block* _t36 = _t2.data.while_.body;
-        Block* body = _t36;
+        Expr* _t41 = _t2.data.while_.condition;
+        Expr* condition = _t41;
+        Block* _t42 = _t2.data.while_.body;
+        Block* body = _t42;
         Lowerer_lower_while(self, condition, body);
         break;
     }
     case 7: {
-        Expr* _t38 = _t2.data.match.value;
-        Expr* value = _t38;
-        ForgeSlice_MatchArmptr _t39 = _t2.data.match.arms;
-        ForgeSlice_MatchArmptr arms = _t39;
+        Expr* _t44 = _t2.data.match.value;
+        Expr* value = _t44;
+        ForgeSlice_MatchArmptr _t45 = _t2.data.match.arms;
+        ForgeSlice_MatchArmptr arms = _t45;
         Lowerer_lower_match(self, value, arms);
         break;
     }
     case 8: {
-        Block* _t41 = _t2.data.blockstmt.block;
-        Block* block = _t41;
-        ForgeSlice_LStmtptr _t42 = Lowerer_lower_block_as_stmts(self, block);
-        ForgeSlice_LStmtptr inner = _t42;
-        LStmtKind _t43 = LStmtKind_StBlock;
-        LBlockData _t44 = (LBlockData){.stmts = inner};
-        LStmt* _t45 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t43, .block = forge_some(_t44, ForgeOpt_LBlockData)}; _p; });
-        Lowerer_emit(self, _t45);
-        break;
-    }
-    case 10: {
-        LStmtKind _t47 = LStmtKind_StBreak;
-        LStmt* _t48 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t47}; _p; });
-        Lowerer_emit(self, _t48);
-        break;
-    }
-    case 11: {
-        LStmtKind _t50 = LStmtKind_StContinue;
-        LStmt* _t51 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t50}; _p; });
+        Block* _t47 = _t2.data.blockstmt.block;
+        Block* block = _t47;
+        ForgeSlice_LStmtptr _t48 = Lowerer_lower_block_as_stmts(self, block);
+        ForgeSlice_LStmtptr inner = _t48;
+        LStmtKind _t49 = LStmtKind_StBlock;
+        LBlockData _t50 = (LBlockData){.stmts = inner};
+        LStmt* _t51 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t49, .block = forge_some(_t50, ForgeOpt_LBlockData)}; _p; });
         Lowerer_emit(self, _t51);
         break;
     }
+    case 10: {
+        LStmtKind _t53 = LStmtKind_StBreak;
+        LStmt* _t54 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t53}; _p; });
+        Lowerer_emit(self, _t54);
+        break;
+    }
+    case 11: {
+        LStmtKind _t56 = LStmtKind_StContinue;
+        LStmt* _t57 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t56}; _p; });
+        Lowerer_emit(self, _t57);
+        break;
+    }
     case 12: {
-        Block* _t53 = _t2.data.spawn.body;
-        Block* body = _t53;
-        ForgeSlice_LStmtptr _t54 = Lowerer_lower_block_as_stmts(self, body);
-        ForgeSlice_LStmtptr inner = _t54;
-        LStmtKind _t55 = LStmtKind_StSpawn;
-        ForgeSlice_forge_string _t56 = forge_slice_empty(ForgeSlice_forge_string);
-        LSpawnData _t57 = (LSpawnData){.body = inner, .captures = _t56};
-        LStmt* _t58 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t55, .spawn_data = forge_some(_t57, ForgeOpt_LSpawnData)}; _p; });
-        Lowerer_emit(self, _t58);
+        Block* _t59 = _t2.data.spawn.body;
+        Block* body = _t59;
+        ForgeSlice_LStmtptr _t60 = Lowerer_lower_block_as_stmts(self, body);
+        ForgeSlice_LStmtptr inner = _t60;
+        LStmtKind _t61 = LStmtKind_StSpawn;
+        ForgeSlice_forge_string _t62 = forge_slice_empty(ForgeSlice_forge_string);
+        LSpawnData _t63 = (LSpawnData){.body = inner, .captures = _t62};
+        LStmt* _t64 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t61, .spawn_data = forge_some(_t63, ForgeOpt_LSpawnData)}; _p; });
+        Lowerer_emit(self, _t64);
         break;
     }
     case 13: {
-        ForgeSlice_SelectCaseptr _t60 = _t2.data.select.cases;
-        ForgeSlice_SelectCaseptr cases = _t60;
+        ForgeSlice_SelectCaseptr _t66 = _t2.data.select.cases;
+        ForgeSlice_SelectCaseptr cases = _t66;
         Lowerer_lower_select(self, cases);
         break;
     }
     case 14: {
-        Expr* _t62 = _t2.data.yield.value;
-        Expr* value = _t62;
-        LValue* __ifexpr_63 = NULL;
-        bool _t64 = (value == NULL);
-        bool _t65 = (!_t64);
-        if (_t65) {
-            LValue* _t66 = Lowerer_lower_expr(self, value);
-            __ifexpr_63 = _t66;
+        Expr* _t68 = _t2.data.yield.value;
+        Expr* value = _t68;
+        LValue* __ifexpr_69 = NULL;
+        bool _t70 = (value == NULL);
+        bool _t71 = (!_t70);
+        if (_t71) {
+            LValue* _t72 = Lowerer_lower_expr(self, value);
+            __ifexpr_69 = _t72;
         } else {
-            __ifexpr_63 = 0;
+            __ifexpr_69 = 0;
         }
-        LValue* v = __ifexpr_63;
-        LStmtKind _t67 = LStmtKind_StYield;
-        LYieldData _t68 = (LYieldData){.value = v};
-        LStmt* _t69 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t67, .yield_data = forge_some(_t68, ForgeOpt_LYieldData)}; _p; });
-        Lowerer_emit(self, _t69);
+        LValue* v = __ifexpr_69;
+        LStmtKind _t73 = LStmtKind_StYield;
+        LYieldData _t74 = (LYieldData){.value = v};
+        LStmt* _t75 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t73, .yield_data = forge_some(_t74, ForgeOpt_LYieldData)}; _p; });
+        Lowerer_emit(self, _t75);
         break;
     }
     case 15: {
-        Expr* _t71 = _t2.data.lock.mutex;
-        Expr* mutex = _t71;
-        Block* _t72 = _t2.data.lock.body;
-        Block* body = _t72;
-        LValue* _t73 = Lowerer_lower_expr(self, mutex);
-        LValue* mv = _t73;
-        ForgeSlice_LStmtptr _t74 = Lowerer_lower_block_as_stmts(self, body);
-        ForgeSlice_LStmtptr inner = _t74;
-        LStmtKind _t75 = LStmtKind_StLock;
-        LLockData _t76 = (LLockData){.mutex = mv, .body = inner};
-        LStmt* _t77 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t75, .lock_data = forge_some(_t76, ForgeOpt_LLockData)}; _p; });
-        Lowerer_emit(self, _t77);
+        Expr* _t77 = _t2.data.lock.mutex;
+        Expr* mutex = _t77;
+        Block* _t78 = _t2.data.lock.body;
+        Block* body = _t78;
+        LValue* _t79 = Lowerer_lower_expr(self, mutex);
+        LValue* mv = _t79;
+        ForgeSlice_LStmtptr _t80 = Lowerer_lower_block_as_stmts(self, body);
+        ForgeSlice_LStmtptr inner = _t80;
+        LStmtKind _t81 = LStmtKind_StLock;
+        LLockData _t82 = (LLockData){.mutex = mv, .body = inner};
+        LStmt* _t83 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t81, .lock_data = forge_some(_t82, ForgeOpt_LLockData)}; _p; });
+        Lowerer_emit(self, _t83);
         break;
     }
     case 16: {
-        Pattern* _t79 = _t2.data.iflet.pattern;
-        Pattern* pattern = _t79;
-        Expr* _t80 = _t2.data.iflet.value;
-        Expr* value = _t80;
-        Block* _t81 = _t2.data.iflet.then_block;
-        Block* then_block = _t81;
-        Block* _t82 = _t2.data.iflet.else_block;
-        Block* else_block = _t82;
+        Pattern* _t85 = _t2.data.iflet.pattern;
+        Pattern* pattern = _t85;
+        Expr* _t86 = _t2.data.iflet.value;
+        Expr* value = _t86;
+        Block* _t87 = _t2.data.iflet.then_block;
+        Block* then_block = _t87;
+        Block* _t88 = _t2.data.iflet.else_block;
+        Block* else_block = _t88;
         Lowerer_lower_if_let(self, pattern, value, then_block, else_block);
         break;
     }
     case 17: {
-        Pattern* _t84 = _t2.data.letelse.pattern;
-        Pattern* pattern = _t84;
-        Expr* _t85 = _t2.data.letelse.value;
-        Expr* value = _t85;
-        Block* _t86 = _t2.data.letelse.else_block;
-        Block* else_block = _t86;
+        Pattern* _t90 = _t2.data.letelse.pattern;
+        Pattern* pattern = _t90;
+        Expr* _t91 = _t2.data.letelse.value;
+        Expr* value = _t91;
+        Block* _t92 = _t2.data.letelse.else_block;
+        Block* else_block = _t92;
         Lowerer_lower_let_else(self, pattern, value, else_block);
         break;
     }
     case 9: {
-        Block* _t88 = _t2.data.cascade.body;
-        Block* body = _t88;
+        Block* _t94 = _t2.data.cascade.body;
+        Block* body = _t94;
         Lowerer_lower_block(self, body);
         break;
     }
@@ -43147,56 +43190,74 @@ void Lowerer_lower_select(Lowerer* self, ForgeSlice_SelectCaseptr cases) {
             ForgeSlice_LSelectCase _t6 = ({ forge_push(&lcases, _t5, ForgeSlice_LSelectCase); lcases; });
             _t6;
         } else {
-            Expr* _t7 = c->expr;
-            LValue* _t8 = Lowerer_lower_expr(self, _t7);
-            LValue* ch_val = _t8;
-            forge_string __ifexpr_9 = FORGE_STR_EMPTY;
-            Sym* _t10 = c->bind_var;
-            bool _t11 = (_t10 == NULL);
-            bool _t12 = (!_t11);
-            if (_t12) {
-                Sym* _t13 = c->bind_var;
-                Sym* _t14 = _t13;
-                forge_string _t15 = _t14->name;
-                __ifexpr_9 = _t15;
+            forge_string __ifexpr_7 = FORGE_STR_EMPTY;
+            Sym* _t8 = c->bind_var;
+            bool _t9 = (_t8 == NULL);
+            bool _t10 = (!_t9);
+            if (_t10) {
+                Sym* _t11 = c->bind_var;
+                Sym* _t12 = _t11;
+                forge_string _t13 = _t12->name;
+                __ifexpr_7 = _t13;
             } else {
-                __ifexpr_9 = FORGE_STR("");
+                __ifexpr_7 = FORGE_STR("");
             }
-            forge_string bind = __ifexpr_9;
-            Block* _t16 = c->body;
-            ForgeSlice_LStmtptr _t17 = Lowerer_lower_block_as_stmts(self, _t16);
-            ForgeSlice_LStmtptr body = _t17;
-            LSelectKind __ifexpr_18 = {0};
-            Expr* _t19 = c->expr;
-            bool _t20 = (_t19 == NULL);
-            bool _t21 = (!_t20);
-            bool _sc22 = false;
-            _sc22 = _t21;
-            if (_sc22) {
-                Expr* _t23 = c->expr;
-                Expr* _t24 = _t23;
-                ExprKind _t25 = _t24->kind;
-                int32_t _t26 = _t25.tag;
-                bool _t27 = (_t26 == 8);
-                _sc22 = _t27;
+            forge_string bind = __ifexpr_7;
+            Block* _t14 = c->body;
+            ForgeSlice_LStmtptr _t15 = Lowerer_lower_block_as_stmts(self, _t14);
+            ForgeSlice_LStmtptr body = _t15;
+            Expr* _t16 = c->expr;
+            Expr* _t17 = _t16;
+            ExprKind _t18 = _t17->kind;
+            int32_t _t19 = _t18.tag;
+            switch (_t19) {
+            case 8: {
+                Expr* _t20 = _t18.data.methodcall.receiver;
+                Expr* receiver = _t20;
+                Sym* _t21 = _t18.data.methodcall.method;
+                Sym* method = _t21;
+                ForgeSlice_TypeExprptr _t22 = _t18.data.methodcall.type_args;
+                ForgeSlice_TypeExprptr type_args = _t22;
+                ForgeSlice_Exprptr _t23 = _t18.data.methodcall.args;
+                ForgeSlice_Exprptr args = _t23;
+                ForgeSlice_bool _t24 = _t18.data.methodcall.mut_args;
+                ForgeSlice_bool mut_args = _t24;
+                LValue* _t25 = Lowerer_lower_expr(self, receiver);
+                LValue* ch_val = _t25;
+                forge_string _t26 = Sym_get_name(method);
+                bool _t27 = forge_str_eq(_t26, FORGE_STR("send"));
+                if (_t27) {
+                    Expr* _t28 = args.data[0];
+                    LValue* _t29 = Lowerer_lower_expr(self, _t28);
+                    LValue* send_val = _t29;
+                    LSelectKind _t30 = LSelectKind_SelSend;
+                    LSelectCase _t31 = (LSelectCase){.kind = _t30, .channel = ch_val, .value = send_val, .binding = bind, .body = body};
+                    ForgeSlice_LSelectCase _t32 = ({ forge_push(&lcases, _t31, ForgeSlice_LSelectCase); lcases; });
+                    _t32;
+                } else {
+                    LSelectKind _t33 = LSelectKind_SelRecv;
+                    LSelectCase _t34 = (LSelectCase){.kind = _t33, .channel = ch_val, .binding = bind, .body = body};
+                    ForgeSlice_LSelectCase _t35 = ({ forge_push(&lcases, _t34, ForgeSlice_LSelectCase); lcases; });
+                    _t35;
+                }
+                break;
             }
-            if (_sc22) {
-                LSelectKind _t28 = LSelectKind_SelSend;
-                __ifexpr_18 = _t28;
-            } else {
-                LSelectKind _t29 = LSelectKind_SelRecv;
-                __ifexpr_18 = _t29;
+            default: {
+                Expr* _t36 = c->expr;
+                LValue* _t37 = Lowerer_lower_expr(self, _t36);
+                LValue* ch_val = _t37;
+                LSelectKind _t38 = LSelectKind_SelRecv;
+                LSelectCase _t39 = (LSelectCase){.kind = _t38, .channel = ch_val, .binding = bind, .body = body};
+                forge_push(&lcases, _t39, ForgeSlice_LSelectCase);
+                break;
             }
-            LSelectKind sk = __ifexpr_18;
-            LSelectCase _t30 = (LSelectCase){.kind = sk, .channel = ch_val, .binding = bind, .body = body};
-            ForgeSlice_LSelectCase _t31 = ({ forge_push(&lcases, _t30, ForgeSlice_LSelectCase); lcases; });
-            _t31;
+            }
         }
     }
-    LStmtKind _t32 = LStmtKind_StSelect;
-    LSelectData _t33 = (LSelectData){.cases = lcases};
-    LStmt* _t34 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t32, .select_data = forge_some(_t33, ForgeOpt_LSelectData)}; _p; });
-    Lowerer_emit(self, _t34);
+    LStmtKind _t41 = LStmtKind_StSelect;
+    LSelectData _t42 = (LSelectData){.cases = lcases};
+    LStmt* _t43 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t41, .select_data = forge_some(_t42, ForgeOpt_LSelectData)}; _p; });
+    Lowerer_emit(self, _t43);
 }
 
 void Lowerer_lower_if_let(Lowerer* self, Pattern* pattern, Expr* value, Block* then_block, Block* else_block) {
@@ -45297,114 +45358,169 @@ LValue* Lowerer_lower_call(Lowerer* self, Expr* orig, Expr* func_expr, ForgeSlic
         LValue* _t88 = Lowerer_emit_temp(self, alloc);
         return _t88;
     }
-    bool _t89 = is_builtin_func(func_name);
+    bool _t89 = forge_str_eq(func_name, FORGE_STR("make_channel"));
     if (_t89) {
-        bool _t90 = forge_str_eq(func_name, FORGE_STR("append"));
-        bool _sc91 = false;
-        _sc91 = _t90;
-        if (_sc91) {
-            int32_t _t92 = args.len;
-            bool _t93 = (_t92 >= 2);
-            _sc91 = _t93;
+        LType* _t90 = Lowerer_expr_type(self, orig);
+        LType* result_type = _t90;
+        LType* elem_type = NULL;
+        bool _t91 = (result_type == NULL);
+        bool _t92 = (!_t91);
+        bool _sc93 = false;
+        _sc93 = _t92;
+        if (_sc93) {
+            LType* _t94 = result_type;
+            LTypeKind _t95 = _t94->kind;
+            int32_t _t96 = _t95;
+            bool _t97 = (_t96 == 21);
+            _sc93 = _t97;
         }
-        if (_sc91) {
-            Expr* _t94 = args.data[0];
-            Expr* first_arg = _t94;
-            ExprKind _t95 = first_arg->kind;
-            int32_t _t96 = _t95.tag;
-            switch (_t96) {
+        if (_sc93) {
+            LType* _t98 = result_type;
+            LType* _t99 = _t98->elem;
+            elem_type = _t99;
+        }
+        bool _t100 = (elem_type == NULL);
+        bool _sc101 = false;
+        _sc101 = _t100;
+        if (_sc101) {
+            int32_t _t102 = type_args.len;
+            bool _t103 = (_t102 > 0);
+            _sc101 = _t103;
+        }
+        if (_sc101) {
+            TypeExpr* _t104 = type_args.data[0];
+            LType* _t105 = Lowerer_lower_type(self, _t104);
+            elem_type = _t105;
+        }
+        bool _t106 = (elem_type == NULL);
+        if (_t106) {
+            LTypeKind _t107 = LTypeKind_TyAny;
+            LType* _t108 = ({ LType* _p = malloc(sizeof(LType)); *_p = (LType){.kind = _t107, .name = FORGE_STR(""), .bits = 0, .is_exported = false}; _p; });
+            elem_type = _t108;
+        }
+        LValue* buf_size = NULL;
+        int32_t _t109 = args.len;
+        bool _t110 = (_t109 > 0);
+        if (_t110) {
+            Expr* _t111 = args.data[0];
+            LValue* _t112 = Lowerer_lower_expr(self, _t111);
+            buf_size = _t112;
+        }
+        LExprKind _t113 = LExprKind_ExMakeChannel;
+        LMakeChannelData _t114 = (LMakeChannelData){.elem_type = elem_type, .buf_size = buf_size};
+        LExpr* _t115 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t113, .typ = result_type, .make_channel = forge_some(_t114, ForgeOpt_LMakeChannelData)}; _p; });
+        LExpr* mc = _t115;
+        LValue* _t116 = Lowerer_emit_temp(self, mc);
+        return _t116;
+    }
+    bool _t117 = is_builtin_func(func_name);
+    if (_t117) {
+        bool _t118 = forge_str_eq(func_name, FORGE_STR("append"));
+        bool _sc119 = false;
+        _sc119 = _t118;
+        if (_sc119) {
+            int32_t _t120 = args.len;
+            bool _t121 = (_t120 >= 2);
+            _sc119 = _t121;
+        }
+        if (_sc119) {
+            Expr* _t122 = args.data[0];
+            Expr* first_arg = _t122;
+            ExprKind _t123 = first_arg->kind;
+            int32_t _t124 = _t123.tag;
+            switch (_t124) {
             case 9: {
-                Expr* _t97 = _t95.data.fieldaccess.receiver;
-                Expr* fa_recv = _t97;
-                Sym* _t98 = _t95.data.fieldaccess.field_name;
-                Sym* fa_field = _t98;
-                LValue* _t99 = Lowerer_lower_expr(self, fa_recv);
-                LValue* recv_val = _t99;
-                LType* _t100 = Lowerer_expr_type(self, first_arg);
-                LType* result_type = _t100;
+                Expr* _t125 = _t123.data.fieldaccess.receiver;
+                Expr* fa_recv = _t125;
+                Sym* _t126 = _t123.data.fieldaccess.field_name;
+                Sym* fa_field = _t126;
+                LValue* _t127 = Lowerer_lower_expr(self, fa_recv);
+                LValue* recv_val = _t127;
+                LType* _t128 = Lowerer_expr_type(self, first_arg);
+                LType* result_type = _t128;
                 LValue* slice_val = NULL;
                 bool is_class_field = false;
-                bool _t101 = (recv_val == NULL);
-                bool _t102 = (!_t101);
-                bool _sc103 = false;
-                _sc103 = _t102;
-                if (_sc103) {
-                    LValue* _t104 = recv_val;
-                    LType* _t105 = _t104->typ;
-                    bool _t106 = (_t105 == NULL);
-                    bool _t107 = (!_t106);
-                    _sc103 = _t107;
+                bool _t129 = (recv_val == NULL);
+                bool _t130 = (!_t129);
+                bool _sc131 = false;
+                _sc131 = _t130;
+                if (_sc131) {
+                    LValue* _t132 = recv_val;
+                    LType* _t133 = _t132->typ;
+                    bool _t134 = (_t133 == NULL);
+                    bool _t135 = (!_t134);
+                    _sc131 = _t135;
                 }
-                bool _sc108 = false;
-                _sc108 = _sc103;
-                if (_sc108) {
-                    LValue* _t109 = recv_val;
-                    LType* _t110 = _t109->typ;
-                    LType* _t111 = _t110;
-                    LTypeKind _t112 = _t111->kind;
-                    int32_t _t113 = _t112;
-                    bool _t114 = (_t113 == 17);
-                    _sc108 = _t114;
+                bool _sc136 = false;
+                _sc136 = _sc131;
+                if (_sc136) {
+                    LValue* _t137 = recv_val;
+                    LType* _t138 = _t137->typ;
+                    LType* _t139 = _t138;
+                    LTypeKind _t140 = _t139->kind;
+                    int32_t _t141 = _t140;
+                    bool _t142 = (_t141 == 17);
+                    _sc136 = _t142;
                 }
-                if (_sc108) {
+                if (_sc136) {
                     is_class_field = true;
-                    LExprKind _t115 = LExprKind_ExClassGet;
-                    LValue* _t116 = recv_val;
-                    LType* _t117 = _t116->typ;
-                    LType* _t118 = _t117;
-                    forge_string _t119 = _t118->name;
-                    forge_string _t120 = fa_field->name;
-                    LClassGetData _t121 = (LClassGetData){.handle = recv_val, .class_name = _t119, .field = _t120};
-                    LExpr* _t122 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t115, .typ = result_type, .class_get = forge_some(_t121, ForgeOpt_LClassGetData)}; _p; });
-                    LExpr* cget = _t122;
-                    LValue* _t123 = Lowerer_emit_temp(self, cget);
-                    slice_val = _t123;
+                    LExprKind _t143 = LExprKind_ExClassGet;
+                    LValue* _t144 = recv_val;
+                    LType* _t145 = _t144->typ;
+                    LType* _t146 = _t145;
+                    forge_string _t147 = _t146->name;
+                    forge_string _t148 = fa_field->name;
+                    LClassGetData _t149 = (LClassGetData){.handle = recv_val, .class_name = _t147, .field = _t148};
+                    LExpr* _t150 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t143, .typ = result_type, .class_get = forge_some(_t149, ForgeOpt_LClassGetData)}; _p; });
+                    LExpr* cget = _t150;
+                    LValue* _t151 = Lowerer_emit_temp(self, cget);
+                    slice_val = _t151;
                 } else {
-                    LExprKind _t124 = LExprKind_ExStructField;
-                    forge_string _t125 = fa_field->name;
-                    LStructFieldData _t126 = (LStructFieldData){.receiver = recv_val, .field = _t125};
-                    LExpr* _t127 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t124, .typ = result_type, .struct_field = forge_some(_t126, ForgeOpt_LStructFieldData)}; _p; });
-                    LExpr* sf = _t127;
-                    LValue* _t128 = Lowerer_emit_temp(self, sf);
-                    slice_val = _t128;
+                    LExprKind _t152 = LExprKind_ExStructField;
+                    forge_string _t153 = fa_field->name;
+                    LStructFieldData _t154 = (LStructFieldData){.receiver = recv_val, .field = _t153};
+                    LExpr* _t155 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t152, .typ = result_type, .struct_field = forge_some(_t154, ForgeOpt_LStructFieldData)}; _p; });
+                    LExpr* sf = _t155;
+                    LValue* _t156 = Lowerer_emit_temp(self, sf);
+                    slice_val = _t156;
                 }
-                ForgeSlice_LValueptr _t129 = forge_slice_lit(ForgeSlice_LValueptr, LValue*, slice_val);
-                ForgeSlice_LValueptr bargs2 = _t129;
+                ForgeSlice_LValueptr _t157 = forge_slice_lit(ForgeSlice_LValueptr, LValue*, slice_val);
+                ForgeSlice_LValueptr bargs2 = _t157;
                 int32_t bi = 1;
                 while (1) {
-                    int32_t _t130 = args.len;
-                    bool _t131 = (bi < _t130);
-                    if (!(_t131)) break;
-                    Expr* _t132 = args.data[bi];
-                    LValue* _t133 = Lowerer_lower_expr(self, _t132);
-                    ForgeSlice_LValueptr _t134 = ({ forge_push(&bargs2, _t133, ForgeSlice_LValueptr); bargs2; });
-                    _t134;
-                    int32_t _t135 = (bi + 1);
-                    bi = _t135;
+                    int32_t _t158 = args.len;
+                    bool _t159 = (bi < _t158);
+                    if (!(_t159)) break;
+                    Expr* _t160 = args.data[bi];
+                    LValue* _t161 = Lowerer_lower_expr(self, _t160);
+                    ForgeSlice_LValueptr _t162 = ({ forge_push(&bargs2, _t161, ForgeSlice_LValueptr); bargs2; });
+                    _t162;
+                    int32_t _t163 = (bi + 1);
+                    bi = _t163;
                 }
-                LExprKind _t136 = LExprKind_ExBuiltin;
-                LType* _t137 = Lowerer_expr_type(self, orig);
-                LBuiltinData _t138 = (LBuiltinData){.name = FORGE_STR("append"), .args = bargs2, .file = FORGE_STR(""), .line = 0};
-                LExpr* _t139 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t136, .typ = _t137, .builtin = forge_some(_t138, ForgeOpt_LBuiltinData)}; _p; });
-                LExpr* builtin2 = _t139;
-                LValue* _t140 = Lowerer_emit_temp(self, builtin2);
-                LValue* result = _t140;
+                LExprKind _t164 = LExprKind_ExBuiltin;
+                LType* _t165 = Lowerer_expr_type(self, orig);
+                LBuiltinData _t166 = (LBuiltinData){.name = FORGE_STR("append"), .args = bargs2, .file = FORGE_STR(""), .line = 0};
+                LExpr* _t167 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t164, .typ = _t165, .builtin = forge_some(_t166, ForgeOpt_LBuiltinData)}; _p; });
+                LExpr* builtin2 = _t167;
+                LValue* _t168 = Lowerer_emit_temp(self, builtin2);
+                LValue* result = _t168;
                 if (is_class_field) {
-                    LStmtKind _t141 = LStmtKind_StClassSet;
-                    LValue* _t142 = recv_val;
-                    LType* _t143 = _t142->typ;
-                    LType* _t144 = _t143;
-                    forge_string _t145 = _t144->name;
-                    forge_string _t146 = fa_field->name;
-                    LClassSetData _t147 = (LClassSetData){.handle = recv_val, .class_name = _t145, .field = _t146, .value = slice_val};
-                    LStmt* _t148 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t141, .class_set = forge_some(_t147, ForgeOpt_LClassSetData)}; _p; });
-                    Lowerer_emit(self, _t148);
+                    LStmtKind _t169 = LStmtKind_StClassSet;
+                    LValue* _t170 = recv_val;
+                    LType* _t171 = _t170->typ;
+                    LType* _t172 = _t171;
+                    forge_string _t173 = _t172->name;
+                    forge_string _t174 = fa_field->name;
+                    LClassSetData _t175 = (LClassSetData){.handle = recv_val, .class_name = _t173, .field = _t174, .value = slice_val};
+                    LStmt* _t176 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t169, .class_set = forge_some(_t175, ForgeOpt_LClassSetData)}; _p; });
+                    Lowerer_emit(self, _t176);
                 } else {
-                    LStmtKind _t150 = LStmtKind_StStructSet;
-                    forge_string _t151 = fa_field->name;
-                    LStructSetData _t152 = (LStructSetData){.receiver = recv_val, .field = _t151, .value = slice_val};
-                    LStmt* _t153 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t150, .struct_set = forge_some(_t152, ForgeOpt_LStructSetData)}; _p; });
-                    Lowerer_emit(self, _t153);
+                    LStmtKind _t178 = LStmtKind_StStructSet;
+                    forge_string _t179 = fa_field->name;
+                    LStructSetData _t180 = (LStructSetData){.receiver = recv_val, .field = _t179, .value = slice_val};
+                    LStmt* _t181 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t178, .struct_set = forge_some(_t180, ForgeOpt_LStructSetData)}; _p; });
+                    Lowerer_emit(self, _t181);
                 }
                 return result;
                 break;
@@ -45414,184 +45530,184 @@ LValue* Lowerer_lower_call(Lowerer* self, Expr* orig, Expr* func_expr, ForgeSlic
             }
             }
         }
-        ForgeSlice_LValueptr _t155 = forge_slice_empty(ForgeSlice_LValueptr);
-        ForgeSlice_LValueptr bargs = _t155;
+        ForgeSlice_LValueptr _t183 = forge_slice_empty(ForgeSlice_LValueptr);
+        ForgeSlice_LValueptr bargs = _t183;
         for (int32_t _idx = 0; _idx < args.len; _idx++) {
             Expr* a = args.data[_idx];
-            LValue* _t156 = Lowerer_lower_expr(self, a);
-            ForgeSlice_LValueptr _t157 = ({ forge_push(&bargs, _t156, ForgeSlice_LValueptr); bargs; });
-            _t157;
+            LValue* _t184 = Lowerer_lower_expr(self, a);
+            ForgeSlice_LValueptr _t185 = ({ forge_push(&bargs, _t184, ForgeSlice_LValueptr); bargs; });
+            _t185;
         }
-        LType* _t158 = Lowerer_expr_type(self, orig);
-        LType* rt = _t158;
-        bool _t159 = forge_str_eq(func_name, FORGE_STR("assert"));
-        bool _sc160 = false;
-        _sc160 = _t159;
-        bool _t161 = (!_sc160);
-        if (_t161) {
-            bool _t162 = forge_str_eq(func_name, FORGE_STR("assert_eq"));
-            _sc160 = _t162;
+        LType* _t186 = Lowerer_expr_type(self, orig);
+        LType* rt = _t186;
+        bool _t187 = forge_str_eq(func_name, FORGE_STR("assert"));
+        bool _sc188 = false;
+        _sc188 = _t187;
+        bool _t189 = (!_sc188);
+        if (_t189) {
+            bool _t190 = forge_str_eq(func_name, FORGE_STR("assert_eq"));
+            _sc188 = _t190;
         }
-        bool _sc163 = false;
-        _sc163 = _sc160;
-        bool _t164 = (!_sc163);
-        if (_t164) {
-            bool _t165 = forge_str_eq(func_name, FORGE_STR("println"));
-            _sc163 = _t165;
+        bool _sc191 = false;
+        _sc191 = _sc188;
+        bool _t192 = (!_sc191);
+        if (_t192) {
+            bool _t193 = forge_str_eq(func_name, FORGE_STR("println"));
+            _sc191 = _t193;
         }
-        bool _sc166 = false;
-        _sc166 = _sc163;
-        bool _t167 = (!_sc166);
-        if (_t167) {
-            bool _t168 = forge_str_eq(func_name, FORGE_STR("print"));
-            _sc166 = _t168;
+        bool _sc194 = false;
+        _sc194 = _sc191;
+        bool _t195 = (!_sc194);
+        if (_t195) {
+            bool _t196 = forge_str_eq(func_name, FORGE_STR("print"));
+            _sc194 = _t196;
         }
-        bool _sc169 = false;
-        _sc169 = _sc166;
-        bool _t170 = (!_sc169);
-        if (_t170) {
-            bool _t171 = forge_str_eq(func_name, FORGE_STR("eprintln"));
-            _sc169 = _t171;
+        bool _sc197 = false;
+        _sc197 = _sc194;
+        bool _t198 = (!_sc197);
+        if (_t198) {
+            bool _t199 = forge_str_eq(func_name, FORGE_STR("eprintln"));
+            _sc197 = _t199;
         }
-        bool _sc172 = false;
-        _sc172 = _sc169;
-        bool _t173 = (!_sc172);
-        if (_t173) {
-            bool _t174 = forge_str_eq(func_name, FORGE_STR("eprint"));
-            _sc172 = _t174;
+        bool _sc200 = false;
+        _sc200 = _sc197;
+        bool _t201 = (!_sc200);
+        if (_t201) {
+            bool _t202 = forge_str_eq(func_name, FORGE_STR("eprint"));
+            _sc200 = _t202;
         }
-        bool _sc175 = false;
-        _sc175 = _sc172;
-        bool _t176 = (!_sc175);
-        if (_t176) {
-            bool _t177 = forge_str_eq(func_name, FORGE_STR("panic"));
-            _sc175 = _t177;
+        bool _sc203 = false;
+        _sc203 = _sc200;
+        bool _t204 = (!_sc203);
+        if (_t204) {
+            bool _t205 = forge_str_eq(func_name, FORGE_STR("panic"));
+            _sc203 = _t205;
         }
-        if (_sc175) {
-            LTypeKind _t178 = LTypeKind_TyUnit;
-            LType* _t179 = ({ LType* _p = malloc(sizeof(LType)); *_p = (LType){.kind = _t178, .name = FORGE_STR(""), .bits = 0, .is_exported = false}; _p; });
-            rt = _t179;
+        if (_sc203) {
+            LTypeKind _t206 = LTypeKind_TyUnit;
+            LType* _t207 = ({ LType* _p = malloc(sizeof(LType)); *_p = (LType){.kind = _t206, .name = FORGE_STR(""), .bits = 0, .is_exported = false}; _p; });
+            rt = _t207;
         }
         forge_string bfile = FORGE_STR("");
         int32_t bline = 0;
-        bool _t180 = forge_str_eq(func_name, FORGE_STR("assert"));
-        bool _sc181 = false;
-        _sc181 = _t180;
-        bool _t182 = (!_sc181);
-        if (_t182) {
-            bool _t183 = forge_str_eq(func_name, FORGE_STR("assert_eq"));
-            _sc181 = _t183;
+        bool _t208 = forge_str_eq(func_name, FORGE_STR("assert"));
+        bool _sc209 = false;
+        _sc209 = _t208;
+        bool _t210 = (!_sc209);
+        if (_t210) {
+            bool _t211 = forge_str_eq(func_name, FORGE_STR("assert_eq"));
+            _sc209 = _t211;
         }
-        if (_sc181) {
-            bool _t184 = (orig == NULL);
-            bool _t185 = (!_t184);
-            if (_t185) {
-                Expr* _t186 = orig;
-                Span _t187 = _t186->span;
-                Pos _t188 = _t187.start;
-                Sym* _t189 = _t188.file;
-                bool _t190 = (_t189 == NULL);
-                bool _t191 = (!_t190);
-                if (_t191) {
-                    Expr* _t192 = orig;
-                    Span _t193 = _t192->span;
-                    Pos _t194 = _t193.start;
-                    Sym* _t195 = _t194.file;
-                    Sym* _t196 = _t195;
-                    forge_string _t197 = Sym_get_name(_t196);
-                    bfile = _t197;
+        if (_sc209) {
+            bool _t212 = (orig == NULL);
+            bool _t213 = (!_t212);
+            if (_t213) {
+                Expr* _t214 = orig;
+                Span _t215 = _t214->span;
+                Pos _t216 = _t215.start;
+                Sym* _t217 = _t216.file;
+                bool _t218 = (_t217 == NULL);
+                bool _t219 = (!_t218);
+                if (_t219) {
+                    Expr* _t220 = orig;
+                    Span _t221 = _t220->span;
+                    Pos _t222 = _t221.start;
+                    Sym* _t223 = _t222.file;
+                    Sym* _t224 = _t223;
+                    forge_string _t225 = Sym_get_name(_t224);
+                    bfile = _t225;
                 }
-                Expr* _t198 = orig;
-                Span _t199 = _t198->span;
-                Pos _t200 = _t199.start;
-                int32_t _t201 = _t200.line;
-                bline = _t201;
+                Expr* _t226 = orig;
+                Span _t227 = _t226->span;
+                Pos _t228 = _t227.start;
+                int32_t _t229 = _t228.line;
+                bline = _t229;
             }
         }
-        LExprKind _t202 = LExprKind_ExBuiltin;
-        LBuiltinData _t203 = (LBuiltinData){.name = func_name, .args = bargs, .file = bfile, .line = bline};
-        LExpr* _t204 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t202, .typ = rt, .builtin = forge_some(_t203, ForgeOpt_LBuiltinData)}; _p; });
-        LExpr* builtin = _t204;
-        LValue* _t205 = Lowerer_emit_temp(self, builtin);
-        return _t205;
+        LExprKind _t230 = LExprKind_ExBuiltin;
+        LBuiltinData _t231 = (LBuiltinData){.name = func_name, .args = bargs, .file = bfile, .line = bline};
+        LExpr* _t232 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t230, .typ = rt, .builtin = forge_some(_t231, ForgeOpt_LBuiltinData)}; _p; });
+        LExpr* builtin = _t232;
+        LValue* _t233 = Lowerer_emit_temp(self, builtin);
+        return _t233;
     }
-    ForgeSlice_LValueptr _t206 = forge_slice_empty(ForgeSlice_LValueptr);
-    ForgeSlice_LValueptr call_args = _t206;
+    ForgeSlice_LValueptr _t234 = forge_slice_empty(ForgeSlice_LValueptr);
+    ForgeSlice_LValueptr call_args = _t234;
     int32_t ai = 0;
     for (int32_t _idx = 0; _idx < args.len; _idx++) {
         Expr* a = args.data[_idx];
-        int32_t _t207 = call_mut_args.len;
-        bool _t208 = (ai < _t207);
-        bool _sc209 = false;
-        _sc209 = _t208;
-        if (_sc209) {
-            bool _t210 = call_mut_args.data[ai];
-            _sc209 = _t210;
+        int32_t _t235 = call_mut_args.len;
+        bool _t236 = (ai < _t235);
+        bool _sc237 = false;
+        _sc237 = _t236;
+        if (_sc237) {
+            bool _t238 = call_mut_args.data[ai];
+            _sc237 = _t238;
         }
-        if (_sc209) {
-            LValue* _t211 = Lowerer_lower_mut_arg(self, a);
-            ForgeSlice_LValueptr _t212 = ({ forge_push(&call_args, _t211, ForgeSlice_LValueptr); call_args; });
-            _t212;
+        if (_sc237) {
+            LValue* _t239 = Lowerer_lower_mut_arg(self, a);
+            ForgeSlice_LValueptr _t240 = ({ forge_push(&call_args, _t239, ForgeSlice_LValueptr); call_args; });
+            _t240;
         } else {
-            LValue* _t213 = Lowerer_lower_expr(self, a);
-            ForgeSlice_LValueptr _t214 = ({ forge_push(&call_args, _t213, ForgeSlice_LValueptr); call_args; });
-            _t214;
+            LValue* _t241 = Lowerer_lower_expr(self, a);
+            ForgeSlice_LValueptr _t242 = ({ forge_push(&call_args, _t241, ForgeSlice_LValueptr); call_args; });
+            _t242;
         }
-        int32_t _t215 = (ai + 1);
-        ai = _t215;
+        int32_t _t243 = (ai + 1);
+        ai = _t243;
     }
-    ForgeSlice_LTypeptr _t216 = forge_slice_empty(ForgeSlice_LTypeptr);
-    ForgeSlice_LTypeptr lta = _t216;
+    ForgeSlice_LTypeptr _t244 = forge_slice_empty(ForgeSlice_LTypeptr);
+    ForgeSlice_LTypeptr lta = _t244;
     for (int32_t _idx = 0; _idx < type_args.len; _idx++) {
         TypeExpr* ta = type_args.data[_idx];
-        LType* _t217 = Lowerer_lower_type(self, ta);
-        ForgeSlice_LTypeptr _t218 = ({ forge_push(&lta, _t217, ForgeSlice_LTypeptr); lta; });
-        _t218;
+        LType* _t245 = Lowerer_lower_type(self, ta);
+        ForgeSlice_LTypeptr _t246 = ({ forge_push(&lta, _t245, ForgeSlice_LTypeptr); lta; });
+        _t246;
     }
-    int32_t _t219 = lta.len;
-    bool _t220 = (_t219 == 0);
-    bool _sc221 = false;
-    _sc221 = _t220;
-    if (_sc221) {
-        bool _t222 = (orig == NULL);
-        bool _t223 = (!_t222);
-        _sc221 = _t223;
+    int32_t _t247 = lta.len;
+    bool _t248 = (_t247 == 0);
+    bool _sc249 = false;
+    _sc249 = _t248;
+    if (_sc249) {
+        bool _t250 = (orig == NULL);
+        bool _t251 = (!_t250);
+        _sc249 = _t251;
     }
-    bool _sc224 = false;
-    _sc224 = _sc221;
-    if (_sc224) {
-        Expr* _t225 = orig;
-        ForgeSlice_TypeExprptr _t226 = _t225->inferred_type_args;
-        int32_t _t227 = _t226.len;
-        bool _t228 = (_t227 > 0);
-        _sc224 = _t228;
+    bool _sc252 = false;
+    _sc252 = _sc249;
+    if (_sc252) {
+        Expr* _t253 = orig;
+        ForgeSlice_TypeExprptr _t254 = _t253->inferred_type_args;
+        int32_t _t255 = _t254.len;
+        bool _t256 = (_t255 > 0);
+        _sc252 = _t256;
     }
-    if (_sc224) {
-        Expr* _t229 = orig;
-        ForgeSlice_TypeExprptr _t230 = _t229->inferred_type_args;
-        for (int32_t _idx = 0; _idx < _t230.len; _idx++) {
-            TypeExpr* ta = _t230.data[_idx];
-            LType* _t231 = Lowerer_lower_type(self, ta);
-            ForgeSlice_LTypeptr _t232 = ({ forge_push(&lta, _t231, ForgeSlice_LTypeptr); lta; });
-            _t232;
+    if (_sc252) {
+        Expr* _t257 = orig;
+        ForgeSlice_TypeExprptr _t258 = _t257->inferred_type_args;
+        for (int32_t _idx = 0; _idx < _t258.len; _idx++) {
+            TypeExpr* ta = _t258.data[_idx];
+            LType* _t259 = Lowerer_lower_type(self, ta);
+            ForgeSlice_LTypeptr _t260 = ({ forge_push(&lta, _t259, ForgeSlice_LTypeptr); lta; });
+            _t260;
         }
     }
-    forge_string __ifexpr_233 = FORGE_STR_EMPTY;
-    bool _t234 = (!forge_str_eq(func_name, FORGE_STR("")));
-    if (_t234) {
-        __ifexpr_233 = func_name;
+    forge_string __ifexpr_261 = FORGE_STR_EMPTY;
+    bool _t262 = (!forge_str_eq(func_name, FORGE_STR("")));
+    if (_t262) {
+        __ifexpr_261 = func_name;
     } else {
-        __ifexpr_233 = FORGE_STR("__indirect_call");
+        __ifexpr_261 = FORGE_STR("__indirect_call");
     }
-    forge_string actual_name = __ifexpr_233;
-    LType* _t235 = Lowerer_expr_type(self, orig);
-    LType* rt = _t235;
-    LExprKind _t236 = LExprKind_ExCall;
-    LCallData* _t237 = ({ LCallData* _p = malloc(sizeof(LCallData)); *_p = (LCallData){.func_name = actual_name, .args = call_args, .mut_args = call_mut_args, .type_args = lta, .is_exported = false}; _p; });
-    LExpr* _t238 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t236, .typ = rt, .call = _t237}; _p; });
-    LExpr* call = _t238;
-    LValue* _t239 = Lowerer_emit_temp(self, call);
-    return _t239;
+    forge_string actual_name = __ifexpr_261;
+    LType* _t263 = Lowerer_expr_type(self, orig);
+    LType* rt = _t263;
+    LExprKind _t264 = LExprKind_ExCall;
+    LCallData* _t265 = ({ LCallData* _p = malloc(sizeof(LCallData)); *_p = (LCallData){.func_name = actual_name, .args = call_args, .mut_args = call_mut_args, .type_args = lta, .is_exported = false}; _p; });
+    LExpr* _t266 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t264, .typ = rt, .call = _t265}; _p; });
+    LExpr* call = _t266;
+    LValue* _t267 = Lowerer_emit_temp(self, call);
+    return _t267;
 }
 
 LValue* Lowerer_lower_method_call(Lowerer* self, Expr* orig, Expr* receiver, Sym* method, ForgeSlice_TypeExprptr type_args, ForgeSlice_Exprptr args, ForgeSlice_bool mc_mut_args) {
@@ -45841,138 +45957,143 @@ LValue* Lowerer_lower_method_call(Lowerer* self, Expr* orig, Expr* receiver, Sym
     }
     if (_sc116) {
         bool _t121 = forge_str_eq(method_name, FORGE_STR("send"));
-        bool _sc122 = false;
-        _sc122 = _t121;
-        bool _t123 = (!_sc122);
-        if (_t123) {
-            bool _t124 = forge_str_eq(method_name, FORGE_STR("recv"));
-            _sc122 = _t124;
+        if (_t121) {
+            Expr* _t122 = args.data[0];
+            LValue* _t123 = Lowerer_lower_expr(self, _t122);
+            LValue* val = _t123;
+            LStmtKind _t124 = LStmtKind_StSend;
+            LSendData _t125 = (LSendData){.channel = recv, .value = val};
+            LStmt* _t126 = ({ LStmt* _p = malloc(sizeof(LStmt)); *_p = (LStmt){.kind = _t124, .send_data = forge_some(_t125, ForgeOpt_LSendData)}; _p; });
+            Lowerer_emit(self, _t126);
+            LValueKind _t128 = LValueKind_ValLitNull;
+            LTypeKind _t129 = LTypeKind_TyUnit;
+            LType* _t130 = ({ LType* _p = malloc(sizeof(LType)); *_p = (LType){.kind = _t129, .name = FORGE_STR(""), .bits = 0, .is_exported = false}; _p; });
+            LValue* _t131 = ({ LValue* _p = malloc(sizeof(LValue)); *_p = (LValue){.kind = _t128, .name = FORGE_STR(""), .int_val = 0, .uint_val = 0, .float_val = 0, .str_val = FORGE_STR(""), .temp_id = 0, .bool_val = false, .typ = _t130}; _p; });
+            return _t131;
         }
-        bool _sc125 = false;
-        _sc125 = _sc122;
-        bool _t126 = (!_sc125);
-        if (_t126) {
-            bool _t127 = forge_str_eq(method_name, FORGE_STR("close"));
-            _sc125 = _t127;
+        bool _t132 = forge_str_eq(method_name, FORGE_STR("receive"));
+        if (_t132) {
+            LType* _t133 = Lowerer_expr_type(self, orig);
+            LType* rt = _t133;
+            LExprKind _t134 = LExprKind_ExBuiltin;
+            ForgeSlice_LValueptr _t135 = forge_slice_lit(ForgeSlice_LValueptr, LValue*, recv);
+            LBuiltinData _t136 = (LBuiltinData){.name = FORGE_STR("channel_receive"), .args = _t135};
+            LExpr* _t137 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t134, .typ = rt, .builtin = forge_some(_t136, ForgeOpt_LBuiltinData)}; _p; });
+            LExpr* builtin = _t137;
+            LValue* _t138 = Lowerer_emit_temp(self, builtin);
+            return _t138;
         }
-        if (_sc125) {
-            ForgeSlice_LValueptr _t128 = forge_slice_lit(ForgeSlice_LValueptr, LValue*, recv);
-            ForgeSlice_LValueptr bargs = _t128;
-            for (int32_t _idx = 0; _idx < args.len; _idx++) {
-                Expr* a = args.data[_idx];
-                LValue* _t129 = Lowerer_lower_expr(self, a);
-                ForgeSlice_LValueptr _t130 = ({ forge_push(&bargs, _t129, ForgeSlice_LValueptr); bargs; });
-                _t130;
-            }
-            LType* _t131 = Lowerer_expr_type(self, orig);
-            LType* rt = _t131;
-            LExprKind _t132 = LExprKind_ExBuiltin;
-            forge_string _t133 = forge_str_concat(FORGE_STR("chan_"), method_name);
-            LBuiltinData _t134 = (LBuiltinData){.name = _t133, .args = bargs};
-            LExpr* _t135 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t132, .typ = rt, .builtin = forge_some(_t134, ForgeOpt_LBuiltinData)}; _p; });
-            LExpr* builtin = _t135;
-            LValue* _t136 = Lowerer_emit_temp(self, builtin);
-            return _t136;
+        bool _t139 = forge_str_eq(method_name, FORGE_STR("close"));
+        if (_t139) {
+            LType* _t140 = Lowerer_expr_type(self, orig);
+            LType* rt = _t140;
+            LExprKind _t141 = LExprKind_ExBuiltin;
+            ForgeSlice_LValueptr _t142 = forge_slice_lit(ForgeSlice_LValueptr, LValue*, recv);
+            LBuiltinData _t143 = (LBuiltinData){.name = FORGE_STR("channel_close"), .args = _t142};
+            LExpr* _t144 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t141, .typ = rt, .builtin = forge_some(_t143, ForgeOpt_LBuiltinData)}; _p; });
+            LExpr* builtin = _t144;
+            LValue* _t145 = Lowerer_emit_temp(self, builtin);
+            return _t145;
         }
     }
-    ForgeSlice_LValueptr _t137 = forge_slice_empty(ForgeSlice_LValueptr);
-    ForgeSlice_LValueptr call_args = _t137;
+    ForgeSlice_LValueptr _t146 = forge_slice_empty(ForgeSlice_LValueptr);
+    ForgeSlice_LValueptr call_args = _t146;
     for (int32_t _idx = 0; _idx < args.len; _idx++) {
         Expr* a = args.data[_idx];
-        LValue* _t138 = Lowerer_lower_expr(self, a);
-        ForgeSlice_LValueptr _t139 = ({ forge_push(&call_args, _t138, ForgeSlice_LValueptr); call_args; });
-        _t139;
+        LValue* _t147 = Lowerer_lower_expr(self, a);
+        ForgeSlice_LValueptr _t148 = ({ forge_push(&call_args, _t147, ForgeSlice_LValueptr); call_args; });
+        _t148;
     }
-    ForgeSlice_LTypeptr _t140 = forge_slice_empty(ForgeSlice_LTypeptr);
-    ForgeSlice_LTypeptr lta = _t140;
+    ForgeSlice_LTypeptr _t149 = forge_slice_empty(ForgeSlice_LTypeptr);
+    ForgeSlice_LTypeptr lta = _t149;
     for (int32_t _idx = 0; _idx < type_args.len; _idx++) {
         TypeExpr* ta = type_args.data[_idx];
-        LType* _t141 = Lowerer_lower_type(self, ta);
-        ForgeSlice_LTypeptr _t142 = ({ forge_push(&lta, _t141, ForgeSlice_LTypeptr); lta; });
-        _t142;
+        LType* _t150 = Lowerer_lower_type(self, ta);
+        ForgeSlice_LTypeptr _t151 = ({ forge_push(&lta, _t150, ForgeSlice_LTypeptr); lta; });
+        _t151;
     }
-    int32_t _t143 = lta.len;
-    bool _t144 = (_t143 == 0);
-    bool _sc145 = false;
-    _sc145 = _t144;
-    if (_sc145) {
-        bool _t146 = (orig == NULL);
-        bool _t147 = (!_t146);
-        _sc145 = _t147;
+    int32_t _t152 = lta.len;
+    bool _t153 = (_t152 == 0);
+    bool _sc154 = false;
+    _sc154 = _t153;
+    if (_sc154) {
+        bool _t155 = (orig == NULL);
+        bool _t156 = (!_t155);
+        _sc154 = _t156;
     }
-    bool _sc148 = false;
-    _sc148 = _sc145;
-    if (_sc148) {
-        Expr* _t149 = orig;
-        ForgeSlice_TypeExprptr _t150 = _t149->inferred_type_args;
-        int32_t _t151 = _t150.len;
-        bool _t152 = (_t151 > 0);
-        _sc148 = _t152;
+    bool _sc157 = false;
+    _sc157 = _sc154;
+    if (_sc157) {
+        Expr* _t158 = orig;
+        ForgeSlice_TypeExprptr _t159 = _t158->inferred_type_args;
+        int32_t _t160 = _t159.len;
+        bool _t161 = (_t160 > 0);
+        _sc157 = _t161;
     }
-    if (_sc148) {
-        Expr* _t153 = orig;
-        ForgeSlice_TypeExprptr _t154 = _t153->inferred_type_args;
-        for (int32_t _idx = 0; _idx < _t154.len; _idx++) {
-            TypeExpr* ta = _t154.data[_idx];
-            LType* _t155 = Lowerer_lower_type(self, ta);
-            ForgeSlice_LTypeptr _t156 = ({ forge_push(&lta, _t155, ForgeSlice_LTypeptr); lta; });
-            _t156;
+    if (_sc157) {
+        Expr* _t162 = orig;
+        ForgeSlice_TypeExprptr _t163 = _t162->inferred_type_args;
+        for (int32_t _idx = 0; _idx < _t163.len; _idx++) {
+            TypeExpr* ta = _t163.data[_idx];
+            LType* _t164 = Lowerer_lower_type(self, ta);
+            ForgeSlice_LTypeptr _t165 = ({ forge_push(&lta, _t164, ForgeSlice_LTypeptr); lta; });
+            _t165;
         }
     }
-    ForgeSlice_LTypeptr _t157 = forge_slice_empty(ForgeSlice_LTypeptr);
-    ForgeSlice_LTypeptr ptypes = _t157;
-    forge_string __ifexpr_158 = FORGE_STR_EMPTY;
-    bool _t159 = (recv_type == NULL);
-    bool _t160 = (!_t159);
-    if (_t160) {
-        LType* _t161 = recv_type;
-        forge_string _t162 = _t161->name;
-        forge_string _t163 = forge_str_concat(_t162, FORGE_STR("."));
-        forge_string _t164 = forge_str_concat(_t163, method_name);
-        __ifexpr_158 = _t164;
+    ForgeSlice_LTypeptr _t166 = forge_slice_empty(ForgeSlice_LTypeptr);
+    ForgeSlice_LTypeptr ptypes = _t166;
+    forge_string __ifexpr_167 = FORGE_STR_EMPTY;
+    bool _t168 = (recv_type == NULL);
+    bool _t169 = (!_t168);
+    if (_t169) {
+        LType* _t170 = recv_type;
+        forge_string _t171 = _t170->name;
+        forge_string _t172 = forge_str_concat(_t171, FORGE_STR("."));
+        forge_string _t173 = forge_str_concat(_t172, method_name);
+        __ifexpr_167 = _t173;
     } else {
-        __ifexpr_158 = method_name;
+        __ifexpr_167 = method_name;
     }
-    forge_string sig_key = __ifexpr_158;
-    Dict_CSym_CFuncDecl* _t165 = self->func_sigs;
-    Dict_CSym_CFuncDecl* _t166 = _t165;
-    Sym* _t167 = sym(sig_key);
-    DictEntry_CSym_CFuncDecl* _t168 = Dict_CSym_CFuncDecl_get(_t166, _t167);
-    DictEntry_CSym_CFuncDecl* sig = _t168;
-    bool _t169 = (sig == NULL);
-    bool _t170 = (!_t169);
-    if (_t170) {
-        DictEntry_CSym_CFuncDecl* _t171 = sig;
-        FuncDecl* _t172 = _t171->value;
-        ForgeSlice_Paramptr _t173 = FuncDecl_param_children(_t172);
-        for (int32_t _idx = 0; _idx < _t173.len; _idx++) {
-            Param* p = _t173.data[_idx];
-            Sym* _t174 = p->name;
-            bool _t175 = (_t174 == NULL);
-            bool _t176 = (!_t175);
-            bool _sc177 = false;
-            _sc177 = _t176;
-            if (_sc177) {
-                bool _t178 = p->is_self;
-                bool _t179 = (!_t178);
-                _sc177 = _t179;
+    forge_string sig_key = __ifexpr_167;
+    Dict_CSym_CFuncDecl* _t174 = self->func_sigs;
+    Dict_CSym_CFuncDecl* _t175 = _t174;
+    Sym* _t176 = sym(sig_key);
+    DictEntry_CSym_CFuncDecl* _t177 = Dict_CSym_CFuncDecl_get(_t175, _t176);
+    DictEntry_CSym_CFuncDecl* sig = _t177;
+    bool _t178 = (sig == NULL);
+    bool _t179 = (!_t178);
+    if (_t179) {
+        DictEntry_CSym_CFuncDecl* _t180 = sig;
+        FuncDecl* _t181 = _t180->value;
+        ForgeSlice_Paramptr _t182 = FuncDecl_param_children(_t181);
+        for (int32_t _idx = 0; _idx < _t182.len; _idx++) {
+            Param* p = _t182.data[_idx];
+            Sym* _t183 = p->name;
+            bool _t184 = (_t183 == NULL);
+            bool _t185 = (!_t184);
+            bool _sc186 = false;
+            _sc186 = _t185;
+            if (_sc186) {
+                bool _t187 = p->is_self;
+                bool _t188 = (!_t187);
+                _sc186 = _t188;
             }
-            if (_sc177) {
-                TypeExpr* _t180 = p->type_expr;
-                LType* _t181 = Lowerer_lower_type(self, _t180);
-                ForgeSlice_LTypeptr _t182 = ({ forge_push(&ptypes, _t181, ForgeSlice_LTypeptr); ptypes; });
-                _t182;
+            if (_sc186) {
+                TypeExpr* _t189 = p->type_expr;
+                LType* _t190 = Lowerer_lower_type(self, _t189);
+                ForgeSlice_LTypeptr _t191 = ({ forge_push(&ptypes, _t190, ForgeSlice_LTypeptr); ptypes; });
+                _t191;
             }
         }
     }
-    LType* _t183 = Lowerer_expr_type(self, orig);
-    LType* rt = _t183;
-    LExprKind _t184 = LExprKind_ExMethodCall;
-    LMethodCallData* _t185 = ({ LMethodCallData* _p = malloc(sizeof(LMethodCallData)); *_p = (LMethodCallData){.receiver = recv, .method = method_name, .args = call_args, .mut_args = mc_mut_args, .type_args = lta, .is_exported = false, .param_types = ptypes}; _p; });
-    LExpr* _t186 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t184, .typ = rt, .method_call = _t185}; _p; });
-    LExpr* mc = _t186;
-    LValue* _t187 = Lowerer_emit_temp(self, mc);
-    return _t187;
+    LType* _t192 = Lowerer_expr_type(self, orig);
+    LType* rt = _t192;
+    LExprKind _t193 = LExprKind_ExMethodCall;
+    LMethodCallData* _t194 = ({ LMethodCallData* _p = malloc(sizeof(LMethodCallData)); *_p = (LMethodCallData){.receiver = recv, .method = method_name, .args = call_args, .mut_args = mc_mut_args, .type_args = lta, .is_exported = false, .param_types = ptypes}; _p; });
+    LExpr* _t195 = ({ LExpr* _p = malloc(sizeof(LExpr)); *_p = (LExpr){.kind = _t193, .typ = rt, .method_call = _t194}; _p; });
+    LExpr* mc = _t195;
+    LValue* _t196 = Lowerer_emit_temp(self, mc);
+    return _t196;
 }
 
 LValue* Lowerer_lower_field_access(Lowerer* self, Expr* orig, Expr* receiver, Sym* field_name) {
@@ -67926,79 +68047,408 @@ void CGen_emit_stmt(CGen* self, LStmt* s) {
         break;
     }
     case 16: {
-        CGen_line(self, FORGE_STR("/* spawn: not fully implemented in bootstrap C backend */"));
+        LStmt* _t383 = s;
+        ForgeOpt_LSpawnData _t384 = _t383->spawn_data;
+        LSpawnData _t385 = forge_unwrap(_t384);
+        LSpawnData d = _t385;
+        int32_t _t386 = self->spawn_id;
+        int32_t _t387 = (_t386 + 1);
+        self->spawn_id = _t387;
+        int32_t _t388 = self->spawn_id;
+        forge_string _t389 = forge_sprintf("_spawn_%d", _t388);
+        forge_string func_name = _t389;
+        ForgeSlice_LStmtptr _t390 = d.body;
+        Dict_CSym_bool* _t391 = collect_used_vars(_t390);
+        Dict_CSym_bool* used = _t391;
+        ForgeSlice_LStmtptr _t392 = d.body;
+        Dict_CSym_bool* _t393 = collect_declared_vars(_t392);
+        Dict_CSym_bool* declared = _t393;
+        ForgeSlice_CCapture _t394 = forge_slice_empty(ForgeSlice_CCapture);
+        ForgeSlice_CCapture captures = _t394;
+        Dict_CSym_bool* _t395 = used;
+        ForgeSlice_Symptr _t396 = Dict_CSym_bool_keys(_t395);
+        ForgeSlice_Symptr used_keys = _t396;
+        int32_t ci = 0;
+        while (1) {
+            int32_t _t397 = used_keys.len;
+            bool _t398 = (ci < _t397);
+            if (!(_t398)) break;
+            Sym* _t399 = used_keys.data[ci];
+            forge_string _t400 = Sym_get_name(_t399);
+            forge_string var_name = _t400;
+            Dict_CSym_bool* _t401 = declared;
+            Sym* _t402 = used_keys.data[ci];
+            DictEntry_CSym_bool* _t403 = Dict_CSym_bool_get(_t401, _t402);
+            DictEntry_CSym_bool* decl_entry = _t403;
+            bool _t404 = (decl_entry == NULL);
+            if (_t404) {
+                forge_string ctyp = FORGE_STR("void*");
+                Dict_CSym_opt_CLType* _t405 = self->var_types;
+                Dict_CSym_opt_CLType* _t406 = _t405;
+                Sym* _t407 = used_keys.data[ci];
+                DictEntry_CSym_opt_CLType* _t408 = Dict_CSym_opt_CLType_get(_t406, _t407);
+                DictEntry_CSym_opt_CLType* vt_entry = _t408;
+                bool _t409 = (vt_entry == NULL);
+                bool _t410 = (!_t409);
+                bool _sc411 = false;
+                _sc411 = _t410;
+                if (_sc411) {
+                    DictEntry_CSym_opt_CLType* _t412 = vt_entry;
+                    LType* _t413 = _t412->value;
+                    bool _t414 = (_t413 == NULL);
+                    bool _t415 = (!_t414);
+                    _sc411 = _t415;
+                }
+                if (_sc411) {
+                    DictEntry_CSym_opt_CLType* _t416 = vt_entry;
+                    LType* _t417 = _t416->value;
+                    forge_string _t418 = CGen_c_type(self, _t417);
+                    ctyp = _t418;
+                }
+                CCapture _t419 = (CCapture){.name = var_name, .typ = ctyp};
+                ForgeSlice_CCapture _t420 = ({ forge_push(&captures, _t419, ForgeSlice_CCapture); captures; });
+                _t420;
+            }
+            int32_t _t421 = (ci + 1);
+            ci = _t421;
+        }
+        StringBuilder* _t422 = self->buf;
+        StringBuilder* saved_buf = _t422;
+        int32_t _t423 = self->indent;
+        int32_t saved_indent = _t423;
+        Dict_CSym_bool* _t424 = self->spawn_captures;
+        Dict_CSym_bool* saved_captures = _t424;
+        StringBuilder* _t425 = new_string_builder();
+        self->buf = _t425;
+        self->indent = 1;
+        Dict_CSym_bool* _t426 = ({ Dict_CSym_bool* _p = malloc(sizeof(Dict_CSym_bool)); *_p = (Dict_CSym_bool){}; _p; });
+        Dict_CSym_bool* capture_set = _t426;
+        int32_t ci2 = 0;
+        while (1) {
+            int32_t _t427 = captures.len;
+            bool _t428 = (ci2 < _t427);
+            if (!(_t428)) break;
+            CCapture _t429 = captures.data[ci2];
+            forge_string _t430 = _t429.name;
+            Sym* _t431 = sym(_t430);
+            Dict_CSym_bool_set(capture_set, _t431, true);
+            int32_t _t433 = (ci2 + 1);
+            ci2 = _t433;
+        }
+        self->spawn_captures = capture_set;
+        ForgeSlice_LStmtptr _t434 = d.body;
+        CGen_emit_stmts(self, _t434);
+        StringBuilder* _t436 = self->buf;
+        StringBuilder* _t437 = _t436;
+        forge_string _t438 = StringBuilder_to_string(_t437);
+        forge_string body_str = _t438;
+        self->buf = saved_buf;
+        self->indent = saved_indent;
+        self->spawn_captures = saved_captures;
+        ForgeSlice_CSpawnFunc _t439 = self->spawn_funcs;
+        CSpawnFunc _t440 = (CSpawnFunc){.name = func_name, .body_str = body_str, .captures = captures};
+        forge_push(&_t439, _t440, ForgeSlice_CSpawnFunc);
+        self->spawn_funcs = _t439;
+        int32_t _t442 = captures.len;
+        bool _t443 = (_t442 > 0);
+        if (_t443) {
+            CGen_line(self, FORGE_STR("{"));
+            int32_t _t445 = self->indent;
+            int32_t _t446 = (_t445 + 1);
+            self->indent = _t446;
+            forge_string _t447 = forge_sprintf("%.*s_ctx* _ctx = (%.*s_ctx*)malloc(sizeof(%.*s_ctx));", (int)func_name.len, (const char*)func_name.data, (int)func_name.len, (const char*)func_name.data, (int)func_name.len, (const char*)func_name.data);
+            CGen_line(self, _t447);
+            int32_t ci3 = 0;
+            while (1) {
+                int32_t _t449 = captures.len;
+                bool _t450 = (ci3 < _t449);
+                if (!(_t450)) break;
+                CCapture _t451 = captures.data[ci3];
+                forge_string _t452 = _t451.name;
+                CCapture _t453 = captures.data[ci3];
+                forge_string _t454 = _t453.name;
+                forge_string _t455 = forge_sprintf("_ctx->%.*s = &%.*s;", (int)_t452.len, (const char*)_t452.data, (int)_t454.len, (const char*)_t454.data);
+                CGen_line(self, _t455);
+                int32_t _t457 = (ci3 + 1);
+                ci3 = _t457;
+            }
+            forge_string _t458 = forge_sprintf("forge_spawn(%.*s, _ctx);", (int)func_name.len, (const char*)func_name.data);
+            CGen_line(self, _t458);
+            int32_t _t460 = self->indent;
+            int32_t _t461 = (_t460 - 1);
+            self->indent = _t461;
+            CGen_line(self, FORGE_STR("}"));
+        } else {
+            forge_string _t463 = forge_sprintf("forge_spawn(%.*s, NULL);", (int)func_name.len, (const char*)func_name.data);
+            CGen_line(self, _t463);
+        }
         break;
     }
     case 19: {
-        CGen_line(self, FORGE_STR("/* select: channels not supported in C backend */"));
+        LStmt* _t465 = s;
+        ForgeOpt_LSelectData _t466 = _t465->select_data;
+        LSelectData _t467 = forge_unwrap(_t466);
+        LSelectData d = _t467;
+        int32_t _t468 = self->select_id;
+        int32_t sid = _t468;
+        int32_t _t469 = self->select_id;
+        int32_t _t470 = (_t469 + 1);
+        self->select_id = _t470;
+        forge_string _t471 = forge_sprintf("_sel_done_%d", sid);
+        forge_string label = _t471;
+        CGen_line(self, FORGE_STR("for (;;) {"));
+        int32_t _t473 = self->indent;
+        int32_t _t474 = (_t473 + 1);
+        self->indent = _t474;
+        int32_t si = 0;
+        while (1) {
+            ForgeSlice_LSelectCase _t475 = d.cases;
+            int32_t _t476 = _t475.len;
+            bool _t477 = (si < _t476);
+            if (!(_t477)) break;
+            ForgeSlice_LSelectCase _t478 = d.cases;
+            LSelectCase _t479 = _t478.data[si];
+            LSelectCase sc = _t479;
+            LSelectKind _t480 = sc.kind;
+            int32_t _t481 = _t480;
+            switch (_t481) {
+            case 2: {
+                ForgeSlice_LStmtptr _t482 = sc.body;
+                CGen_emit_stmts(self, _t482);
+                forge_string _t484 = forge_sprintf("goto %.*s;", (int)label.len, (const char*)label.data);
+                CGen_line(self, _t484);
+                break;
+            }
+            case 0: {
+                LValue* _t486 = sc.channel;
+                LType* _t487 = CGen_resolve_value_type(self, _t486);
+                LType* chan_type = _t487;
+                forge_string suffix = FORGE_STR("void");
+                bool _t488 = (chan_type == NULL);
+                bool _t489 = (!_t488);
+                bool _sc490 = false;
+                _sc490 = _t489;
+                if (_sc490) {
+                    LType* _t491 = chan_type;
+                    LTypeKind _t492 = _t491->kind;
+                    int32_t _t493 = _t492;
+                    bool _t494 = (_t493 == 21);
+                    _sc490 = _t494;
+                }
+                bool _sc495 = false;
+                _sc495 = _sc490;
+                if (_sc495) {
+                    LType* _t496 = chan_type;
+                    LType* _t497 = _t496->elem;
+                    bool _t498 = (_t497 == NULL);
+                    bool _t499 = (!_t498);
+                    _sc495 = _t499;
+                }
+                if (_sc495) {
+                    LType* _t500 = chan_type;
+                    LType* _t501 = _t500->elem;
+                    forge_string _t502 = CGen_chan_suffix(self, _t501);
+                    suffix = _t502;
+                }
+                LValue* _t503 = sc.channel;
+                forge_string _t504 = CGen_emit_value(self, _t503);
+                forge_string ch_val = _t504;
+                forge_string _t505 = sc.binding;
+                bool _t506 = (!forge_str_eq(_t505, FORGE_STR("")));
+                if (_t506) {
+                    forge_string __ifexpr_507 = FORGE_STR_EMPTY;
+                    bool _t508 = (chan_type == NULL);
+                    bool _t509 = (!_t508);
+                    bool _sc510 = false;
+                    _sc510 = _t509;
+                    if (_sc510) {
+                        LType* _t511 = chan_type;
+                        LTypeKind _t512 = _t511->kind;
+                        int32_t _t513 = _t512;
+                        bool _t514 = (_t513 == 21);
+                        _sc510 = _t514;
+                    }
+                    bool _sc515 = false;
+                    _sc515 = _sc510;
+                    if (_sc515) {
+                        LType* _t516 = chan_type;
+                        LType* _t517 = _t516->elem;
+                        bool _t518 = (_t517 == NULL);
+                        bool _t519 = (!_t518);
+                        _sc515 = _t519;
+                    }
+                    if (_sc515) {
+                        LType* _t520 = chan_type;
+                        LType* _t521 = _t520->elem;
+                        forge_string _t522 = CGen_c_type(self, _t521);
+                        __ifexpr_507 = _t522;
+                    } else {
+                        __ifexpr_507 = FORGE_STR("int32_t");
+                    }
+                    forge_string elem_ctype = __ifexpr_507;
+                    forge_string _t523 = forge_sprintf("{ %.*s _sel_val; if (forge_chan_tryrecv_%.*s(%.*s, &_sel_val)) {", (int)elem_ctype.len, (const char*)elem_ctype.data, (int)suffix.len, (const char*)suffix.data, (int)ch_val.len, (const char*)ch_val.data);
+                    CGen_line(self, _t523);
+                    int32_t _t525 = self->indent;
+                    int32_t _t526 = (_t525 + 1);
+                    self->indent = _t526;
+                    forge_string _t527 = sc.binding;
+                    forge_string _t528 = c_safe_name(_t527);
+                    forge_string _t529 = forge_sprintf("%.*s %.*s = _sel_val;", (int)elem_ctype.len, (const char*)elem_ctype.data, (int)_t528.len, (const char*)_t528.data);
+                    CGen_line(self, _t529);
+                    ForgeSlice_LStmtptr _t531 = sc.body;
+                    CGen_emit_stmts(self, _t531);
+                    int32_t _t533 = self->indent;
+                    int32_t _t534 = (_t533 - 1);
+                    self->indent = _t534;
+                    forge_string _t535 = forge_sprintf("goto %.*s; } }", (int)label.len, (const char*)label.data);
+                    CGen_line(self, _t535);
+                } else {
+                    forge_string _t537 = forge_sprintf("if (forge_chan_tryrecv_%.*s(%.*s, NULL)) {", (int)suffix.len, (const char*)suffix.data, (int)ch_val.len, (const char*)ch_val.data);
+                    CGen_line(self, _t537);
+                    int32_t _t539 = self->indent;
+                    int32_t _t540 = (_t539 + 1);
+                    self->indent = _t540;
+                    ForgeSlice_LStmtptr _t541 = sc.body;
+                    CGen_emit_stmts(self, _t541);
+                    int32_t _t543 = self->indent;
+                    int32_t _t544 = (_t543 - 1);
+                    self->indent = _t544;
+                    forge_string _t545 = forge_sprintf("goto %.*s; }", (int)label.len, (const char*)label.data);
+                    CGen_line(self, _t545);
+                }
+                break;
+            }
+            case 1: {
+                LValue* _t547 = sc.channel;
+                LType* _t548 = CGen_resolve_value_type(self, _t547);
+                LType* chan_type = _t548;
+                forge_string suffix = FORGE_STR("void");
+                bool _t549 = (chan_type == NULL);
+                bool _t550 = (!_t549);
+                bool _sc551 = false;
+                _sc551 = _t550;
+                if (_sc551) {
+                    LType* _t552 = chan_type;
+                    LTypeKind _t553 = _t552->kind;
+                    int32_t _t554 = _t553;
+                    bool _t555 = (_t554 == 21);
+                    _sc551 = _t555;
+                }
+                bool _sc556 = false;
+                _sc556 = _sc551;
+                if (_sc556) {
+                    LType* _t557 = chan_type;
+                    LType* _t558 = _t557->elem;
+                    bool _t559 = (_t558 == NULL);
+                    bool _t560 = (!_t559);
+                    _sc556 = _t560;
+                }
+                if (_sc556) {
+                    LType* _t561 = chan_type;
+                    LType* _t562 = _t561->elem;
+                    forge_string _t563 = CGen_chan_suffix(self, _t562);
+                    suffix = _t563;
+                }
+                LValue* _t564 = sc.channel;
+                forge_string _t565 = CGen_emit_value(self, _t564);
+                forge_string ch_val = _t565;
+                LValue* _t566 = sc.value;
+                forge_string _t567 = CGen_emit_value(self, _t566);
+                forge_string send_val = _t567;
+                forge_string _t568 = forge_sprintf("if (forge_chan_trysend_%.*s(%.*s, %.*s)) {", (int)suffix.len, (const char*)suffix.data, (int)ch_val.len, (const char*)ch_val.data, (int)send_val.len, (const char*)send_val.data);
+                CGen_line(self, _t568);
+                int32_t _t570 = self->indent;
+                int32_t _t571 = (_t570 + 1);
+                self->indent = _t571;
+                ForgeSlice_LStmtptr _t572 = sc.body;
+                CGen_emit_stmts(self, _t572);
+                int32_t _t574 = self->indent;
+                int32_t _t575 = (_t574 - 1);
+                self->indent = _t575;
+                forge_string _t576 = forge_sprintf("goto %.*s; }", (int)label.len, (const char*)label.data);
+                CGen_line(self, _t576);
+                break;
+            }
+            default: __builtin_unreachable();
+            }
+            int32_t _t578 = (si + 1);
+            si = _t578;
+        }
+        CGen_line(self, FORGE_STR("usleep(100);"));
+        int32_t _t580 = self->indent;
+        int32_t _t581 = (_t580 - 1);
+        self->indent = _t581;
+        CGen_line(self, FORGE_STR("}"));
+        forge_string _t583 = forge_sprintf("%.*s:;", (int)label.len, (const char*)label.data);
+        CGen_line(self, _t583);
         break;
     }
     case 15: {
-        LStmt* _t385 = s;
-        ForgeOpt_LDeferData _t386 = _t385->defer_data;
-        LDeferData _t387 = forge_unwrap(_t386);
-        LDeferData d = _t387;
+        LStmt* _t585 = s;
+        ForgeOpt_LDeferData _t586 = _t585->defer_data;
+        LDeferData _t587 = forge_unwrap(_t586);
+        LDeferData d = _t587;
         CGen_line(self, FORGE_STR("/* defer (executed inline): */"));
-        ForgeSlice_LStmtptr _t389 = d.body;
-        CGen_emit_stmts(self, _t389);
+        ForgeSlice_LStmtptr _t589 = d.body;
+        CGen_emit_stmts(self, _t589);
         break;
     }
     case 17: {
-        LStmt* _t391 = s;
-        ForgeOpt_LLockData _t392 = _t391->lock_data;
-        LLockData _t393 = forge_unwrap(_t392);
-        LLockData d = _t393;
-        LValue* _t394 = d.mutex;
-        forge_string _t395 = CGen_emit_value(self, _t394);
-        forge_string mutex_val = _t395;
-        forge_string _t396 = forge_sprintf("pthread_mutex_lock(&%.*s);", (int)mutex_val.len, (const char*)mutex_val.data);
-        CGen_line(self, _t396);
-        ForgeSlice_LStmtptr _t398 = d.body;
-        CGen_emit_stmts(self, _t398);
-        forge_string _t400 = forge_sprintf("pthread_mutex_unlock(&%.*s);", (int)mutex_val.len, (const char*)mutex_val.data);
-        CGen_line(self, _t400);
+        LStmt* _t591 = s;
+        ForgeOpt_LLockData _t592 = _t591->lock_data;
+        LLockData _t593 = forge_unwrap(_t592);
+        LLockData d = _t593;
+        LValue* _t594 = d.mutex;
+        forge_string _t595 = CGen_emit_value(self, _t594);
+        forge_string mutex_val = _t595;
+        forge_string _t596 = forge_sprintf("pthread_mutex_lock(&%.*s);", (int)mutex_val.len, (const char*)mutex_val.data);
+        CGen_line(self, _t596);
+        ForgeSlice_LStmtptr _t598 = d.body;
+        CGen_emit_stmts(self, _t598);
+        forge_string _t600 = forge_sprintf("pthread_mutex_unlock(&%.*s);", (int)mutex_val.len, (const char*)mutex_val.data);
+        CGen_line(self, _t600);
         break;
     }
     case 14: {
-        LStmt* _t402 = s;
-        ForgeOpt_LExprStmtData _t403 = _t402->expr_stmt;
-        LExprStmtData _t404 = forge_unwrap(_t403);
-        LExprStmtData d = _t404;
-        Dict_CSym_opt_CLType* _t405 = self->temp_types;
-        Dict_CSym_opt_CLType* _t406 = _t405;
-        int32_t _t407 = d.temp_id;
-        forge_string _t408 = forge_sprintf("%d", _t407);
-        Sym* _t409 = sym(_t408);
-        DictEntry_CSym_opt_CLType* _t410 = Dict_CSym_opt_CLType_get(_t406, _t409);
-        DictEntry_CSym_opt_CLType* ty_entry = _t410;
-        bool _t411 = (ty_entry == NULL);
-        bool _t412 = (!_t411);
-        bool _sc413 = false;
-        _sc413 = _t412;
-        if (_sc413) {
-            DictEntry_CSym_opt_CLType* _t414 = ty_entry;
-            LType* _t415 = _t414->value;
-            bool _t416 = (_t415 == NULL);
-            bool _t417 = (!_t416);
-            _sc413 = _t417;
+        LStmt* _t602 = s;
+        ForgeOpt_LExprStmtData _t603 = _t602->expr_stmt;
+        LExprStmtData _t604 = forge_unwrap(_t603);
+        LExprStmtData d = _t604;
+        Dict_CSym_opt_CLType* _t605 = self->temp_types;
+        Dict_CSym_opt_CLType* _t606 = _t605;
+        int32_t _t607 = d.temp_id;
+        forge_string _t608 = forge_sprintf("%d", _t607);
+        Sym* _t609 = sym(_t608);
+        DictEntry_CSym_opt_CLType* _t610 = Dict_CSym_opt_CLType_get(_t606, _t609);
+        DictEntry_CSym_opt_CLType* ty_entry = _t610;
+        bool _t611 = (ty_entry == NULL);
+        bool _t612 = (!_t611);
+        bool _sc613 = false;
+        _sc613 = _t612;
+        if (_sc613) {
+            DictEntry_CSym_opt_CLType* _t614 = ty_entry;
+            LType* _t615 = _t614->value;
+            bool _t616 = (_t615 == NULL);
+            bool _t617 = (!_t616);
+            _sc613 = _t617;
         }
-        bool _sc418 = false;
-        _sc418 = _sc413;
-        if (_sc418) {
-            DictEntry_CSym_opt_CLType* _t419 = ty_entry;
-            LType* _t420 = _t419->value;
-            LType* _t421 = _t420;
-            LTypeKind _t422 = _t421->kind;
-            int32_t _t423 = _t422;
-            bool _t424 = (_t423 == 12);
-            _sc418 = _t424;
+        bool _sc618 = false;
+        _sc618 = _sc613;
+        if (_sc618) {
+            DictEntry_CSym_opt_CLType* _t619 = ty_entry;
+            LType* _t620 = _t619->value;
+            LType* _t621 = _t620;
+            LTypeKind _t622 = _t621->kind;
+            int32_t _t623 = _t622;
+            bool _t624 = (_t623 == 12);
+            _sc618 = _t624;
         }
-        if (_sc418) {
+        if (_sc618) {
             return;
         }
-        int32_t _t425 = d.temp_id;
-        forge_string _t426 = forge_sprintf("_t%d;", _t425);
-        CGen_line(self, _t426);
+        int32_t _t625 = d.temp_id;
+        forge_string _t626 = forge_sprintf("_t%d;", _t625);
+        CGen_line(self, _t626);
         break;
     }
     case 12: {
@@ -68010,24 +68460,24 @@ void CGen_emit_stmt(CGen* self, LStmt* s) {
         break;
     }
     case 20: {
-        LStmt* _t430 = s;
-        ForgeOpt_LYieldData _t431 = _t430->yield_data;
-        LYieldData _t432 = forge_unwrap(_t431);
-        LYieldData d = _t432;
-        int32_t _t433 = self->gen_yield_count;
-        int32_t _t434 = (_t433 + 1);
-        self->gen_yield_count = _t434;
-        int32_t _t435 = self->gen_yield_count;
-        int32_t state_num = _t435;
-        LValue* _t436 = d.value;
-        forge_string _t437 = CGen_emit_value(self, _t436);
-        forge_string _t438 = forge_sprintf("_gen->_value = %.*s;", (int)_t437.len, (const char*)_t437.data);
-        CGen_line(self, _t438);
-        forge_string _t440 = forge_sprintf("_gen->_state = %d;", state_num);
-        CGen_line(self, _t440);
+        LStmt* _t630 = s;
+        ForgeOpt_LYieldData _t631 = _t630->yield_data;
+        LYieldData _t632 = forge_unwrap(_t631);
+        LYieldData d = _t632;
+        int32_t _t633 = self->gen_yield_count;
+        int32_t _t634 = (_t633 + 1);
+        self->gen_yield_count = _t634;
+        int32_t _t635 = self->gen_yield_count;
+        int32_t state_num = _t635;
+        LValue* _t636 = d.value;
+        forge_string _t637 = CGen_emit_value(self, _t636);
+        forge_string _t638 = forge_sprintf("_gen->_value = %.*s;", (int)_t637.len, (const char*)_t637.data);
+        CGen_line(self, _t638);
+        forge_string _t640 = forge_sprintf("_gen->_state = %d;", state_num);
+        CGen_line(self, _t640);
         CGen_line(self, FORGE_STR("return true;"));
-        forge_string _t443 = forge_sprintf("_gen_s%d:;", state_num);
-        CGen_line(self, _t443);
+        forge_string _t643 = forge_sprintf("_gen_s%d:;", state_num);
+        CGen_line(self, _t643);
         break;
     }
     default: {
@@ -72062,6 +72512,480 @@ void CGen_emit_os_helpers(CGen* self) {
     }
 }
 
+void collect_val_vars(LValue* v, Dict_CSym_bool* used) {
+    bool _t0 = (v == NULL);
+    if (_t0) {
+        return;
+    }
+    LValue* _t1 = v;
+    LValueKind _t2 = _t1->kind;
+    int32_t _t3 = _t2;
+    bool _t4 = (_t3 == 0);
+    if (_t4) {
+        Dict_CSym_bool* _t5 = used;
+        LValue* _t6 = v;
+        forge_string _t7 = _t6->name;
+        Sym* _t8 = sym(_t7);
+        Dict_CSym_bool_set(_t5, _t8, true);
+    }
+}
+
+void collect_expr_vars(LExpr* e, Dict_CSym_bool* used) {
+    bool _t0 = (e == NULL);
+    if (_t0) {
+        return;
+    }
+    LExpr* _t1 = e;
+    LExprKind _t2 = _t1->kind;
+    int32_t _t3 = _t2;
+    switch (_t3) {
+    case 7: {
+        LExpr* _t4 = e;
+        LCallData* _t5 = _t4->call;
+        LCallData* _t6 = _t5;
+        LCallData* d = _t6;
+        int32_t i = 0;
+        while (1) {
+            ForgeSlice_LValueptr _t7 = d->args;
+            int32_t _t8 = _t7.len;
+            bool _t9 = (i < _t8);
+            if (!(_t9)) break;
+            ForgeSlice_LValueptr _t10 = d->args;
+            LValue* _t11 = _t10.data[i];
+            collect_val_vars(_t11, used);
+            int32_t _t13 = (i + 1);
+            i = _t13;
+        }
+        break;
+    }
+    case 8: {
+        LExpr* _t14 = e;
+        LMethodCallData* _t15 = _t14->method_call;
+        LMethodCallData* _t16 = _t15;
+        LMethodCallData* d = _t16;
+        LValue* _t17 = d->receiver;
+        collect_val_vars(_t17, used);
+        int32_t i = 0;
+        while (1) {
+            ForgeSlice_LValueptr _t19 = d->args;
+            int32_t _t20 = _t19.len;
+            bool _t21 = (i < _t20);
+            if (!(_t21)) break;
+            ForgeSlice_LValueptr _t22 = d->args;
+            LValue* _t23 = _t22.data[i];
+            collect_val_vars(_t23, used);
+            int32_t _t25 = (i + 1);
+            i = _t25;
+        }
+        break;
+    }
+    case 9: {
+        LExpr* _t26 = e;
+        ForgeOpt_LBuiltinData _t27 = _t26->builtin;
+        LBuiltinData _t28 = forge_unwrap(_t27);
+        LBuiltinData d = _t28;
+        int32_t i = 0;
+        while (1) {
+            ForgeSlice_LValueptr _t29 = d.args;
+            int32_t _t30 = _t29.len;
+            bool _t31 = (i < _t30);
+            if (!(_t31)) break;
+            ForgeSlice_LValueptr _t32 = d.args;
+            LValue* _t33 = _t32.data[i];
+            collect_val_vars(_t33, used);
+            int32_t _t35 = (i + 1);
+            i = _t35;
+        }
+        break;
+    }
+    case 0: {
+        LExpr* _t36 = e;
+        ForgeOpt_LBinOpData _t37 = _t36->bin_op;
+        LBinOpData _t38 = forge_unwrap(_t37);
+        LBinOpData d = _t38;
+        LValue* _t39 = d.left;
+        collect_val_vars(_t39, used);
+        LValue* _t41 = d.right;
+        collect_val_vars(_t41, used);
+        break;
+    }
+    case 1: {
+        LExpr* _t43 = e;
+        ForgeOpt_LUnOpData _t44 = _t43->un_op;
+        LUnOpData _t45 = forge_unwrap(_t44);
+        LUnOpData d = _t45;
+        LValue* _t46 = d.operand;
+        collect_val_vars(_t46, used);
+        break;
+    }
+    case 2: {
+        LExpr* _t48 = e;
+        ForgeOpt_LCastData _t49 = _t48->cast;
+        LCastData _t50 = forge_unwrap(_t49);
+        LCastData d = _t50;
+        LValue* _t51 = d.operand;
+        collect_val_vars(_t51, used);
+        break;
+    }
+    case 3: {
+        LExpr* _t53 = e;
+        ForgeOpt_LStructFieldData _t54 = _t53->struct_field;
+        LStructFieldData _t55 = forge_unwrap(_t54);
+        LStructFieldData d = _t55;
+        LValue* _t56 = d.receiver;
+        collect_val_vars(_t56, used);
+        break;
+    }
+    case 4: {
+        LExpr* _t58 = e;
+        ForgeOpt_LClassGetData _t59 = _t58->class_get;
+        LClassGetData _t60 = forge_unwrap(_t59);
+        LClassGetData d = _t60;
+        LValue* _t61 = d.handle;
+        collect_val_vars(_t61, used);
+        break;
+    }
+    case 5: {
+        LExpr* _t63 = e;
+        ForgeOpt_LIndexGetData _t64 = _t63->index_get;
+        LIndexGetData _t65 = forge_unwrap(_t64);
+        LIndexGetData d = _t65;
+        LValue* _t66 = d.collection;
+        collect_val_vars(_t66, used);
+        LValue* _t68 = d.index;
+        collect_val_vars(_t68, used);
+        break;
+    }
+    case 15: {
+        LExpr* _t70 = e;
+        ForgeOpt_LWrapOptionalData _t71 = _t70->wrap_opt;
+        LWrapOptionalData _t72 = forge_unwrap(_t71);
+        LWrapOptionalData d = _t72;
+        LValue* _t73 = d.value;
+        collect_val_vars(_t73, used);
+        break;
+    }
+    case 14: {
+        LExpr* _t75 = e;
+        ForgeOpt_LMakeChannelData _t76 = _t75->make_channel;
+        LMakeChannelData _t77 = forge_unwrap(_t76);
+        LMakeChannelData d = _t77;
+        LValue* _t78 = d.buf_size;
+        collect_val_vars(_t78, used);
+        break;
+    }
+    case 17: {
+        LExpr* _t80 = e;
+        ForgeOpt_LIsNullData _t81 = _t80->is_null;
+        LIsNullData _t82 = forge_unwrap(_t81);
+        LIsNullData d = _t82;
+        LValue* _t83 = d.value;
+        collect_val_vars(_t83, used);
+        break;
+    }
+    case 16: {
+        LExpr* _t85 = e;
+        ForgeOpt_LUnwrapOptionalData _t86 = _t85->unwrap_opt;
+        LUnwrapOptionalData _t87 = forge_unwrap(_t86);
+        LUnwrapOptionalData d = _t87;
+        LValue* _t88 = d.value;
+        collect_val_vars(_t88, used);
+        break;
+    }
+    default: {
+        break;
+    }
+    }
+}
+
+void collect_used_vars_stmts(ForgeSlice_LStmtptr stmts, Dict_CSym_bool* used) {
+    int32_t i = 0;
+    while (1) {
+        int32_t _t0 = stmts.len;
+        bool _t1 = (i < _t0);
+        if (!(_t1)) break;
+        LStmt* _t2 = stmts.data[i];
+        LStmt* s = _t2;
+        bool _t3 = (s == NULL);
+        if (_t3) {
+            int32_t _t4 = (i + 1);
+            i = _t4;
+            continue;
+        }
+        LStmt* _t5 = s;
+        LStmtKind _t6 = _t5->kind;
+        int32_t _t7 = _t6;
+        switch (_t7) {
+        case 0: {
+            LStmt* _t8 = s;
+            ForgeOpt_LTempDef _t9 = _t8->temp_def;
+            LTempDef _t10 = forge_unwrap(_t9);
+            LTempDef d = _t10;
+            LExpr* _t11 = d.expr;
+            collect_expr_vars(_t11, used);
+            break;
+        }
+        case 1: {
+            LStmt* _t13 = s;
+            ForgeOpt_LVarDeclData _t14 = _t13->var_decl;
+            LVarDeclData _t15 = forge_unwrap(_t14);
+            LVarDeclData d = _t15;
+            LValue* _t16 = d.init;
+            collect_val_vars(_t16, used);
+            break;
+        }
+        case 2: {
+            LStmt* _t18 = s;
+            ForgeOpt_LAssignData _t19 = _t18->assign;
+            LAssignData _t20 = forge_unwrap(_t19);
+            LAssignData d = _t20;
+            Dict_CSym_bool* _t21 = used;
+            forge_string _t22 = d.target;
+            Sym* _t23 = sym(_t22);
+            Dict_CSym_bool_set(_t21, _t23, true);
+            LValue* _t25 = d.value;
+            collect_val_vars(_t25, used);
+            break;
+        }
+        case 21: {
+            LStmt* _t27 = s;
+            ForgeOpt_LSideEffectData _t28 = _t27->side_effect;
+            LSideEffectData _t29 = forge_unwrap(_t28);
+            LSideEffectData d = _t29;
+            LExpr* _t30 = d.expr;
+            collect_expr_vars(_t30, used);
+            break;
+        }
+        case 18: {
+            LStmt* _t32 = s;
+            ForgeOpt_LSendData _t33 = _t32->send_data;
+            LSendData _t34 = forge_unwrap(_t33);
+            LSendData d = _t34;
+            LValue* _t35 = d.channel;
+            collect_val_vars(_t35, used);
+            LValue* _t37 = d.value;
+            collect_val_vars(_t37, used);
+            break;
+        }
+        case 6: {
+            LStmt* _t39 = s;
+            ForgeOpt_LIfData _t40 = _t39->if_data;
+            LIfData _t41 = forge_unwrap(_t40);
+            LIfData d = _t41;
+            ForgeSlice_LStmtptr _t42 = d.then_body;
+            collect_used_vars_stmts(_t42, used);
+            ForgeSlice_LStmtptr _t44 = d.else_body;
+            collect_used_vars_stmts(_t44, used);
+            break;
+        }
+        case 7: {
+            LStmt* _t46 = s;
+            ForgeOpt_LWhileData _t47 = _t46->while_data;
+            LWhileData _t48 = forge_unwrap(_t47);
+            LWhileData d = _t48;
+            ForgeSlice_LStmtptr _t49 = d.cond_block;
+            collect_used_vars_stmts(_t49, used);
+            ForgeSlice_LStmtptr _t51 = d.body;
+            collect_used_vars_stmts(_t51, used);
+            break;
+        }
+        case 8: {
+            LStmt* _t53 = s;
+            ForgeOpt_LForData _t54 = _t53->for_data;
+            LForData _t55 = forge_unwrap(_t54);
+            LForData d = _t55;
+            LValue* _t56 = d.collection;
+            collect_val_vars(_t56, used);
+            ForgeSlice_LStmtptr _t58 = d.body;
+            collect_used_vars_stmts(_t58, used);
+            break;
+        }
+        case 10: {
+            LStmt* _t60 = s;
+            ForgeOpt_LBlockData _t61 = _t60->block;
+            LBlockData _t62 = forge_unwrap(_t61);
+            LBlockData d = _t62;
+            ForgeSlice_LStmtptr _t63 = d.stmts;
+            collect_used_vars_stmts(_t63, used);
+            break;
+        }
+        case 17: {
+            LStmt* _t65 = s;
+            ForgeOpt_LLockData _t66 = _t65->lock_data;
+            LLockData _t67 = forge_unwrap(_t66);
+            LLockData d = _t67;
+            LValue* _t68 = d.mutex;
+            collect_val_vars(_t68, used);
+            ForgeSlice_LStmtptr _t70 = d.body;
+            collect_used_vars_stmts(_t70, used);
+            break;
+        }
+        case 11: {
+            LStmt* _t72 = s;
+            ForgeOpt_LReturnData _t73 = _t72->ret;
+            LReturnData _t74 = forge_unwrap(_t73);
+            LReturnData d = _t74;
+            int32_t j = 0;
+            while (1) {
+                ForgeSlice_LValueptr _t75 = d.values;
+                int32_t _t76 = _t75.len;
+                bool _t77 = (j < _t76);
+                if (!(_t77)) break;
+                ForgeSlice_LValueptr _t78 = d.values;
+                LValue* _t79 = _t78.data[j];
+                collect_val_vars(_t79, used);
+                int32_t _t81 = (j + 1);
+                j = _t81;
+            }
+            break;
+        }
+        case 3: {
+            LStmt* _t82 = s;
+            ForgeOpt_LStructSetData _t83 = _t82->struct_set;
+            LStructSetData _t84 = forge_unwrap(_t83);
+            LStructSetData d = _t84;
+            LValue* _t85 = d.receiver;
+            collect_val_vars(_t85, used);
+            LValue* _t87 = d.value;
+            collect_val_vars(_t87, used);
+            break;
+        }
+        case 4: {
+            LStmt* _t89 = s;
+            ForgeOpt_LClassSetData _t90 = _t89->class_set;
+            LClassSetData _t91 = forge_unwrap(_t90);
+            LClassSetData d = _t91;
+            LValue* _t92 = d.handle;
+            collect_val_vars(_t92, used);
+            LValue* _t94 = d.value;
+            collect_val_vars(_t94, used);
+            break;
+        }
+        case 5: {
+            LStmt* _t96 = s;
+            ForgeOpt_LIndexSetData _t97 = _t96->index_set;
+            LIndexSetData _t98 = forge_unwrap(_t97);
+            LIndexSetData d = _t98;
+            LValue* _t99 = d.collection;
+            collect_val_vars(_t99, used);
+            LValue* _t101 = d.index;
+            collect_val_vars(_t101, used);
+            LValue* _t103 = d.value;
+            collect_val_vars(_t103, used);
+            break;
+        }
+        default: {
+            break;
+        }
+        }
+        int32_t _t105 = (i + 1);
+        i = _t105;
+    }
+}
+
+Dict_CSym_bool* collect_used_vars(ForgeSlice_LStmtptr stmts) {
+    Dict_CSym_bool* _t0 = ({ Dict_CSym_bool* _p = malloc(sizeof(Dict_CSym_bool)); *_p = (Dict_CSym_bool){}; _p; });
+    Dict_CSym_bool* used = _t0;
+    collect_used_vars_stmts(stmts, used);
+    return used;
+}
+
+void collect_declared_vars_stmts(ForgeSlice_LStmtptr stmts, Dict_CSym_bool* decl) {
+    int32_t i = 0;
+    while (1) {
+        int32_t _t0 = stmts.len;
+        bool _t1 = (i < _t0);
+        if (!(_t1)) break;
+        LStmt* _t2 = stmts.data[i];
+        LStmt* s = _t2;
+        bool _t3 = (s == NULL);
+        if (_t3) {
+            int32_t _t4 = (i + 1);
+            i = _t4;
+            continue;
+        }
+        LStmt* _t5 = s;
+        LStmtKind _t6 = _t5->kind;
+        int32_t _t7 = _t6;
+        switch (_t7) {
+        case 1: {
+            LStmt* _t8 = s;
+            ForgeOpt_LVarDeclData _t9 = _t8->var_decl;
+            LVarDeclData _t10 = forge_unwrap(_t9);
+            LVarDeclData d = _t10;
+            Dict_CSym_bool* _t11 = decl;
+            forge_string _t12 = d.name;
+            Sym* _t13 = sym(_t12);
+            Dict_CSym_bool_set(_t11, _t13, true);
+            break;
+        }
+        case 6: {
+            LStmt* _t15 = s;
+            ForgeOpt_LIfData _t16 = _t15->if_data;
+            LIfData _t17 = forge_unwrap(_t16);
+            LIfData d = _t17;
+            ForgeSlice_LStmtptr _t18 = d.then_body;
+            collect_declared_vars_stmts(_t18, decl);
+            ForgeSlice_LStmtptr _t20 = d.else_body;
+            collect_declared_vars_stmts(_t20, decl);
+            break;
+        }
+        case 7: {
+            LStmt* _t22 = s;
+            ForgeOpt_LWhileData _t23 = _t22->while_data;
+            LWhileData _t24 = forge_unwrap(_t23);
+            LWhileData d = _t24;
+            ForgeSlice_LStmtptr _t25 = d.body;
+            collect_declared_vars_stmts(_t25, decl);
+            break;
+        }
+        case 8: {
+            LStmt* _t27 = s;
+            ForgeOpt_LForData _t28 = _t27->for_data;
+            LForData _t29 = forge_unwrap(_t28);
+            LForData d = _t29;
+            Dict_CSym_bool* _t30 = decl;
+            forge_string _t31 = d.var_name;
+            Sym* _t32 = sym(_t31);
+            Dict_CSym_bool_set(_t30, _t32, true);
+            ForgeSlice_LStmtptr _t34 = d.body;
+            collect_declared_vars_stmts(_t34, decl);
+            break;
+        }
+        case 10: {
+            LStmt* _t36 = s;
+            ForgeOpt_LBlockData _t37 = _t36->block;
+            LBlockData _t38 = forge_unwrap(_t37);
+            LBlockData d = _t38;
+            ForgeSlice_LStmtptr _t39 = d.stmts;
+            collect_declared_vars_stmts(_t39, decl);
+            break;
+        }
+        case 17: {
+            LStmt* _t41 = s;
+            ForgeOpt_LLockData _t42 = _t41->lock_data;
+            LLockData _t43 = forge_unwrap(_t42);
+            LLockData d = _t43;
+            ForgeSlice_LStmtptr _t44 = d.body;
+            collect_declared_vars_stmts(_t44, decl);
+            break;
+        }
+        default: {
+            break;
+        }
+        }
+        int32_t _t46 = (i + 1);
+        i = _t46;
+    }
+}
+
+Dict_CSym_bool* collect_declared_vars(ForgeSlice_LStmtptr stmts) {
+    Dict_CSym_bool* _t0 = ({ Dict_CSym_bool* _p = malloc(sizeof(Dict_CSym_bool)); *_p = (Dict_CSym_bool){}; _p; });
+    Dict_CSym_bool* decl = _t0;
+    collect_declared_vars_stmts(stmts, decl);
+    return decl;
+}
+
 forge_string emit_c(LProgram* prog) {
     CGen* _t0 = new_cgen(prog);
     CGen* _t1 = _t0;
@@ -72964,21 +73888,97 @@ forge_string emit_c(LProgram* prog) {
             forge_string _t570 = forge_sprintf("ForgeChan_%.*s", (int)_t569.len, (const char*)_t569.data);
             forge_string chan_name = _t570;
             Sym* _t571 = chan_keys.data[i];
-            DictEntry_CSym_string* _t572 = entry;
-            forge_string _t573 = _t572->value;
-            forge_string _t574 = forge_sprintf("FORGE_CHAN_IMPL(%d, %.*s, %.*s)", _t571, (int)chan_name.len, (const char*)chan_name.data, (int)_t573.len, (const char*)_t573.data);
-            CGen_line(g, _t574);
+            forge_string _t572 = Sym_get_name(_t571);
+            DictEntry_CSym_string* _t573 = entry;
+            forge_string _t574 = _t573->value;
+            forge_string _t575 = forge_sprintf("FORGE_CHAN_IMPL(%.*s, %.*s, %.*s)", (int)_t572.len, (const char*)_t572.data, (int)chan_name.len, (const char*)chan_name.data, (int)_t574.len, (const char*)_t574.data);
+            CGen_line(g, _t575);
             CGen_line(g, FORGE_STR(""));
         }
-        int32_t _t577 = (i + 1);
-        i = _t577;
+        int32_t _t578 = (i + 1);
+        i = _t578;
+    }
+    i = 0;
+    while (1) {
+        ForgeSlice_CSpawnFunc _t579 = g->spawn_funcs;
+        int32_t _t580 = _t579.len;
+        bool _t581 = (i < _t580);
+        if (!(_t581)) break;
+        ForgeSlice_CSpawnFunc _t582 = g->spawn_funcs;
+        CSpawnFunc _t583 = _t582.data[i];
+        CSpawnFunc sf = _t583;
+        ForgeSlice_CCapture _t584 = sf.captures;
+        int32_t _t585 = _t584.len;
+        bool _t586 = (_t585 > 0);
+        if (_t586) {
+            forge_string _t587 = sf.name;
+            forge_string _t588 = forge_sprintf("typedef struct %.*s_ctx {", (int)_t587.len, (const char*)_t587.data);
+            CGen_line(g, _t588);
+            int32_t _t590 = g->indent;
+            int32_t _t591 = (_t590 + 1);
+            g->indent = _t591;
+            int32_t ci = 0;
+            while (1) {
+                ForgeSlice_CCapture _t592 = sf.captures;
+                int32_t _t593 = _t592.len;
+                bool _t594 = (ci < _t593);
+                if (!(_t594)) break;
+                ForgeSlice_CCapture _t595 = sf.captures;
+                CCapture _t596 = _t595.data[ci];
+                forge_string _t597 = _t596.typ;
+                ForgeSlice_CCapture _t598 = sf.captures;
+                CCapture _t599 = _t598.data[ci];
+                forge_string _t600 = _t599.name;
+                forge_string _t601 = forge_sprintf("%.*s* %.*s;", (int)_t597.len, (const char*)_t597.data, (int)_t600.len, (const char*)_t600.data);
+                CGen_line(g, _t601);
+                int32_t _t603 = (ci + 1);
+                ci = _t603;
+            }
+            int32_t _t604 = g->indent;
+            int32_t _t605 = (_t604 - 1);
+            g->indent = _t605;
+            forge_string _t606 = sf.name;
+            forge_string _t607 = forge_sprintf("} %.*s_ctx;", (int)_t606.len, (const char*)_t606.data);
+            CGen_line(g, _t607);
+        }
+        forge_string _t609 = sf.name;
+        forge_string _t610 = forge_sprintf("static void* %.*s(void* _arg) {", (int)_t609.len, (const char*)_t609.data);
+        CGen_line(g, _t610);
+        int32_t _t612 = g->indent;
+        int32_t _t613 = (_t612 + 1);
+        g->indent = _t613;
+        ForgeSlice_CCapture _t614 = sf.captures;
+        int32_t _t615 = _t614.len;
+        bool _t616 = (_t615 > 0);
+        if (_t616) {
+            forge_string _t617 = sf.name;
+            forge_string _t618 = sf.name;
+            forge_string _t619 = forge_sprintf("%.*s_ctx* _ctx = (%.*s_ctx*)_arg;", (int)_t617.len, (const char*)_t617.data, (int)_t618.len, (const char*)_t618.data);
+            CGen_line(g, _t619);
+        }
+        forge_string _t621 = sf.body_str;
+        CGen_write_raw(g, _t621);
+        ForgeSlice_CCapture _t623 = sf.captures;
+        int32_t _t624 = _t623.len;
+        bool _t625 = (_t624 > 0);
+        if (_t625) {
+            CGen_line(g, FORGE_STR("free(_ctx);"));
+        }
+        CGen_line(g, FORGE_STR("return NULL;"));
+        int32_t _t628 = g->indent;
+        int32_t _t629 = (_t628 - 1);
+        g->indent = _t629;
+        CGen_line(g, FORGE_STR("}"));
+        CGen_line(g, FORGE_STR(""));
+        int32_t _t632 = (i + 1);
+        i = _t632;
     }
     CGen_emit_os_helpers(g);
     CGen_write_raw(g, func_code);
-    StringBuilder* _t580 = g->buf;
-    StringBuilder* _t581 = _t580;
-    forge_string _t582 = StringBuilder_to_string(_t581);
-    return _t582;
+    StringBuilder* _t635 = g->buf;
+    StringBuilder* _t636 = _t635;
+    forge_string _t637 = StringBuilder_to_string(_t636);
+    return _t637;
 }
 
 forge_string emit_test_runner(ForgeSlice_forge_string test_funcs) {
