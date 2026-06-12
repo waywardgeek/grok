@@ -1460,7 +1460,8 @@ forge lowerer {
         let then_body = self.stmts
         self.restore_stmts(saved)
 
-        let else_body = if !isnull(else_block) { self.lower_block_as_stmts(else_block) } else { [] }
+        let mut else_body: [LStmt?] = []
+        if !isnull(else_block) { else_body = self.lower_block_as_stmts(else_block) }
 
         self.emit(LStmt {
           kind: StIf,
@@ -1496,7 +1497,8 @@ forge lowerer {
         let then_body = self.stmts
         self.restore_stmts(saved)
 
-        let else_body = if !isnull(else_block) { self.lower_block_as_stmts(else_block) } else { [] }
+        let mut else_body: [LStmt?] = []
+        if !isnull(else_block) { else_body = self.lower_block_as_stmts(else_block) }
 
         self.emit(LStmt {
           kind: StIf,
@@ -1506,7 +1508,8 @@ forge lowerer {
       _ => {
         // Fallback
         let then_body = self.lower_block_as_stmts(then_block)
-        let else_body = if !isnull(else_block) { self.lower_block_as_stmts(else_block) } else { [] }
+        let mut else_body: [LStmt?] = []
+        if !isnull(else_block) { else_body = self.lower_block_as_stmts(else_block) }
         self.emit(LStmt {
           kind: StIf,
           if_data: LIfData { cond: make_bool_val(true), then_body: then_body, else_body: else_body }

@@ -581,8 +581,9 @@ func CGen.zero_value(self, t: LType?) -> string {
     TySlice => {
       return f"forge_slice_empty({self.slice_type_name(t!.elem)})"
     }
-    TyStruct | TyTaggedUnion => { return f"{0}" }
-    _ => { return f"{0}" }
+    TyTuple => { return "{0}" }
+    TyStruct | TyTaggedUnion => { return "{0}" }
+    _ => { return "0" }
   }
 }
 
@@ -2440,7 +2441,28 @@ func CGen.emit_stmt(self, s: LStmt?) {
     }
     StClassSet => {
       let d = s!.class_set!
-      self.line(f"{self.emit_value(d.handle)}->{d.field} = {self.emit_value(d.value)};")
+      let val = self.emit_value(d.value)
+      // Auto-wrap non-optional value when field type is optional struct
+      let mut wrapped_val = val
+      let classes = self.prog!.classes
+      let mut ci = 0
+      while ci < len(classes) {
+        if classes[ci].name == d.class_name {
+          let field_type = self.find_class_field(classes[ci].fields, d.field)
+          if !isnull(field_type) && field_type!.kind is TyOptional && !self.is_class_optional(field_type) {
+            let val_type = self.resolve_value_type(d.value)
+            if isnull(val_type) || !(val_type!.kind is TyOptional) {
+              if !isnull(d.value) && !(d.value!.kind is ValLitNull) {
+                let opt_name = self.opt_type_name(field_type!.elem)
+                wrapped_val = f"forge_some({val}, {opt_name})"
+              }
+            }
+          }
+          break
+        }
+        ci = ci + 1
+      }
+      self.line(f"{self.emit_value(d.handle)}->{d.field} = {wrapped_val};")
     }
     StIndexSet => {
       let d = s!.index_set!

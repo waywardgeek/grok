@@ -328,7 +328,8 @@ func cmd_test(args: [string]) -> bool {
   }
 
   // Run tests
-  let test_result = exec_command(bin_file, [])
+  let empty_args: [string] = []
+  let test_result = exec_command(bin_file, empty_args)
   print(test_result._0)
   return test_result._1
 }
