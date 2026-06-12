@@ -1389,7 +1389,10 @@ func (l *Lowerer) lowerAssignStmt(stmt *ast.Stmt) {
 					if fields, ok := l.classFields[innerRecv.Type.Name]; ok {
 						for _, f := range fields {
 							if f.Name == innerFA.Field && f.Type != nil && f.Type.Kind == LTyOptional {
-								if len(f.Type.TypeArgs) > 0 && f.Type.TypeArgs[0].Kind == LTyStruct {
+								// Check both Elem (set by lowerTypeExpr) and TypeArgs (set by monomorphizer)
+								if f.Type.Elem != nil && f.Type.Elem.Kind == LTyStruct {
+									isOptionalStruct = true
+								} else if len(f.Type.TypeArgs) > 0 && f.Type.TypeArgs[0].Kind == LTyStruct {
 									isOptionalStruct = true
 								}
 							}
