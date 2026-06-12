@@ -454,7 +454,9 @@ func (p *Parser) parseInvariant() (*ast.InvariantDecl, error) {
 	return inv, nil
 }
 
-// parseImport parses: import alias from "path"
+// parseImport parses: import <ident> [from "path"]
+// Simple form: import ast        → alias="ast", path="ast"
+// Extended:    import v2 from "parser/v2" → alias="v2", path="parser/v2"
 func (p *Parser) parseImport() (*ast.ImportDecl, error) {
 	start := p.peek().Span.Start
 	p.next() // consume 'import'
@@ -462,17 +464,22 @@ func (p *Parser) parseImport() (*ast.ImportDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(TFrom); err != nil {
-		return nil, err
-	}
-	path, err := p.expect(TStringLit)
-	if err != nil {
-		return nil, err
+	// Check for optional 'from "path"'
+	path := alias.Text // default: alias IS the path
+	end := alias.Span.End
+	if p.peek().Kind == TFrom {
+		p.next() // consume 'from'
+		pathTok, err := p.expect(TStringLit)
+		if err != nil {
+			return nil, err
+		}
+		path = pathTok.Text
+		end = pathTok.Span.End
 	}
 	return &ast.ImportDecl{
 		Alias: alias.Text,
-		Path:  path.Text,
-		Span:  ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: path.Span.End},
+		Path:  path,
+		Span:  ast.Span{Start: ast.Pos{File: p.lex.filename, Line: start.Line, Column: start.Column}, End: end},
 	}, nil
 }
 

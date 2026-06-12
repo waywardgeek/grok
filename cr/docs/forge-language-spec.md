@@ -99,6 +99,103 @@ is selective.
 
 ---
 
+## Modules and Packages
+
+### Package = Directory
+
+A **package** is a directory of `.fg` files. All `.fg` files in a directory belong to the same package. The package name is the **directory name**.
+
+```
+mycompiler/
+  forge.mod                # module root: "github.com/user/mycompiler"
+  main.fg                  # package "mycompiler" (entry point)
+  ast/
+    ast.fg                 # package "ast"
+    expr.fg                # package "ast" — same directory, same package
+  parser/
+    parser.fg              # package "parser"
+    expr_parser.fg         # package "parser"
+  checker/
+    checker.fg             # package "checker"
+```
+
+Within a package, all declarations across all `.fg` files are visible to each other — declaration order and file order don't matter. The compiler merges all files in a package into one unit before processing.
+
+**The `forge` block wrapper is optional.** When present, the block name provides a logical grouping but does **not** override the package name. The package name always comes from the directory. When absent, bare top-level declarations belong to the directory's package.
+
+### Module = Project
+
+A **module** is a project rooted at a `forge.mod` file. The module defines:
+- The import path prefix (e.g., `github.com/user/mycompiler`)
+- External dependencies (future: version resolution)
+
+A module is the **unit of compilation**. Forge compiles an entire module at once — all packages are resolved at compile time, merged with namespace prefixing, and emitted as a single C output compiled to one binary (or shared library). There is no separate compilation of individual files or packages.
+
+```
+# forge.mod
+module github.com/user/mycompiler
+```
+
+### Imports
+
+Import a package by name — the compiler resolves it to a directory relative to the module root:
+
+```forge
+import ast
+import parser
+
+func main() {
+  let file = parser.parse("hello.fg")
+  let node = ast.Node { name: "root" }
+  print(node.name)
+}
+```
+
+**Rules:**
+- `import <name>` imports the package in the directory `<name>/` relative to the module root
+- Access is always qualified: `ast.Node`, `parser.parse()`
+- Only `pub` declarations are visible through imports — all other declarations are package-private
+- Circular imports are a compile error
+- For nested packages, use a path with alias: `import v2 from "parser/v2"`
+
+**Qualified access:**
+```forge
+import ast
+
+let n = ast.Node { name: "x" }     // struct construction
+let kind = ast.ExprKind.Ident       // enum variant
+let result = ast.parse(src)         // function call
+```
+
+### Standard Library
+
+The stdlib (`stdlib/std.fg`, `stdlib/string.fg`, etc.) is auto-imported into all packages. Its declarations are available unqualified — no import statement required.
+
+
+### Compilation Model
+
+```bash
+forge compile .                           # compile module in current directory
+forge compile ~/projects/mycompiler/      # compile module at path
+forge compile main.fg -o myprogram        # single-file, no module needed
+forge compile main.fg ast.fg              # multi-file, no module needed
+forge test test_lexer.fg lexer.fg ast.fg  # test specific files
+```
+
+When given a directory, the compiler looks for `forge.mod`, finds `main()` in the root package, and recursively resolves all imports. When given a `.fg` file, it checks parent directories for `forge.mod` — if found, uses module mode; otherwise, single-file mode.
+
+When compiling a module, the compiler:
+1. Reads `forge.mod` to determine the module root
+2. Scans the root package for `main()` as the entry point
+3. Recursively resolves all `import` statements to package directories
+4. Parses all `.fg` files in each referenced package
+5. Merges packages with C-level namespace prefixing (e.g., `ast_Node`, `parser_parse`)
+6. Runs the full pipeline (desugar → check → lower → optimize → monomorphize → emit C)
+7. Compiles the single C output to a binary via gcc/clang
+
+
+---
+
 ## Primitive Types
 
 ```
@@ -1108,7 +1205,7 @@ FAIL  test_lexer_escapes
 - The suite continues — remaining tests still run
 - Exit code: 0 if all pass, 1 if any fail
 
-**No test discovery from directories.** You explicitly list files. This matches Forge's current compilation model (no module system, no implicit file discovery). When modules arrive, `forge test` will gain directory-based discovery.
+**No test discovery from directories.** You explicitly list files. Future: `forge test -mod . pkg/...` will gain directory-based discovery using the module system.
 
 ### Test File Conventions
 
@@ -1280,7 +1377,7 @@ forge BlockName {
 }
 ```
 
-The `forge` wrapper is **optional**. Bare `.fg` files with top-level declarations are valid — the module name is derived from the filename.
+The `forge` wrapper is **optional**. Bare `.fg` files with top-level declarations are valid — the package name comes from the directory name (see Modules and Packages).
 
 **Newlines**: Newlines are statement terminators. Inside `()` and `[]` brackets, newlines are treated as whitespace, enabling multi-line function calls, list literals, and tuple expressions. `{}` braces do NOT suppress newlines (they delimit statement blocks).
 
@@ -1290,15 +1387,17 @@ The `forge` wrapper is **optional**. Bare `.fg` files with top-level declaration
 forge compile --c file1.fg file2.fg ...
 ```
 
-Multiple `.fg` files are parsed independently, then merged into a single
-compilation unit via `MergeFiles()`. The checker uses two-phase processing:
-register all types/functions across ALL blocks first (phase 1), then check
-bodies (phase 2). This ensures cross-file type references resolve correctly.
+Multiple `.fg` files in the same package (directory) are merged into a single
+compilation unit via `MergeFiles()`. When compiling a module, all imported packages
+are resolved recursively, merged with namespace prefixing, and compiled together.
+The checker uses three-phase processing: pre-register type names (phase 0),
+register signatures (phase 1), then check bodies (phase 2). This ensures
+cross-file and cross-package type references resolve correctly.
 
 ### Compilation Pipeline
 
 ```
-Parse → MergeStdlib → DesugarAll → Check → MergeFiles → Lower → Optimize → Backend
+Parse → ResolveImports → MergeStdlib → DesugarAll → Check → Lower → Optimize → Monomorphize → Emit C
 ```
 
 **Desugar order** (MUST run in this sequence):
@@ -1310,7 +1409,7 @@ Parse → MergeStdlib → DesugarAll → Check → MergeFiles → Lower → Opti
 
 ### Go Backend
 
-Pass-through generics (Go has native generics). Outputs `.go` files.
+Deleted. The C backend is the sole backend.
 
 ### C Backend
 
@@ -1325,7 +1424,8 @@ specialized bodies for transitive instantiations.
 
 | Command | Description |
 |---|---|
-| `forge compile [--c\|--go] file.fg ...` | Compile to C or Go |
+| `forge compile file.fg ... -o out` | Compile files to C and binary |
+| `forge compile -mod . -o out` | Compile entire module |
 | `forge verify file.forge` | Check .forge against source |
 | `forge update file.forge` | Refresh function index and deps |
 | `forge fmt file.fg` | Format source (comment-preserving) |

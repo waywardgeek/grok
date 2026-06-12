@@ -12,7 +12,69 @@ Concise reference for writing Forge code. Based on parser, checker, and test fil
 - The bootstrap .fg files (ast.fg, lexer.fg, parser.fg, expr_parser.fg) are the primary test of language ergonomics
 - Target: C backend via monomorphization (not Go backend)
 
-## File Structure
+## Modules and Packages
+
+### Package = Directory
+
+A **package** is a directory of `.fg` files. All `.fg` files in a directory belong to the same package. The package name is the **directory name** (not the filename).
+
+```
+myproject/
+  forge.mod              # module root
+  main.fg                # package "myproject" (or "main" if entry point)
+  ast/
+    ast.fg               # package "ast"
+    expr.fg              # package "ast" (same directory)
+  parser/
+    parser.fg            # package "parser"
+    expr_parser.fg       # package "parser"
+```
+
+All `.fg` files within a package are merged into a single compilation unit — declaration order across files doesn't matter.
+
+### Module = Project
+
+A **module** is a project rooted at a `forge.mod` file. A module defines the import path prefix and is the unit of compilation — it produces either a program binary or a shared library.
+
+```
+# forge.mod
+module github.com/user/mycompiler
+```
+
+### Imports
+
+Import a package by name — the compiler resolves it to a directory relative to the module root:
+
+```forge
+import ast
+import parser
+
+func main() {
+  let file = parser.parse("hello.fg")
+  let node = ast.new_node("expr")
+  print(node.name)
+}
+```
+
+The package name is both the import identifier and the directory name. Access is always qualified: `ast.Node`, `parser.parse()`.
+
+**Visibility**: Only `pub` declarations are accessible through an import. Non-pub declarations are package-private.
+
+```forge
+// ast/ast.fg
+pub struct Node { name: string }     // visible to importers
+func helper() -> i32 { return 42 }  // package-private
+```
+
+**Cycle detection**: Circular imports are a compile error.
+
+**Nested packages**: For packages in subdirectories, use a path with an alias:
+```forge
+import v2 from "parser/v2"
+```
+
+
+### The `forge` Block (Optional)
 
 ```forge
 forge BlockName {
@@ -20,15 +82,31 @@ forge BlockName {
 }
 ```
 
-The `forge` wrapper is **optional**. Bare `.fg` files with top-level declarations are valid — the module name is derived from the filename:
+The `forge` wrapper is optional. Bare `.fg` files with top-level declarations are valid — the package name comes from the directory, not the block name or filename:
 
 ```forge
-// mymodule.fg — no wrapper needed
+// ast/expr.fg — no wrapper needed, package is "ast"
 enum Color { Red, Green, Blue }
 func greet(name: string) -> string { return f"Hello {name}" }
 ```
 
-Each `.fg` file has one or more `forge` blocks (or bare declarations). Multiple `.fg` files can be compiled together: `forge compile --c file1.fg file2.fg ...` — they are merged into a single compilation unit.
+When a `forge` block is present, its name is used for C symbol prefixing but does not affect the package name.
+
+### Compilation Model
+
+Forge compiles an entire module at once — all packages are resolved, merged with namespace prefixing, and emitted as a single C file compiled to one binary. There is no separate compilation of individual files or packages.
+
+```bash
+forge compile .                       # compile module in current directory
+forge compile ~/projects/mycompiler/  # compile module at path
+forge compile main.fg -o myprogram    # single-file, no module needed
+forge compile main.fg ast.fg          # multi-file, no module needed
+```
+
+When given a directory, the compiler looks for `forge.mod`, finds `main()` in the root package, and recursively resolves all imports. When given a `.fg` file, it checks parent directories for `forge.mod` — if found, uses module mode; otherwise, single-file mode.
+
+The stdlib (`stdlib/std.fg`, `stdlib/string.fg`, etc.) is auto-imported into all packages.
+
 
 ## Newlines and Multi-line Expressions
 
@@ -664,7 +742,7 @@ Tests run sequentially in declaration order. A failed assertion exits that test 
 - Test files are regular `.fg` files — no special syntax or annotations
 - Name test files `test_*.fg` by convention (not enforced)
 - Test functions can use all language features including classes, generics, and relations
-- Tests share a compilation unit with the code they test — no import system needed
+- Tests share a compilation unit with the code they test
 
 ## Stdlib Classes
 

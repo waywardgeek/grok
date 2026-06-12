@@ -1,80 +1,88 @@
 # Forge Module System — Design
 
-*2026-06-04*
+*Updated 2026-06-12 (originally 2026-06-04)*
 
-## Problem
+## Model
 
-Currently, `import X from "path"` only works for Go standard library packages. The checker registers the alias as `TyUnknown` and the transpiler passes the import through to Go. There's no support for importing types/functions from other `.fg` files.
+- **Package** = directory of `.fg` files. Package name = directory name. `pub` controls exports.
+- **Module** = project root with `forge.mod`. Defines module path. Unit of compilation = one program or one `.so`.
+- **Compilation** = whole-program. All packages resolved at compile time, merged into one C output, compiled to one binary.
 
-## Design
-
-### Syntax (unchanged)
+## Syntax
 
 ```forge
-import math from "mylib/math.fg"
+import ast
+import parser
 
-let result = math.add(1, 2)
-let p = math.Point { x: 10, y: 20 }
+let file = parser.parse("hello.fg")
+let node = ast.Node { name: "root" }
 ```
 
-The existing `import alias from "path"` syntax works. The compiler detects `.fg` imports by file extension.
+`import <name>` — name is both the identifier for qualified access and the directory name relative to module root. For nested packages: `import v2 from "parser/v2"`.
 
-### Compilation Model
+## Entry Point
 
-Each `.fg` file becomes a separate Go package. The compiler:
-
-1. **Resolves** import paths relative to the importing file's directory
-2. **Parses + checks** imported files recursively (with cycle detection)
-3. **Exports** public symbols (types, functions) from the imported file into the importer's checker scope under the alias
-4. **Transpiles** each file to its own Go package directory
-
-### Key Decisions
-
-- **File = package**: Each `.fg` file is one package. The Go package name = the forge block name (lowercased).
-- **Only `pub` symbols exported**: Private symbols in imported files are invisible to importers.
-- **Go import path**: The transpiler maps `.fg` import paths to Go module-relative paths. Requires a `-mod` flag for the Go module path prefix.
-- **Cycle detection**: Track files being processed; error on cycles.
-- **Shared checker state**: The checker needs a `ModuleRegistry` that caches checked modules so the same file isn't checked twice.
-
-### CLI Changes
-
-```
-forge compile -mod github.com/user/project src/main.fg -o out/
+```bash
+forge compile .                    # directory → find forge.mod, find main(), compile
+forge compile myproject/           # same, explicit path
+forge compile main.fg -o program   # single-file, no module needed
+forge compile main.fg ast.fg       # multi-file, no module needed
 ```
 
-- `-mod`: Go module path prefix (required for multi-file projects)
-- `-o`: Output directory (each .fg becomes a subdirectory with package.go)
+When given a directory, the compiler looks for `forge.mod` and finds `main()` in the root package. When given a `.fg` file, it checks parent directories for `forge.mod` — if found, module mode; otherwise, single-file mode.
 
-For single-file compilation (no .fg imports), behavior is unchanged.
-
-### Checker Changes
-
-1. New `ModuleRegistry` on Checker: maps file paths to exported `map[string]*Type`
-2. When encountering an `ImportDecl` with `.fg` path:
-   - Resolve absolute path relative to current file
-   - Check cycle (error if file is in-progress)
-   - If already checked, reuse cached exports
-   - Otherwise: parse → check → extract pub symbols → cache
-3. Register imported symbols as `alias.Name` in scope, or register alias as a "module type" with field access resolving to module exports
-
-### Transpiler Changes
-
-1. `.fg` imports → Go import with module-path-based package path
-2. Qualified references (`math.Point`) already work for Go packages; same mechanism for Forge modules
-
-### Directory Layout
+## Compilation Pipeline
 
 ```
-src/
-  main.fg          → out/main/main.go (package main)
-  math/lib.fg      → out/math/lib/lib.go (package lib)
+1. Find forge.mod, determine module root
+2. Parse root package (all .fg files in module root dir)
+3. Scan for import statements, resolve to directories
+4. Recursively parse all imported packages (cycle detection)
+5. For each package: merge all .fg files in directory → one AST
+6. Merge stdlib into each package
+7. Desugar all packages
+8. Merge all packages into one AST with namespace prefixing
+9. Check (three-phase: type names → signatures → bodies)
+10. Lower → Optimize → Monomorphize → Emit C
+11. gcc/clang → binary
+```
+
+## Namespace Prefixing
+
+When merging packages, all declarations get prefixed with the package name in the C output to avoid collisions. The checker resolves qualified names (`ast.Node` → `ast_Node`) transparently.
+
+Example: `ast/ast.fg` defines `pub struct Node` → C gets `ast_Node`.
+`parser/parser.fg` defines `func helper()` → C gets `parser_helper`.
+
+Within a package, no prefixing — all declarations are directly visible.
+
+## Key Decisions
+
+1. **`import ast`** — just the name, no alias, no quoted path. Simple as possible.
+2. **Directory = package** (like Go). Filename is irrelevant to package identity.
+3. **Whole-program compilation**. No separate compilation, no linking. The days of compiling one file at a time are over.
+4. **Directory or file as entry point**. `forge compile .` or `forge compile main.fg` both work. Directory mode uses `forge.mod`.
+5. **Cycle detection** via tracking packages-in-progress during recursive resolution.
+6. **Nested packages** use `import alias from "path"` (extended syntax, only when needed).
+7. **Auto-detect module mode**. If a `.fg` file is given, walk up to find `forge.mod`.
+
+## forge.mod Format
+
+```
+module github.com/user/mycompiler
+
+# future:
+# require github.com/other/lib v1.2.3
 ```
 
 ## Implementation Plan
 
-1. Add `ModuleRegistry` to checker with cycle detection
-2. Modify `checkBlock` import handling to parse/check .fg files
-3. Add `-mod` flag to CLI
-4. Modify transpiler to emit correct Go import paths for .fg imports
-5. Write multi-file test case
-6. Update .forge files and language spec
+1. Add `forge.mod` parsing (one `module` line for now)
+2. Update parser: `import <ident>` (no `from` required for simple case)
+3. Update `cmdCompile` to accept directories, find `forge.mod`, resolve packages
+4. Recursive import resolution with cycle detection (checker has `CheckModuleFile` foundation)
+5. Package-level AST merging (reuse `MergeFiles`)
+6. Namespace prefixing during cross-package merge
+7. Resolve qualified names in lowerer (`ast.Node` → prefixed C name)
+8. Update testdata with multi-package test case
+9. Update bootstrap to use imports instead of explicit file listing

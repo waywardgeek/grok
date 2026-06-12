@@ -204,7 +204,41 @@ func cmdCompile(args []string) error {
 	}
 
 	if len(inputs) == 0 {
-		return fmt.Errorf("usage: forge compile <file.fg> [...] [-o output.go] [-pkg name] [-mod modpath]")
+		return fmt.Errorf("usage: forge compile <file.fg|dir> [...] [-o output] [-pkg name]")
+	}
+
+	// Check if input is a directory with forge.mod (module mode)
+	moduleRoot := ""
+	if len(inputs) == 1 {
+		info, err := os.Stat(inputs[0])
+		if err == nil && info.IsDir() {
+			// Directory mode — check for forge.mod
+			modFile := filepath.Join(inputs[0], "forge.mod")
+			if _, err := os.Stat(modFile); err == nil {
+				moduleRoot = inputs[0]
+				// Replace inputs with all .fg files in the directory
+				inputs = nil
+				entries, err := os.ReadDir(moduleRoot)
+				if err != nil {
+					return fmt.Errorf("reading module directory: %w", err)
+				}
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".fg") {
+						inputs = append(inputs, filepath.Join(moduleRoot, entry.Name()))
+					}
+				}
+				if len(inputs) == 0 {
+					return fmt.Errorf("no .fg files in module directory %s", moduleRoot)
+				}
+			}
+		} else if err == nil && !info.IsDir() {
+			// Single file mode — check if parent has forge.mod
+			dir := filepath.Dir(inputs[0])
+			modFile := filepath.Join(dir, "forge.mod")
+			if _, err := os.Stat(modFile); err == nil {
+				moduleRoot = dir
+			}
+		}
 	}
 
 	// Parse all input files
@@ -223,6 +257,22 @@ func cmdCompile(args []string) error {
 
 	// Merge all files into one before any processing (cross-file references)
 	merged := ast.MergeFiles(allFiles)
+
+	// Resolve module imports if we're in a module
+	if moduleRoot != "" {
+		parseFn := func(path string) (*ast.File, error) {
+			src, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			return parser.ParseFile(string(src), path)
+		}
+		var err error
+		merged, err = ast.ResolveModuleImports(moduleRoot, merged, parseFn)
+		if err != nil {
+			return fmt.Errorf("resolving imports: %w", err)
+		}
+	}
 
 	// Merge stdlib interfaces ONCE into merged file
 	stdlibDir := ast.FindStdlibDir()
