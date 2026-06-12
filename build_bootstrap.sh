@@ -14,7 +14,7 @@ TMPDIR_BUILD=$(mktemp -d -t forge_build_XXXXXX)
 
 
 BOOTSTRAP_FILES=(
-  bootstrap/ast/ast.fg
+  bootstrap/ast/ast.fg bootstrap/ast/modules.fg
   bootstrap/lexer/lexer.fg
   bootstrap/parser/parser.fg
   bootstrap/parser/expr_parser.fg

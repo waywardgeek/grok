@@ -371,7 +371,7 @@ forge parser {
         self.next()
         // Desugar `name` → sym("name")
         let sym_name = sym("sym")
-        let sym_ident = Expr { kind: Ident(sym_name), span: tok.span }
+        let sym_ident = Expr { kind: ExprKind.Ident(sym_name), span: tok.span }
         let str_arg = Expr { kind: StringLit(tok.text), span: tok.span }
         let args: [Expr] = [str_arg]
         let type_args: [TypeExpr] = []
@@ -388,7 +388,7 @@ forge parser {
       }
       KNil => {
         self.next()
-        return (Expr { Nil, tok.span }, null)
+        return (Expr { ExprKind.Nil, tok.span }, null)
       }
       LIdent => {
         self.next()
@@ -401,11 +401,11 @@ forge parser {
         if name == "map" && self.peek().kind == PLBracket {
           return self.parse_map_lit(tok)
         }
-        return (Expr { Ident(sym(name)), span: tok.span }, null)
+        return (Expr { ExprKind.Ident(sym(name)), span: tok.span }, null)
       }
       KSelf => {
         self.next()
-        return (Expr { Ident(`self`), span: tok.span }, null)
+        return (Expr { ExprKind.Ident(`self`), span: tok.span }, null)
       }
       PLParen => {
         // Check for paren-lambda: (params) -> RetType { body }
@@ -524,7 +524,8 @@ forge parser {
     let arms = self.parse_match_arms()?
     let end = self.peek().span.end
     return (Expr {
-      Match(value!, arms),
+      ExprKind.Match(value!, arms),
+
       span: Span { start: start, end: end }
     }, null)
   }
@@ -577,7 +578,7 @@ forge parser {
       if self.peek().kind == PQuestion {
         self.next()
         final_type = TypeExpr {
-          kind: Optional(typ!),
+          kind: TypeExprKind.Optional(typ!),
           span: typ!.span
         }
       }
@@ -951,9 +952,10 @@ forge parser {
     self.skip_newlines()
     let arms = self.parse_match_arms()?
     return (Stmt {
-      Match(value!, arms),
+      StmtKind.Match(value!, arms),
       span: Span { start: start, end: self.peek().span.start }
     }, null)
+
   }
 
   func Parser.parse_match_arms(self) -> ([MatchArm], error) {
@@ -1009,7 +1011,7 @@ forge parser {
           }, null)
         }
         // Simple ident binding
-        return (Pattern { Ident(sym(tok.text)), span: tok.span }, null)
+        return (Pattern { PatternKind.Ident(sym(tok.text)), span: tok.span }, null)
       }
       LIntLit => {
         self.next()
@@ -1052,7 +1054,7 @@ forge parser {
         let end = self.peek().span.end
         self.expect(PRParen)?
         return (Pattern {
-          Tuple(elems),
+          PatternKind.Tuple(elems),
           span: Span { start: tok.span.start, end: end }
         }, null)
       }
@@ -1150,7 +1152,7 @@ forge parser {
     self.expect(PRParen)?
     let body = self.parse_block()?
     return (Stmt {
-      Lock(mutex!, body!),
+      StmtKind.Lock(mutex!, body!),
       span: Span { start: start, end: body!.span.end }
     }, null)
   }

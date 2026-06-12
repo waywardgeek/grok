@@ -687,7 +687,7 @@ forge desugar {
         let new_inner = rewrite_field_type(inner, iface_tps, rel)
         if isnull(new_inner) { return te }
         return TypeExpr {
-          kind: Optional(new_inner!),
+          kind: TypeExprKind.Optional(new_inner!),
           span: te!.span,
         }
       }
@@ -695,7 +695,7 @@ forge desugar {
         let new_elem = rewrite_field_type(elem, iface_tps, rel)
         if isnull(new_elem) { return te }
         return TypeExpr {
-          kind: Sequence(new_elem!),
+          kind: TypeExprKind.Sequence(new_elem!),
           span: te!.span,
         }
       }
@@ -785,7 +785,7 @@ forge desugar {
           }
           new_arms = append(new_arms, new_arm)
         }
-        result.kind = Match(deep_copy_expr(value), new_arms)
+        result.kind = StmtKind.Match(deep_copy_expr(value), new_arms)
       }
       BlockStmt(block) => {
         result.kind = BlockStmt(deep_copy_block_val(block))

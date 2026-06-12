@@ -206,7 +206,7 @@ forge checker {
   }
 
   func make_nil_type() -> Type {
-    return Type { kind: Nil, bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Nil, bits: 0, type_args: [] }
   }
 
   func make_any_type() -> Type {
@@ -218,39 +218,41 @@ forge checker {
   }
 
   func make_lock_type() -> Type {
-    return Type { kind: Lock, bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Lock, bits: 0, type_args: [] }
   }
 
   func make_union_type(variants: [Type]) -> Type {
-    return Type { kind: Union(variants), bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Union(variants), bits: 0, type_args: [] }
   }
 
   func make_optional_type(inner: Type) -> Type {
-    return Type { kind: Optional(inner), bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Optional(inner), bits: 0, type_args: [] }
   }
 
   func make_sequence_type(elem: Type) -> Type {
-    return Type { kind: Sequence(elem), bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Sequence(elem), bits: 0, type_args: [] }
   }
 
   func make_map_type(key: Type, value: Type) -> Type {
-    return Type { kind: Map(key, value), bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Map(key, value), bits: 0, type_args: [] }
   }
 
   func make_tuple_type(fields: [TupleFieldType]) -> Type {
-    return Type { kind: Tuple(fields), bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Tuple(fields), bits: 0, type_args: [] }
   }
 
   func make_func_type(params: [Type], ret: Type, tpnames: [string]) -> Type {
-    return Type { kind: Func(params, ret, tpnames), bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Func(params, ret, tpnames), bits: 0, type_args: [] }
   }
 
   func make_channel_type(elem: Type) -> Type {
-    return Type { kind: Channel(elem), bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Channel(elem), bits: 0, type_args: [] }
   }
 
   func make_generator_type(elem: Type) -> Type {
-    return Type { kind: Generator(elem), bits: 0, type_args: [] }
+    return Type { kind: TypeKind.Generator(elem), bits: 0, type_args: [] }
+  }
+
   }
 
   func make_error_result_type(ok: Type, err: Type) -> Type {
@@ -954,16 +956,16 @@ forge checker {
         return TypeExpr { kind: Named(`error`, []), span: zero_span }
       }
       Lock => {
-        return TypeExpr { kind: Lock, span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Lock, span: zero_span }
       }
       Optional(inner) => {
-        return TypeExpr { kind: Optional(type_to_type_expr(inner)), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Optional(type_to_type_expr(inner)), span: zero_span }
       }
       Sequence(elem) => {
-        return TypeExpr { kind: Sequence(type_to_type_expr(elem)), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Sequence(type_to_type_expr(elem)), span: zero_span }
       }
       Map(key, value) => {
-        return TypeExpr { kind: Map(type_to_type_expr(key), type_to_type_expr(value)), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Map(type_to_type_expr(key), type_to_type_expr(value)), span: zero_span }
       }
       Tuple(fields) => {
         let mut tfields: [TupleField] = []
@@ -974,14 +976,14 @@ forge checker {
           }
           append(tfields, TupleField { name: nil, type_expr: te })
         }
-        return TypeExpr { kind: Tuple(tfields), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Tuple(tfields), span: zero_span }
       }
       Func(params, ret, _) => {
         let mut param_tes: [TypeExpr] = []
         for p in params {
           append(param_tes, type_to_type_expr(p))
         }
-        return TypeExpr { kind: Func(param_tes, type_to_type_expr(ret)), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Func(param_tes, type_to_type_expr(ret)), span: zero_span }
       }
       Struct(name) | Class(name) | Enum(name) | Interface(name) => {
         let mut ta_exprs: [TypeExpr] = []
@@ -994,17 +996,17 @@ forge checker {
         return TypeExpr { kind: Named(sym(name), []), span: zero_span }
       }
       Channel(elem) => {
-        return TypeExpr { kind: Channel(type_to_type_expr(elem)), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Channel(type_to_type_expr(elem)), span: zero_span }
       }
       Generator(elem) => {
-        return TypeExpr { kind: Generator(type_to_type_expr(elem)), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Generator(type_to_type_expr(elem)), span: zero_span }
       }
       ErrorResult(ok, err) => {
         let fields = [
           TupleField { name: nil, type_expr: type_to_type_expr(ok) },
           TupleField { name: nil, type_expr: type_to_type_expr(err) },
         ]
-        return TypeExpr { kind: Tuple(fields), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Tuple(fields), span: zero_span }
       }
       Module(name) => {
         return TypeExpr { kind: Named(sym(name), []), span: zero_span }
@@ -1014,8 +1016,12 @@ forge checker {
         for v in variants {
           append(tes, type_to_type_expr(v))
         }
-        return TypeExpr { kind: Union(tes), span: zero_span }
+        return TypeExpr { kind: TypeExprKind.Union(tes), span: zero_span }
       }
+
+
+
+
     }
     return TypeExpr { kind: Unit, span: zero_span }
   }
@@ -1854,6 +1860,7 @@ forge checker {
             let dst_name = sym_to_string(name)
             param_map.set(sym(src_name), dst_name)
           }
+          _ => {}
         }
       }
       i = i + 1
@@ -2844,7 +2851,7 @@ forge checker {
                           }
                           let tpnames: [string] = []
                           let ctor_type = Type {
-                            kind: Func(param_types, field_type, tpnames),
+                            kind: TypeKind.Func(param_types, field_type, tpnames),
                             bits: 0,
                           }
                           self.scope.define(vname, ctor_type)
@@ -3222,7 +3229,7 @@ forge checker {
         TupleFieldType { name: "", type_val: make_string_type() },
         TupleFieldType { name: "", type_val: make_bool_type() }
       ]
-      return Type { kind: Tuple(fields), bits: 0, type_args: [] }
+      return Type { kind: TypeKind.Tuple(fields), bits: 0, type_args: [] }
     }
 
     // String builtins
@@ -4416,4 +4423,3 @@ forge checker {
     return c
   }
 
-}

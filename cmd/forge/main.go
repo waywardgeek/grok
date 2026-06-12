@@ -301,10 +301,12 @@ func cmdCompile(args []string) error {
 	// Check (two-phase on merged file)
 	ch := checker.New()
 	ch.CheckFile(merged)
-	if errs := ch.Errors(); len(errs) > 0 {
-		for _, e := range errs {
+	checkerErrors := ch.Errors()
+	if len(checkerErrors) > 0 {
+		for _, e := range checkerErrors {
 			fmt.Fprintln(os.Stderr, e)
 		}
+		return fmt.Errorf("%d checker error(s)", len(checkerErrors))
 	}
 
 

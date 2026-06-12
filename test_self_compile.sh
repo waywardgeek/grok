@@ -8,7 +8,7 @@ set -e
 cd "$(dirname "$0")"
 
 BOOTSTRAP_FILES=(
-  bootstrap/ast/ast.fg
+  bootstrap/ast/ast.fg bootstrap/ast/modules.fg
   bootstrap/lexer/lexer.fg
   bootstrap/parser/parser.fg
   bootstrap/parser/expr_parser.fg

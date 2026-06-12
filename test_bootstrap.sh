@@ -32,7 +32,7 @@ go build -o forge ./cmd/forge
 echo "Building bootstrap..."
 $FORGE compile bootstrap/lir/lir.fg bootstrap/lexer/lexer.fg bootstrap/parser/parser.fg \
   bootstrap/parser/expr_parser.fg bootstrap/desugar/desugar.fg bootstrap/checker/checker.fg \
-  bootstrap/lowerer/lowerer.fg bootstrap/ast/ast.fg bootstrap/optimizer/optimizer.fg \
+  bootstrap/lowerer/lowerer.fg bootstrap/ast/ast.fg bootstrap/ast/modules.fg bootstrap/optimizer/optimizer.fg \
   bootstrap/monomorphizer/monomorphizer.fg bootstrap/c_backend/c_backend.fg \
   bootstrap/main/main.fg -o "$TMPDIR/bootstrap.c"
 gcc -std=gnu11 -O2 -o "$BOOTSTRAP" "$TMPDIR/bootstrap.c" -I "$RUNTIME_DIR" 2>/dev/null

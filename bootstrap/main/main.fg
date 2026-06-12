@@ -58,7 +58,7 @@ func str_join(parts: [string], sep: string) -> string {
 // Shared: parse, merge, desugar, check, lower pipeline
 // ---------------------------------------------------------------------------
 
-func compile_pipeline(inputs: [string], output: string) -> bool {
+func compile_pipeline(inputs: [string], output: string, module_root: string) -> bool {
   // Parse all input files
   let mut all_files: [File?] = []
   let mut i = 0
@@ -78,10 +78,21 @@ func compile_pipeline(inputs: [string], output: string) -> bool {
   }
 
   // Merge all files
-  let merged = merge_files(all_files)
+  let mut merged = merge_files(all_files)
   if isnull(merged) {
     eprintln("error: no files to compile")
     return false
+  }
+
+  // Resolve module imports if we're in a module
+  if module_root != "" {
+    let resolve_result = resolve_module_imports(module_root, merged)
+    merged = resolve_result._0
+    let resolve_err = resolve_result._1
+    if resolve_err != "" {
+      eprintln(f"error: {resolve_err}")
+      return false
+    }
   }
 
   // Merge stdlib
@@ -159,8 +170,43 @@ func cmd_compile(args: [string]) -> bool {
   }
 
   if len(inputs) == 0 {
-    eprintln("usage: forge compile <file.fg> [...] [-o output.c]")
+    eprintln("usage: forge compile <file.fg|dir> [...] [-o output.c]")
     return false
+  }
+
+  // Check if input is a directory with forge.mod (module mode)
+  let mut module_root = ""
+  if len(inputs) == 1 {
+    // Check if it's a directory
+    let mod_path = path_join([inputs[0], "forge.mod"])
+    if file_exists(mod_path) {
+      module_root = inputs[0]
+      // Replace inputs with all .fg files in the directory
+      let dir_result = list_dir(module_root)
+      if len(dir_result) == 0 {
+        eprintln(f"error: cannot read module directory {module_root}")
+        return false
+      }
+      inputs = []
+      let entries = dir_result
+      for j in range(0, len(entries)) {
+        let entry = entries[j]
+        if len(entry) > 3 && entry[len(entry)-3:len(entry)] == ".fg" {
+          inputs = append(inputs, path_join([module_root, entry]))
+        }
+      }
+      if len(inputs) == 0 {
+        eprintln(f"error: no .fg files in module directory {module_root}")
+        return false
+      }
+    } else {
+      // Single file — check if parent has forge.mod
+      let dir = path_dir(inputs[0])
+      let parent_mod = path_join([dir, "forge.mod"])
+      if file_exists(parent_mod) {
+        module_root = dir
+      }
+    }
   }
 
   if output == "" {
@@ -174,7 +220,7 @@ func cmd_compile(args: [string]) -> bool {
     }
   }
 
-  return compile_pipeline(inputs, output)
+  return compile_pipeline(inputs, output, module_root)
 }
 
 // ---------------------------------------------------------------------------

@@ -359,7 +359,10 @@ forge parser {
     let start = self.peek().span.start
     self.next()  // consume 'import'
 
-    // Two forms: import "path" OR import alias from "path"
+    // Three forms:
+    //   import "path"              → alias=nil, path="path"
+    //   import ident               → alias=ident, path=ident
+    //   import ident from "path"   → alias=ident, path="path"
     if self.peek().kind == LStringLit {
       let path = self.next()
       return (ImportDecl {
@@ -369,11 +372,20 @@ forge parser {
     }
 
     let alias = self.expect(LIdent)?
-    self.expect(KFrom)?
-    let path = self.expect(LStringLit)?
+    // Check for optional 'from "path"'
+    if self.peek().kind == KFrom {
+      self.next()  // consume 'from'
+      let path = self.expect(LStringLit)?
+      return (ImportDecl {
+        sym(alias!.text),
+        path: path!.text,
+        span: self.make_span(start)
+      }, null)
+    }
+    // Simple form: import ident — alias IS the path
     return (ImportDecl {
       sym(alias!.text),
-      path: path!.text,
+      path: alias!.text,
       span: self.make_span(start)
     }, null)
   }
@@ -1338,7 +1350,7 @@ forge parser {
       PQuestion => {
         self.next()
         return (TypeExpr {
-          Optional(left!),
+          TypeExprKind.Optional(left!),
           span: self.make_span(start)
         }, null)
       }
@@ -1350,7 +1362,7 @@ forge parser {
           variants = append(variants, right!)
         }
         return (TypeExpr {
-          Union(variants),
+          TypeExprKind.Union(variants),
           span: self.make_span(start)
         }, null)
       }
@@ -1371,7 +1383,8 @@ forge parser {
           }
         }
         return (TypeExpr {
-          Func(params, ret!),
+          TypeExprKind.Func(params, ret!),
+
           span: self.make_span(start)
         }, null)
       }
@@ -1404,9 +1417,11 @@ forge parser {
         self.expect(PArrow)?
         let ret = self.parse_type_expr()?
         return (TypeExpr {
-          Func(params, ret!),
+          TypeExprKind.Func(params, ret!),
           span: self.make_span(start)
         }, null)
+
+
       }
       PLBracket => {
         // [T] — sequence
@@ -1414,7 +1429,7 @@ forge parser {
         let elem = self.parse_type_expr()?
         self.expect(PRBracket)?
         return (TypeExpr {
-          Sequence(elem!),
+          TypeExprKind.Sequence(elem!),
           span: self.make_span(start)
         }, null)
       }
@@ -1433,11 +1448,12 @@ forge parser {
         }
         self.expect(PRParen)?
         return (TypeExpr {
-          Tuple(fields),
+          TypeExprKind.Tuple(fields),
           span: self.make_span(start)
         }, null)
       }
       LIdent => {
+
       let name = self.next()
 
       // map[K]V
@@ -1447,7 +1463,7 @@ forge parser {
         self.expect(PRBracket)?
         let value = self.parse_type_expr()?
         return (TypeExpr {
-          Map(key!, value!),
+          TypeExprKind.Map(key!, value!),
           span: self.make_span(start)
         }, null)
       }
@@ -1456,7 +1472,7 @@ forge parser {
       if name.text == "gen" {
         let elem = self.parse_base_type()?
         return (TypeExpr {
-          Generator(elem!),
+          TypeExprKind.Generator(elem!),
           span: self.make_span(start)
         }, null)
       }
@@ -1467,7 +1483,7 @@ forge parser {
         let elem = self.parse_type_expr()?
         self.expect(PGt)?
         return (TypeExpr {
-          Channel(elem!),
+          TypeExprKind.Channel(elem!),
           span: self.make_span(start)
         }, null)
       }
@@ -1520,7 +1536,7 @@ forge parser {
       }
       KLock => {
         self.next()
-        return (TypeExpr { Lock, self.make_span(start) }, null)
+        return (TypeExpr { TypeExprKind.Lock, self.make_span(start) }, null)
       }
       _ => {
         return (null, self.make_error(tok.span, f"expected type, got {tok.kind} ({tok.text})"))

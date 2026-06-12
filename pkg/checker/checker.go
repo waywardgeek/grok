@@ -372,6 +372,8 @@ type Checker struct {
 	heldLocks      map[string]bool           // lock names currently held (for guarded_by enforcement)
 	typeVarMethods map[string]map[string]*Type // type var name → method name → method type (from relational constraints)
 	ifaceDecls     map[string]*ast.InterfaceDecl // interface name → AST declaration (for relational constraint resolution)
+	variantOwner   map[string]string   // variant name → enum name (first registered)
+	ambiguousVariants map[string][]string // variant name → list of enum names (when 2+ enums share a variant name)
 }
 
 // New creates a new type checker.
@@ -382,6 +384,8 @@ func New() *Checker {
 		modules:   make(map[string]*ModuleExports),
 		checking:  make(map[string]bool),
 		heldLocks: make(map[string]bool),
+		variantOwner: make(map[string]string),
+		ambiguousVariants: make(map[string][]string),
 	}
 	// Register builtin functions
 	c.registerBuiltins()
@@ -1123,6 +1127,11 @@ func (c *Checker) inferExpr(expr *ast.Expr) *Type {
 			c.error(expr.Span, "undefined variable %q", id.Name)
 			return TypeError
 		}
+		if enums, ok := c.ambiguousVariants[id.Name]; ok {
+			c.error(expr.Span, "ambiguous variant %q — exists in enums %s; use EnumName.%s to disambiguate",
+				id.Name, strings.Join(enums, ", "), id.Name)
+			return TypeError
+		}
 		return t
 	case ast.ExprUnary:
 		return c.checkUnary(expr)
@@ -1439,7 +1448,73 @@ func (c *Checker) checkCall(expr *ast.Expr) *Type {
 
 func (c *Checker) checkMethodCall(expr *ast.Expr) *Type {
 	mc := expr.Data.(*ast.MethodCallExpr)
+
+	// Qualified enum variant constructor: EnumName.Variant(args)
+	// Must check BEFORE checkExpr on receiver — enum names are in registry, not scope,
+	// so checkExpr would emit "undefined variable" and return TypeError.
+	if mc.Receiver.Kind == ast.ExprIdent {
+		enumName := mc.Receiver.Data.(*ast.IdentExpr).Name
+		if enumInfo := c.registry.Lookup(enumName); enumInfo != nil && enumInfo.Type.Kind == TyEnum {
+			vi, ok := enumInfo.Variants[mc.Method]
+			if !ok {
+				c.error(expr.Span, "enum %s has no variant %q", enumName, mc.Method)
+				return TypeError
+			}
+			// Unit variant used as call — error
+			if len(vi.Fields) == 0 {
+				if len(mc.Args) > 0 {
+					c.error(expr.Span, "unit variant %s.%s takes no arguments", enumName, mc.Method)
+				}
+				return enumInfo.Type
+			}
+			// Check args against variant fields
+			if len(mc.Args) != len(vi.Fields) {
+				c.error(expr.Span, "%s.%s expects %d arguments, got %d", enumName, mc.Method, len(vi.Fields), len(mc.Args))
+			}
+			for i := range mc.Args {
+				argType := c.checkExpr(&mc.Args[i])
+				if i < len(vi.Fields) {
+					if !c.assignableTo(argType, vi.Fields[i].Type) && argType.Kind != TyError {
+						c.error(mc.Args[i].Span, "%s.%s: argument %d: expected %s, got %s", enumName, mc.Method, i+1, vi.Fields[i].Type, argType)
+					}
+					// Propagate expected type to empty slice/nil literals
+					if mc.Args[i].Kind == ast.ExprNil {
+						mc.Args[i].ResolvedType = vi.Fields[i].Type
+					}
+					if mc.Args[i].Kind == ast.ExprListLit {
+						lit := mc.Args[i].Data.(*ast.ListLitExpr)
+						if len(lit.Elems) == 0 && vi.Fields[i].Type.Kind == TyList {
+							mc.Args[i].ResolvedType = vi.Fields[i].Type
+						}
+					}
+				}
+			}
+			// Rewrite AST: convert method call to a direct Call on variant constructor
+			// so downstream (lowerer, C backend) doesn't need to handle qualified variants
+			funcExpr := ast.Expr{Kind: ast.ExprIdent, Data: &ast.IdentExpr{Name: mc.Method}, Span: mc.Receiver.Span}
+			// Set ResolvedType on func expr — variant constructor is TyFunc
+			if len(vi.Fields) > 0 {
+				var paramTypes []*Type
+				for _, f := range vi.Fields {
+					paramTypes = append(paramTypes, f.Type)
+				}
+				funcExpr.ResolvedType = &Type{Kind: TyFunc, Name: mc.Method, Params: paramTypes, Return: enumInfo.Type}
+			} else {
+				funcExpr.ResolvedType = enumInfo.Type
+			}
+			call := &ast.CallExpr{
+				Func:     funcExpr,
+				Args:     mc.Args,
+				TypeArgs: mc.TypeArgs,
+			}
+			expr.Kind = ast.ExprCall
+			expr.Data = call
+			return enumInfo.Type
+		}
+	}
+
 	recvType := c.checkExpr(&mc.Receiver)
+
 	// Module method call: mod.func(args)
 	if recvType.Kind == TyModule {
 		if info := c.registry.Lookup(recvType.Name); info != nil {
@@ -1727,6 +1802,31 @@ func (c *Checker) extractLockName(expr *ast.Expr) string {
 
 func (c *Checker) checkFieldAccess(expr *ast.Expr) *Type {
 	fa := expr.Data.(*ast.FieldAccessExpr)
+
+	// Qualified enum variant: EnumName.Variant (for unit variants)
+	if fa.Receiver.Kind == ast.ExprIdent {
+		enumName := fa.Receiver.Data.(*ast.IdentExpr).Name
+		if enumInfo := c.registry.Lookup(enumName); enumInfo != nil && enumInfo.Type.Kind == TyEnum {
+			vi, ok := enumInfo.Variants[fa.Field]
+			if !ok {
+				c.error(expr.Span, "enum %s has no variant %q", enumName, fa.Field)
+				return TypeError
+			}
+			if len(vi.Fields) > 0 {
+				// Non-unit variant used without args — return the constructor function type
+				paramTypes := make([]*Type, len(vi.Fields))
+				for i, f := range vi.Fields {
+					paramTypes[i] = f.Type
+				}
+				return &Type{Kind: TyFunc, Name: fa.Field, Params: paramTypes, Return: enumInfo.Type}
+			}
+			// Unit variant — rewrite AST to plain Ident
+			expr.Kind = ast.ExprIdent
+			expr.Data = &ast.IdentExpr{Name: fa.Field}
+			return enumInfo.Type
+		}
+	}
+
 	recvType := c.checkExpr(&fa.Receiver)
 	if recvType.Kind == TyStruct || recvType.Kind == TyClass {
 		if info := c.registry.Lookup(recvType.Name); info != nil {
@@ -2503,19 +2603,23 @@ func (c *Checker) checkMatch(stmt *ast.Stmt) {
 			hasWildcard := false
 			covered := make(map[string]bool)
 			for _, arm := range matchStmt.Arms {
-				switch arm.Pattern.Kind {
-				case ast.PatWildcard:
-					hasWildcard = true
-				case ast.PatIdent:
-					id := arm.Pattern.Data.(*ast.IdentPattern)
-					if id.Name == "_" {
+				// Check primary pattern and all alternative patterns
+				allPatterns := append([]ast.Pattern{arm.Pattern}, arm.Patterns...)
+				for _, pat := range allPatterns {
+					switch pat.Kind {
+					case ast.PatWildcard:
 						hasWildcard = true
-					} else {
-						covered[id.Name] = true
+					case ast.PatIdent:
+						id := pat.Data.(*ast.IdentPattern)
+						if id.Name == "_" {
+							hasWildcard = true
+						} else {
+							covered[id.Name] = true
+						}
+					case ast.PatVariant:
+						vp := pat.Data.(*ast.VariantPattern)
+						covered[vp.Name] = true
 					}
-				case ast.PatVariant:
-					vp := arm.Pattern.Data.(*ast.VariantPattern)
-					covered[vp.Name] = true
 				}
 			}
 			if !hasWildcard {
@@ -3439,6 +3543,18 @@ func (c *Checker) registerEnum(e *ast.EnumDecl) {
 		}
 		info.Variants[v.Name] = vi
 
+		// Track variant ownership for ambiguity detection
+		if prev, exists := c.variantOwner[v.Name]; exists && prev != e.Name {
+			// Collision: same variant name in different enums
+			if _, already := c.ambiguousVariants[v.Name]; !already {
+				c.ambiguousVariants[v.Name] = []string{prev, e.Name}
+			} else {
+				c.ambiguousVariants[v.Name] = append(c.ambiguousVariants[v.Name], e.Name)
+			}
+		} else {
+			c.variantOwner[v.Name] = e.Name
+		}
+
 		// Register variant as a constructor function (or value for unit variants)
 		if len(v.Fields) == 0 {
 			// Unit variant: just a value of the enum type
@@ -3651,10 +3767,10 @@ func (c *Checker) checkImplements(cls *ast.ClassDecl) {
 
 func (c *Checker) registerFunc(fn *ast.FuncDecl) {
 	fnType := c.funcDeclToType(fn)
-	c.scope.Define(fn.Name, fnType)
 
-	// For external methods (func T.method(self) syntax), also register
-	// in the receiver type's Methods map so checkMethodCall can find them.
+	// For external methods (func T.method(self) syntax), register ONLY
+	// in the receiver type's Methods map — not in the global scope,
+	// which would collide with free functions of the same name.
 	if fn.ReceiverType != "" {
 		if info := c.registry.Lookup(fn.ReceiverType); info != nil {
 			if info.Methods == nil {
@@ -3662,6 +3778,8 @@ func (c *Checker) registerFunc(fn *ast.FuncDecl) {
 			}
 			info.Methods[fn.Name] = fnType
 		}
+	} else {
+		c.scope.Define(fn.Name, fnType)
 	}
 }
 
@@ -3857,7 +3975,12 @@ func (c *Checker) checkFuncBody(fn *ast.FuncDecl) {
 	// Bind parameters
 	for _, p := range fn.Params {
 		if !p.IsSelf {
-			c.scope.Define(p.Name, c.resolveTypeExpr(&p.Type))
+			pt := c.resolveTypeExpr(&p.Type)
+			if p.IsMut {
+				c.scope.DefineMut(p.Name, pt)
+			} else {
+				c.scope.Define(p.Name, pt)
+			}
 		}
 	}
 
