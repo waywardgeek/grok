@@ -1,6 +1,9 @@
 # Binaries
-/grok-verify
+/forge
+/bootstrap1
+/bforge
 *.exe
+std.o
 
 # IDE
 .idea/
@@ -12,21 +15,19 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# Legacy Go compiler artifacts
+/grok-verify
 /grok-compile
-
-# Generated Go output from .gk compilation
-*.go
-!**/*_test.go
-!cmd/**/*.go
-!pkg/**/*.go
-
-# Generated C output from .fg compilation
-*.c
 /grok-update
 /grok-gen
 /grok
-forge
-std.o
-forge
-bforge
-bootstrap1
+
+# Generated C output from .fg compilation (except checked-in forge.c)
+*.c
+!forge.c
+!runtime/*.c
+
+# Generated Go output (legacy)
+*.go
+!legacy/**/*.go

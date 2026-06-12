@@ -1,6 +1,19 @@
 // forge.forge — project-level understanding of the Forge toolchain
 forge Forge {
-  why: "Language toolchain and structural integrity engine. Two modes: verification (.forge vs Go drift detection) and compilation (.fg → Go/C via parser → checker → LIR → backends). Relations and multi-class interfaces enable ownership modeling. .forge files are the primary design artifact for Understanding-Driven Development (UDD)."
+  why: "Self-hosting language toolchain. The compiler is written in Forge, compiled to C (forge.c), and builds with just GCC. Pipeline: parser → checker → LIR → monomorphizer → C backend. The Go compiler lives in legacy/go-compiler/ and is no longer maintained."
+
+  doc "Build System": """
+    forge.c is the checked-in canonical compiler output (~88K lines C).
+    Building requires only GCC: `make` or `gcc -std=gnu11 -O2 -w -I runtime -o forge forge.c -lm`
+    
+    make          — build forge binary from forge.c
+    make test     — run test suite (test_forge.sh)
+    make self-test — verify fixed-point (forge compiles itself to identical C)
+    make update   — regenerate forge.c from bootstrap .fg source
+    
+    The bootstrap .fg source (26K+ lines) lives in bootstrap/*/. 
+    The Go compiler in legacy/go-compiler/ is preserved for reference but not maintained.
+  """
 
   doc "Invariants — Cross-Cutting": """
     These invariants affect multiple modules and are the most common source of

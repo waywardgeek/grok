@@ -1,17 +1,13 @@
 #!/bin/bash
-# build_bootstrap.sh — Build bootstrap compiler from source
+# build_bootstrap.sh — Build the Forge compiler from bootstrap .fg source
+# Uses the checked-in forge.c binary to compile bootstrap source.
 # Usage: ./build_bootstrap.sh [output_binary]
-# Default output: ./bootstrap1
+# Default output: ./forge
 set -e
 
 cd "$(dirname "$0")"
 
-OUTPUT="${1:-./bootstrap1}"
-# Clean up old build artifacts
-rm -rf /tmp/forge_build_*
-
-TMPDIR_BUILD=$(mktemp -d -t forge_build_XXXXXX)
-
+OUTPUT="${1:-./forge}"
 
 BOOTSTRAP_FILES=(
   bootstrap/ast/ast.fg bootstrap/ast/modules.fg
@@ -28,12 +24,18 @@ BOOTSTRAP_FILES=(
   bootstrap/main/main.fg
 )
 
-echo "=== Building Go compiler ==="
-go build -o "$TMPDIR_BUILD/forge_go" ./cmd/forge/
+TMPDIR_BUILD=$(mktemp -d -t forge_build_XXXXXX)
+trap "rm -rf $TMPDIR_BUILD" EXIT
+
+# Build from checked-in C if no forge binary exists
+if [ ! -f ./forge ]; then
+  echo "=== Building forge from forge.c ==="
+  gcc -std=gnu11 -O2 -w -I runtime -o ./forge forge.c -lm
+fi
 
 echo "=== Compiling bootstrap → C ==="
-"$TMPDIR_BUILD/forge_go" compile "${BOOTSTRAP_FILES[@]}" -o "$TMPDIR_BUILD/bootstrap.c" 2>&1
+./forge compile "${BOOTSTRAP_FILES[@]}" -o "$TMPDIR_BUILD/forge_new.c" 2>&1
 
 echo "=== GCC compile ==="
-gcc -std=gnu11 -I runtime -o "$OUTPUT" "$TMPDIR_BUILD/bootstrap.c" -lm
+gcc -std=gnu11 -O2 -w -I runtime -o "$OUTPUT" "$TMPDIR_BUILD/forge_new.c" -lm
 echo "=== Built: $OUTPUT ==="
