@@ -150,22 +150,29 @@ forge desugar {
   // and generates impl blocks with field bindings.
 
   func desugar_relations(file: File) {
+    // Build GLOBAL interface lookup across ALL blocks
+    let iface_map = Dict<Sym, InterfaceDecl>()
     for block in file.fb_children() {
-      // Build interface lookup
-      let iface_map = Dict<Sym, InterfaceDecl>()
       for iface in block.id_children() {
         if !isnull(iface.name) {
           iface_map.set(sym(iface.name!.name), iface)
         }
       }
+    }
 
-      // Build class lookup: name -> ClassDecl
-      let class_map = Dict<Sym, ClassDecl>()
+    // Build GLOBAL class lookup across ALL blocks
+    // Relations may reference classes in other blocks (e.g., Lexer:lc owns [Comment:lc]
+    // where Comment is in ast.fg but the relation is in lexer.fg)
+    let class_map = Dict<Sym, ClassDecl>()
+    for block in file.fb_children() {
       for cls in block.cd_children() {
         if !isnull(cls.name) {
           class_map.set(sym(cls.name!.name), cls)
         }
       }
+    }
+
+    for block in file.fb_children() {
 
       for rel in block.rd_children() {
         if isnull(rel.hint) { continue }
@@ -315,12 +322,21 @@ forge desugar {
               label: null,
               span: rel.span,
             }
+            // Build TypeArgs with type parameters from the relation sides
+            let mut parent_args: [TypeExpr] = []
+            for ta in rel.parent.type_args {
+              append(parent_args, TypeExpr { kind: Named(ta, []), span: rel.span })
+            }
             let ta0 = TypeExpr {
-              kind: Named(sym(parent_name), []),
+              kind: Named(sym(parent_name), parent_args),
               span: rel.span,
             }
+            let mut child_args_te: [TypeExpr] = []
+            for ta in rel.child.type_args {
+              append(child_args_te, TypeExpr { kind: Named(ta, []), span: rel.span })
+            }
             let ta1 = TypeExpr {
-              kind: Named(sym(child_name), []),
+              kind: Named(sym(child_name), child_args_te),
               span: rel.span,
             }
             array_append<ImplBlock, TypeExpr>(new_ib, ta0)
@@ -340,23 +356,27 @@ forge desugar {
   // interface destructor blocks to concrete classes.
 
   func desugar_destructors(file: File) {
+    // Build GLOBAL interface lookup across ALL blocks
+    let iface_map = Dict<Sym, InterfaceDecl>()
     for block in file.fb_children() {
-      // Build interface lookup
-      let iface_map = Dict<Sym, InterfaceDecl>()
       for iface in block.id_children() {
         if !isnull(iface.name) {
           iface_map.set(sym(iface.name!.name), iface)
         }
       }
+    }
 
-      // Build class lookup
-      let class_map = Dict<Sym, ClassDecl>()
+    // Build GLOBAL class lookup across ALL blocks
+    let class_map = Dict<Sym, ClassDecl>()
+    for block in file.fb_children() {
       for cls in block.cd_children() {
         if !isnull(cls.name) {
           class_map.set(sym(cls.name!.name), cls)
         }
       }
+    }
 
+    for block in file.fb_children() {
       // Collect destructor blocks per class name
       // Since Dict can only store single values, we use a Dict<Sym, Block> where
       // each Block wraps all destructor stmts for that class as sub-blocks.

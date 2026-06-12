@@ -1347,6 +1347,43 @@ func (l *Lowerer) lowerAssignStmt(stmt *ast.Stmt) {
 	// Handle field assignment: target.field = value
 	if as.Target.Kind == ast.ExprFieldAccess {
 		fa := dataAs[ast.FieldAccessExpr](as.Target.Data)
+
+		// Check for optional struct write-through pattern:
+		// class_obj.optional_struct_field!.field = value
+		// Should emit: obj->field.val.subfield = value (direct lvalue chain)
+		// Only applies when the optional field contains a STRUCT (value type).
+		// Optional class fields are pointers and unwrap correctly without this.
+		if fa.Receiver.Kind == ast.ExprUnwrap {
+			uw := dataAs[ast.UnwrapExpr](fa.Receiver.Data)
+			if uw.Operand.Kind == ast.ExprFieldAccess {
+				innerFA := dataAs[ast.FieldAccessExpr](uw.Operand.Data)
+				innerRecv := l.lowerExpr(&innerFA.Receiver)
+				if innerRecv.Type != nil && innerRecv.Type.Kind == LTyClassHandle {
+					// Check if the field type is an optional struct (not optional class)
+					isOptionalStruct := false
+					if fields, ok := l.classFields[innerRecv.Type.Name]; ok {
+						for _, f := range fields {
+							if f.Name == innerFA.Field && f.Type != nil && f.Type.Kind == LTyOptional {
+								if len(f.Type.TypeArgs) > 0 && f.Type.TypeArgs[0].Kind == LTyStruct {
+									isOptionalStruct = true
+								}
+							}
+						}
+					}
+					if isOptionalStruct {
+						// Emit class set with compound field path: "data.val.value"
+						l.emit(LStmt{Kind: LStmtClassSet, Data: &LClassSet{
+							Handle: innerRecv,
+							Class:  innerRecv.Type.Name,
+							Field:  innerFA.Field + ".val." + fa.Field,
+							Value:  val,
+						}})
+						return
+					}
+				}
+			}
+		}
+
 		recv := l.lowerExpr(&fa.Receiver)
 		// Check if receiver is a class (use ClassSet) or struct (use StructSet)
 		if recv.Type != nil && recv.Type.Kind == LTyClassHandle {

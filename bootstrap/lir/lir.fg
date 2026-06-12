@@ -614,6 +614,7 @@ forge lir {
     receiver: string
     receiver_type_params: [LTypeParam]
     relational_constraints: [LRelationalConstraint]
+    class_rename_map: Dict<Sym, string>?
   }
 
   struct LTypeDef {

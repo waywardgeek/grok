@@ -1161,9 +1161,8 @@ forge checker {
       // Zero-span means this TypeExpr came from type_to_type_expr (synthetic)
       return make_typevar_type(name)
     }
-    eprintln(f"checker: unknown type: {name} at {span.start.file}:{itoa(span.start.line as i64)}:{itoa(span.start.column as i64)}")
-    os_exit(1)
-    return make_error_type()
+    // Unknown type — treat as type variable (matches Go checker behavior)
+    return make_typevar_type(name)
   }
 
   // =====================================================================
@@ -1212,10 +1211,11 @@ forge checker {
   }
 
   // =====================================================================
-  // Phase 1: Register all types and function signatures
+  // Phase 0: Pre-register all type NAMES across all blocks so cross-references resolve.
+  // Must run on ALL blocks before Phase 1 starts.
   // =====================================================================
 
-  func Checker.register_forge_block(self, block: ForgeBlock) {
+  func Checker.preregister_type_names(self, block: ForgeBlock) {
     // Register imports as module types
     let imports = block.imp_children()
     for imp in imports {
@@ -1225,8 +1225,6 @@ forge checker {
       }
     }
 
-    // Phase 0: Pre-register all type NAMES so cross-references resolve
-    // (e.g. struct Token { kind: TokenKind } where TokenKind is an enum)
     let ifaces = block.id_children()
     for iface in ifaces {
       if iface.name != nil {
@@ -1295,8 +1293,18 @@ forge checker {
         self.registry.register(ename, stub)
       }
     }
+  }
 
-    // Phase 1: Full registration with field resolution
+  // Phase 1: Register all types and function signatures (full detail).
+  // Assumes Phase 0 has already run on ALL blocks.
+  // =====================================================================
+
+  func Checker.register_forge_block(self, block: ForgeBlock) {
+    let ifaces = block.id_children()
+    let structs = block.sd_children()
+    let classes = block.cd_children()
+    let enums = block.ed_children()
+
     // Register interfaces first (classes may implement them)
     for iface in ifaces {
       let dn = if iface.name != nil { sym_to_string(iface.name!) } else { "?" }
@@ -2261,11 +2269,25 @@ forge checker {
     let target_type = self.check_expr(target)
     let val_type = self.check_expr(value)
     if !self.is_assignable(val_type, target_type) {
-      // Don't error on any — it's flexible
       match target_type.kind {
         Any => {}
-        _ => {
-          // Soft warning, not hard error for bootstrap
+        _ => {}
+      }
+    }
+    // Propagate target type to empty list/nil literals
+    match target_type.kind {
+      Error => {}
+      _ => {
+        match value.kind {
+          ListLit(elems) => {
+            if len(elems) == 0 {
+              value.resolved_type = type_to_type_expr(target_type)
+            }
+          }
+          Nil => {
+            value.resolved_type = type_to_type_expr(target_type)
+          }
+          _ => {}
         }
       }
     }
@@ -2274,6 +2296,20 @@ forge checker {
   func Checker.check_return(self, value: Expr?) {
     if value != nil {
       self.check_expr(value!)
+      // Propagate return type to empty list/nil literals
+      if self.current_func_return != nil {
+        match value!.kind {
+          ListLit(elems) => {
+            if len(elems) == 0 {
+              value!.resolved_type = type_to_type_expr(self.current_func_return!)
+            }
+          }
+          Nil => {
+            value!.resolved_type = type_to_type_expr(self.current_func_return!)
+          }
+          _ => {}
+        }
+      }
     }
   }
 
@@ -2708,34 +2744,79 @@ forge checker {
     let info = self.registry.lookup(name_str)
 
     if info != nil {
-      // Resolve positional fields to named fields using field_order
+      // Use indexed while-loop because StructLitField is a value type —
+      // `for f in fields` copies each element, so mutations don't propagate.
+      // We compute the effective field name from position when the AST name is null.
       let mut pos_idx = 0
       let mut fi = 0
       while fi < len(fields) {
-        if fields[fi].name == null || sym_to_string(fields[fi].name!) == "" {
+        let f = fields[fi]
+
+        // Determine the effective field name: use AST name if present, else positional
+        let mut fname = ""
+        if f.name != nil && sym_to_string(f.name!) != "" {
+          fname = sym_to_string(f.name!)
+          pos_idx = len(info!.field_order)  // stop positional tracking
+        } else {
           if pos_idx < len(info!.field_order) {
-            fields[fi].name = sym(info!.field_order[pos_idx])
+            fname = info!.field_order[pos_idx]
             pos_idx = pos_idx + 1
           }
-        } else {
-          // Named field encountered; stop positional tracking
-          pos_idx = len(info!.field_order)
         }
-        fi = fi + 1
-      }
-      // Check field values, propagating expected types for empty literals
-      for f in fields {
-        if f.value != nil {
-          self.check_expr(f.value!)
 
-          // Look up expected field type
-          if f.name != nil {
-            let fname = sym_to_string(f.name!)
+        if f.value != nil {
+          // If the expected field type is an enum, temporarily shadow variant
+          // constructors in scope so ambiguous variant names resolve correctly.
+          let mut scope_pushed = false
+          if fname != "" {
             let field_entry = info!.fields.get(sym(fname))
             if field_entry != nil {
               let field_type = field_entry!.value
-              // Propagate expected type to empty list/map/nil literals
-              // This prevents ForgeSlice_void / ForgeMap_void in C output
+              match field_type.kind {
+                Enum(enum_name) => {
+                  let enum_info = self.registry.lookup(enum_name)
+                  if enum_info != nil && len(enum_info!.variants.keys()) > 0 {
+                    self.push_scope()
+                    scope_pushed = true
+                    let vkeys = enum_info!.variants.keys()
+                    for vk in vkeys {
+                      let vname = sym_to_string(vk)
+                      let vi = enum_info!.variants.get(vk)
+                      if vi != nil {
+                        if len(vi!.value.fields) == 0 {
+                          self.scope.define(vname, field_type)
+                        } else {
+                          let mut param_types: [Type] = []
+                          for vf in vi!.value.fields {
+                            append(param_types, vf.type_val)
+                          }
+                          let tpnames: [string] = []
+                          let ctor_type = Type {
+                            kind: Func(param_types, field_type, tpnames),
+                            bits: 0,
+                          }
+                          self.scope.define(vname, ctor_type)
+                        }
+                      }
+                    }
+                  }
+                }
+                _ => {}
+              }
+            }
+          }
+
+          self.check_expr(f.value!)
+
+          if scope_pushed {
+            self.pop_scope()
+          }
+
+          // Propagate expected type to empty list/map/nil literals
+          if fname != "" {
+            let field_entry = info!.fields.get(sym(fname))
+            if field_entry != nil {
+              let field_type = field_entry!.value
               match f.value!.kind {
                 ListLit(elems) => {
                   if len(elems) == 0 {
@@ -2755,6 +2836,7 @@ forge checker {
             }
           }
         }
+        fi = fi + 1
       }
       // Return type with type_args for generic classes/structs
       if len(type_args) > 0 && len(info!.type_param_names) > 0 {
@@ -2827,6 +2909,32 @@ forge checker {
   // Call checking
   // =====================================================================
 
+  // Propagate expected types from function params to empty list/nil arg literals.
+  // Must use indexed access — Expr is a class but we need to match Go checker's
+  // behavior of annotating the actual arg expressions.
+  func propagate_arg_types(args: [Expr], param_types: [Type]) {
+    let mut i = 0
+    while i < len(args) && i < len(param_types) {
+      match args[i].kind {
+        ListLit(elems) => {
+          if len(elems) == 0 {
+            match param_types[i].kind {
+              Sequence(elem) => {
+                args[i].resolved_type = type_to_type_expr(param_types[i])
+              }
+              _ => {}
+            }
+          }
+        }
+        Nil => {
+          args[i].resolved_type = type_to_type_expr(param_types[i])
+        }
+        _ => {}
+      }
+      i = i + 1
+    }
+  }
+
   func Checker.check_call(self, call_expr: Expr, func_expr: Expr, type_args: [TypeExpr], args: [Expr]) -> Type {
     // Check all args first
     let mut arg_types: [Type] = []
@@ -2850,6 +2958,7 @@ forge checker {
         let ft = self.scope.lookup(name_str)
         if ft != nil {
           annotate(func_expr, ft!)
+          annotate(func_expr, ft!)
           match ft!.kind {
             Func(params, ret, tpnames) => {
               // Generic function — infer type args
@@ -2872,8 +2981,15 @@ forge checker {
                   }
                   call_expr.inferred_type_args = inferred
                 }
+                // Propagate expected types to empty list/nil args
+                let mut sub_params: [Type] = []
+                for p in params {
+                  append(sub_params, substitute_type(p, bindings))
+                }
+                propagate_arg_types(args, sub_params)
                 return substitute_type(ret, bindings)
               }
+              propagate_arg_types(args, params)
               return ret
             }
             Class(cname) | Struct(cname) | Enum(cname) => {
@@ -3180,6 +3296,7 @@ forge checker {
               for p in params {
                 append(sub_params, substitute_type(p, bindings))
               }
+              propagate_arg_types(args, sub_params)
               return substitute_type(ret, bindings)
             }
             _ => { return mt!.value }
@@ -4222,8 +4339,14 @@ forge checker {
   func check_file(file: File) -> Checker {
     let c = new_checker()
 
-    // Phase 1: register all types and signatures
     let blocks = file.fb_children()
+
+    // Phase 0: Pre-register all type names across ALL blocks
+    for b in blocks {
+      c.preregister_type_names(b)
+    }
+
+    // Phase 1: register all types and signatures across ALL blocks
     for b in blocks {
       c.register_forge_block(b)
     }

@@ -674,10 +674,14 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     }
     StVarDecl => {
       if !isnull(s.var_decl) {
-        s.var_decl!.typ = self.subst_type_remove_vars(s.var_decl!.typ)
-        if !isnull(s.var_decl!.init) {
-          s.var_decl!.init!.typ = self.subst_type_remove_vars(s.var_decl!.init!.typ)
+        // Copy-out/modify/write-back: var_decl is optional struct on class LStmt,
+        // so s.var_decl!.typ = x writes to a copy and is lost.
+        let mut vd = s.var_decl!
+        vd.typ = self.subst_type_remove_vars(vd.typ)
+        if !isnull(vd.init) {
+          vd.init!.typ = self.subst_type_remove_vars(vd.init!.typ)
         }
+        s.var_decl = vd
       }
     }
     StAssign => {
@@ -699,17 +703,20 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     }
     StClassSet => {
       if !isnull(s.class_set) {
-        if !isnull(s.class_set!.handle) {
-          s.class_set!.handle!.typ = self.subst_type_remove_vars(s.class_set!.handle!.typ)
-          if !isnull(s.class_set!.handle!.typ) {
-            if s.class_set!.handle!.typ!.kind is TyClassHandle {
-              s.class_set!.class_name = s.class_set!.handle!.typ!.name
+        // Copy-out/modify/write-back: class_set is optional struct on class LStmt
+        let mut cs = s.class_set!
+        if !isnull(cs.handle) {
+          cs.handle!.typ = self.subst_type_remove_vars(cs.handle!.typ)
+          if !isnull(cs.handle!.typ) {
+            if cs.handle!.typ!.kind is TyClassHandle {
+              cs.class_name = cs.handle!.typ!.name
             }
           }
         }
-        if !isnull(s.class_set!.value) {
-          s.class_set!.value!.typ = self.subst_type_remove_vars(s.class_set!.value!.typ)
+        if !isnull(cs.value) {
+          cs.value!.typ = self.subst_type_remove_vars(cs.value!.typ)
         }
+        s.class_set = cs
       }
     }
     StIndexSet => {
@@ -756,10 +763,13 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     }
     StFor => {
       if !isnull(s.for_data) {
-        s.for_data!.var_type = self.subst_type_remove_vars(s.for_data!.var_type)
-        if !isnull(s.for_data!.collection) {
-          s.for_data!.collection!.typ = self.subst_type_remove_vars(s.for_data!.collection!.typ)
+        // Copy-out/modify/write-back: for_data is optional struct on class LStmt
+        let mut fd = s.for_data!
+        fd.var_type = self.subst_type_remove_vars(fd.var_type)
+        if !isnull(fd.collection) {
+          fd.collection!.typ = self.subst_type_remove_vars(fd.collection!.typ)
         }
+        s.for_data = fd
         self.rewrite_stmts(s.for_data!.body)
       }
     }

@@ -1145,6 +1145,9 @@ forge lowerer {
 
     let init = if !isnull(value) { self.lower_expr(value) } else { make_null_val(typ) }
 
+
+    // Propagate declared type to empty/untyped slice init (e.g. let x: [Token] = [])
+
     // Propagate declared type to empty/untyped slice init (e.g. let x: [Token] = [])
     if !isnull(init) && !isnull(typ) && typ!.kind is TySlice {
       if !isnull(init!.typ) && init!.typ!.kind is TySlice {

@@ -3140,6 +3140,16 @@ func CGen.eq_expr(self, a: LValue?, b: LValue?) -> string {
   return f"({va} == {vb})"
 }
 
+func CGen.resolve_type_name(self, name: string) -> string {
+  if !isnull(self.prog!.class_renames) {
+    let ren = self.prog!.class_renames!.get(sym(name))
+    if !isnull(ren) {
+      return ren!.value
+    }
+  }
+  return name
+}
+
 func CGen.field_to_string_expr(self, t: LType?, val: string) -> string {
   if isnull(t) {
     return "FORGE_STR(\"?\")"
@@ -3153,9 +3163,18 @@ func CGen.field_to_string_expr(self, t: LType?, val: string) -> string {
     TyF32 => { return f"forge_sprintf(\"%%g\", (double){val})" }
     TyF64 => { return f"forge_sprintf(\"%%g\", {val})" }
     TyString => { return f"forge_sprintf(\"\\\"%%.*s\\\"\", (int){val}.len, (const char*){val}.data)" }
-    TyTaggedUnion => { return f"{t!.name}_to_string({val})" }
-    TyStruct => { return f"{t!.name}_to_string({val})" }
-    TyClassHandle => { return f"({val} == NULL ? FORGE_STR(\"null\") : {t!.name}_to_string({val}))" }
+    TyTaggedUnion => {
+      let name = self.resolve_type_name(t!.name)
+      return f"{name}_to_string({val})"
+    }
+    TyStruct => {
+      let name = self.resolve_type_name(t!.name)
+      return f"{name}_to_string({val})"
+    }
+    TyClassHandle => {
+      let name = self.resolve_type_name(t!.name)
+      return f"({val} == NULL ? FORGE_STR(\"null\") : {name}_to_string({val}))"
+    }
     _ => { return f"FORGE_STR(\"<{t!.name}>\")" }
   }
 }
@@ -4114,8 +4133,14 @@ pub func emit_c(prog: LProgram?) -> string {
       g.indent = g.indent + 1
       let mut ti = 0
       while ti < len(field_types) {
-        g.line(f"{field_types[ti]} _{ti};")
+        if field_types[ti] != "" {
+          g.line(f"{field_types[ti]} _{ti};")
+        }
         ti = ti + 1
+      }
+      // Empty struct needs a dummy field in C
+      if len(field_types) == 0 || (len(field_types) == 1 && field_types[0] == "") {
+        g.line("char _dummy;")
       }
       g.indent = g.indent - 1
       g.line(f"}} {tname};")

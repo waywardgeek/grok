@@ -1,40 +1,44 @@
 // checker.forge — understanding doc for the bootstrap checker package
 forge checker {
-  why: "Two-phase type checker with expression annotation. Phase 1 registers all type/function declarations, Phase 2 checks function bodies and annotates every Expr.resolved_type with a TypeExpr for the lowerer. Internal Type representation for checking logic; type_to_type_expr converts back to AST TypeExpr for annotation."
+  why: "Three-phase type checker with expression annotation. Phase 0 pre-registers all type names across all blocks. Phase 1 registers all type/function declarations. Phase 2 checks function bodies and annotates every Expr.resolved_type with a TypeExpr for the lowerer. Internal Type representation for checking logic; type_to_type_expr converts back to AST TypeExpr for annotation."
 
   doc "Architecture": """
-    The checker performs a two-phase pass over the AST:
+    The checker performs a three-phase pass over the AST:
+
+    Phase 0 (preregister_type_names): Walks all blocks, registering stub
+    TypeInfo entries for every struct/class/enum/interface by name. This
+    ensures cross-block type references resolve (e.g. Lexer in lexer.fg
+    referencing Comment from ast.fg). Also registers imports as module types.
 
     Phase 1 (register_forge_block): Walks all interfaces, structs, classes, enums,
-    and top-level functions, registering them into Dict registries. Interfaces
-    registered first (classes may implement them). Enum variants registered both
-    as qualified (EnumName.Variant) in enum_variant_types and as bare names in
-    enum_variants_by_name (last enum wins on collision). Class names registered
-    as constructor functions in scope (ClassName → TyFunc(fields → class)).
-    Constants registered in scope. Scope is passed through both phases.
+    and top-level functions, registering them into Dict registries with full
+    field/method detail. Interfaces registered first (classes may implement them).
+    Enum variants registered both as qualified (EnumName.Variant) in
+    enum_variant_types and as bare names in enum_variants_by_name (last enum
+    wins on collision). Class names registered as constructor functions in scope.
+    Constants registered in scope.
 
     Phase 2 (check_forge_block_bodies): Walks function bodies performing type
     inference and validation. Each expression returns its inferred Type AND
     gets annotated via annotate(expr, type) which converts the internal Type
     to a TypeExpr and sets expr.resolved_type. This is the checker→lowerer contract.
 
-    State: scope (lexical variable bindings via nested Dict chain), registries
-    (named type definitions), errors (accumulated list), enum_variants_by_name
-    (bare variant lookup), current_func_return (for return type checking).
+    CRITICAL: check_file runs Phase 0 across ALL blocks, then Phase 1 across
+    ALL blocks, then Phase 2 across ALL blocks. This ensures cross-file type
+    references and cross-file method calls all resolve correctly.
   """
 
-  doc "Invariants — Two-Phase Checking": """
-    The checker MUST run in two phases:
-    1. register_forge_block: register all struct/class/enum/interface/function
-       signatures into Dict registries (no body checking)
+  doc "Invariants — Three-Phase Checking": """
+    The checker MUST run in three phases:
+    0. preregister_type_names: register stub TypeInfo for all type names
+       across ALL blocks (no field/method detail)
+    1. register_forge_block: register full type/function detail across ALL blocks
     2. check_forge_block_bodies: walk function bodies, resolve types, check
        expressions, ANNOTATE resolved_type on every Expr
 
-    This ensures forward references resolve correctly — a function can
-    reference a class declared later in the same file.
-
-    For multi-file compilation, Phase 1 must run across ALL files before
-    ANY Phase 2 begins. Otherwise, cross-file references fail.
+    Phase 0 MUST complete on ALL blocks before ANY Phase 1 begins.
+    Phase 1 MUST complete on ALL blocks before ANY Phase 2 begins.
+    This ensures forward references AND cross-file references resolve correctly.
   """
 
   doc "Invariants — Expression Annotation": """

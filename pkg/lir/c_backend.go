@@ -458,8 +458,15 @@ func (g *cGen) generate() string {
 		fieldTypes := strings.Split(key, ",")
 		g.linef("typedef struct %s {", name)
 		g.indent++
+		emitted := false
 		for i, ft := range fieldTypes {
-			g.linef("%s _%d;", ft, i)
+			if ft != "" {
+				g.linef("%s _%d;", ft, i)
+				emitted = true
+			}
+		}
+		if !emitted {
+			g.line("char _dummy;")
 		}
 		g.indent--
 		g.linef("} %s;", name)
