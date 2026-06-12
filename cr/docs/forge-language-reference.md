@@ -428,6 +428,20 @@ Statement-level only. Containing function must return `(T, error)`.
 let msg = f"Hello {name}, count={x + 1}"
 ```
 
+Escaped braces: `{{` → literal `{`, `}}` → literal `}`.
+
+### Triple-quote Strings
+
+Triple-quoted strings preserve newlines and don't require escaping quotes:
+
+```forge
+let sql = """
+    SELECT *
+    FROM users
+    WHERE name = "Alice"
+"""
+```
+
 ## Multi-Class Interfaces
 
 Interfaces span multiple type parameters, defining relationships between types.
@@ -579,11 +593,11 @@ Child must implement `hash_key(self) -> u64`. Functions: `hash_insert`, `hash_lo
 
 ## Builtins
 
-**Core:** `len(x)`, `append(slice, elem)`, `println(x)`, `print(x)`, `eprint(x)`, `eprintln(x)`, `isnull(x)`.
+**Core:** `len(x)`, `append(slice, elem)`, `println(x)`, `print(x)`, `eprint(x)`, `eprintln(x)`, `isnull(x)`, `push_bytes(slice, bytes)`.
 
 **Strings:** `hash_string(s) -> u64`, `itoa(n) -> string`, `atoi(s) -> (i64, bool)`, `char_to_string(b) -> string`.
 
-**IO/OS:** `read_file(path) -> (string, bool)`, `write_file(path, content) -> bool`, `os_args() -> [string]`, `os_exit(code)`, `os_getwd() -> string`, `exec_command(name, args) -> (string, bool)`, `path_join(a, b)`, `path_dir(p)`, `path_base(p)`, `path_ext(p)`.
+**IO/OS:** `read_file(path) -> (string, bool)`, `write_file(path, content) -> bool`, `os_args() -> [string]`, `os_exit(code)`, `os_getwd() -> string`, `exec_command(name, args) -> (string, bool)`, `path_join(a, b)`, `path_dir(p)`, `path_base(p)`, `path_ext(p)`, `list_dir(path) -> ([string], bool)`, `file_exists(path) -> bool`, `mkdtemp() -> string`.
 
 **Testing:** `assert(cond, msg)`, `assert_eq(actual, expected, msg)`. See [Testing](#testing).
 
@@ -654,7 +668,9 @@ Tests run sequentially in declaration order. A failed assertion exits that test 
 
 ## Stdlib Classes
 
-- **`Sym`** — interned symbol. Create via `sym("name")`. `get_name() -> string`, `get_hash() -> u64`.
+- **`Sym`** — interned symbol with pre-computed FNV-1a hash. Create via `sym("name")` or backtick syntax `` `name` `` (which desugars to `sym("name")` at parse time). Methods: `get_name() -> string`, `get_hash() -> u64`. Implements `Hashable`.
+- **`Dict<K,V>`** — generic hash table where `K: Hashable`. Methods: `set(key, val)`, `get(key) -> V?`, `has(key) -> bool`, `remove(key)`, `keys() -> [K]`, `len() -> i32`. Constructor: `Dict<K,V>()`.
+- **`Hashable`** — interface requiring `get_hash(self) -> u64`. `Sym` implements it. `string` does NOT — use `sym()` to wrap strings for hash table keys.
 - **`Error`** — for `(T, error)` returns. `message() -> string`. Create via `Error { msg: "..." }`.
 - **`StringBuilder`** — `write(s)`, `write_byte(b)`, `to_string()`, `len()`. Create via `new_string_builder()`.
 

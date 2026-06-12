@@ -890,7 +890,19 @@ another type only if all variants match.
 let msg = f"Hello {name}, count={x + 1}"
 ```
 
-Expressions inside `{ }` are evaluated and converted to strings.
+Expressions inside `{ }` are evaluated and converted to strings. Escaped braces: `{{` → literal `{`, `}}` → literal `}`.
+
+### Triple-Quote Strings
+
+Triple-quoted strings (`"""..."""`) preserve newlines and don't require escaping quotes:
+
+```forge
+let sql = """
+    SELECT *
+    FROM users
+    WHERE name = "Alice"
+"""
+```
 
 ---
 
@@ -952,6 +964,7 @@ for val in range(0, 10) {
 | `char_to_string(b)` | `u8 -> string` | Byte to string |
 | `assert(cond, msg)` | `(bool, string) -> unit` | Fail test if false (see [Testing](#testing)) |
 | `assert_eq(a, b, msg)` | `(T, T, string) -> unit` | Fail test if not equal (see [Testing](#testing)) |
+| `push_bytes(slice, bytes)` | `([u8], [u8]) -> [u8]` | Append byte slice to byte slice (avoids byte-by-byte append) |
 
 ### IO/OS Built-ins
 
@@ -967,6 +980,9 @@ for val in range(0, 10) {
 | `path_dir(p)` | `string -> string` | Directory of path |
 | `path_base(p)` | `string -> string` | Base name of path |
 | `path_ext(p)` | `string -> string` | File extension |
+| `list_dir(path)` | `string -> ([string], bool)` | List directory entries |
+| `file_exists(path)` | `string -> bool` | Check if file exists |
+| `mkdtemp()` | `-> string` | Create temporary directory |
 
 ### Built-in Methods
 
@@ -1596,33 +1612,50 @@ hash_insert<Registry, Entry>(r, e)
 let found = hash_lookup<Registry, Entry>(r, 42)
 ```
 
-### Dict<V> — Generic String-Keyed Hash Table
+### Dict<K,V> — Generic Hash Table
 
-Built on HashedList with Sym keys. The convenience layer for hash maps when
-you don't need the full relation machinery.
+Generic hash table where `K: Hashable`. Built on HashedList with configurable key types.
+The most common instantiation is `Dict<Sym,V>` (string-keyed via Sym).
 
-**Functions:**
-| Function | Description |
-|---|---|
-| `dict_new<V>() -> Dict<V>` | Create empty dictionary |
-| `dict_set<V>(d, key: string, value: V)` | Set key-value pair (replaces if exists) |
-| `dict_get<V>(d, key: string) -> DictEntry<V>?` | Get entry by key (null if missing) |
-| `dict_has<V>(d, key: string) -> bool` | Check if key exists |
-| `dict_remove<V>(d, key: string) -> bool` | Remove by key |
+**Constructor:** `Dict<K,V>()` — creates an empty dictionary.
 
-**DictEntry<V> fields:** `key: Sym?`, `value: V`.
+**Methods:**
+| Method | Return | Description |
+|---|---|---|
+| `set(key, val)` | `unit` | Set key-value pair (replaces if exists) |
+| `get(key)` | `DictEntry<K,V>?` | Get entry by key (null if missing) |
+| `has(key)` | `bool` | Check if key exists |
+| `remove(key)` | `bool` | Remove by key |
+| `keys()` | `[K]` | All keys |
+| `len()` | `i32` | Number of entries |
+
+**DictEntry<K,V> fields:** `key: K`, `value: V`.
 
 **Usage:**
 ```forge
-let d = dict_new<i32>()
-dict_set<i32>(d, "x", 42)
-dict_set<i32>(d, "y", 99)
-if dict_has<i32>(d, "x") {
-    let entry = dict_get<i32>(d, "x")
+let d = Dict<Sym, i32>()
+d.set(`x`, 42)
+d.set(`y`, 99)
+if d.has(`x`) {
+    let entry = d.get(`x`)
     println(entry!.value)  // 42
 }
-dict_remove<i32>(d, "x")
+d.remove(`x`)
 ```
+
+### Hashable — Hash Key Interface
+
+Interface for types used as hash table keys. Requires a single method:
+
+```forge
+interface Hashable {
+    func Hashable.get_hash(self) -> u64
+}
+```
+
+`Sym` implements `Hashable`. `string` does NOT — this is deliberate. Wrapping strings
+in `sym()` enforces hash-once discipline, preventing repeated FNV-1a computation
+on the same string value (a common performance bug in compilers).
 
 ### Sym — Interned Symbol
 
@@ -1630,7 +1663,7 @@ Wraps a string with a pre-computed FNV-1a hash. Hash is computed once at creatio
 all subsequent operations use the u64 hash for O(1) comparison. This is the
 "integer war" principle: avoid repeated string hashing in hot paths.
 
-**Construction:** `sym("name")` (not `pub` — avoids Go name collision)
+**Construction:** `sym("name")` or backtick syntax `` `name` `` (desugars to `sym("name")` at parse time).
 
 **Methods:**
 | Method | Return | Description |
@@ -1638,12 +1671,17 @@ all subsequent operations use the u64 hash for O(1) comparison. This is the
 | `get_name(self)` | `string` | Original string |
 | `get_hash(self)` | `u64` | Pre-computed FNV-1a hash |
 
+Sym implements the `Hashable` interface, which requires `get_hash(self) -> u64`.
+
 **Usage:**
 ```forge
 let s = sym("identifier")
-let h = s.get_hash()       // u64, computed once
-let n = s.get_name()       // "identifier"
+let s2 = `identifier`        // equivalent — backtick syntax
+let h = s.get_hash()         // u64, computed once
+let n = s.get_name()         // "identifier"
 ```
+
+**Design note:** `string` does NOT implement `Hashable`. Use `sym()` wrapping to enforce hash-once discipline — repeated hashing of the same string is a common performance bug. Dict requires `K: Hashable`, so keys must be `Sym`, not `string`.
 
 ### Error Handling
 
