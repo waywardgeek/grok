@@ -4192,19 +4192,29 @@ func CGen.emit_slab_infrastructure_soa(self, classes: [LClassDecl]) {
       j = j + 1
     }
     self.line(f"_lyric_slab_{name}.lyric_next = (uint32_t*)realloc(_lyric_slab_{name}.lyric_next, new_cap * sizeof(uint32_t));")
-    // Zero new capacity
-    j = 0
-    while j < len(classes[i].fields) {
-      let f = classes[i].fields[j]
-      self.line(f"memset(&_lyric_slab_{name}.{lc_first(f.name)}[_lyric_slab_{name}.cap], 0, (new_cap - _lyric_slab_{name}.cap) * sizeof({self.c_type(f.typ)}));")
-      j = j + 1
-    }
-    self.line(f"memset(&_lyric_slab_{name}.lyric_next[_lyric_slab_{name}.cap], 0, (new_cap - _lyric_slab_{name}.cap) * sizeof(uint32_t));")
+
     self.line(f"_lyric_slab_{name}.cap = new_cap;")
     self.indent = self.indent - 1
     self.line("}")
-    // Allocate from used
-    self.line(f"return _lyric_slab_{name}.used++;")
+    // Allocate from used — zero all fields at the new slot
+    self.line("{")
+    self.indent = self.indent + 1
+    self.line(f"uint32_t h = _lyric_slab_{name}.used++;")
+    j = 0
+    while j < len(classes[i].fields) {
+      let f = classes[i].fields[j]
+      let ct = self.c_type(f.typ)
+      let zv = self.zero_value(f.typ)
+      if zv == "{0}" {
+        self.line(f"memset(&_lyric_slab_{name}.{lc_first(f.name)}[h], 0, sizeof({ct}));")
+      } else {
+        self.line(f"_lyric_slab_{name}.{lc_first(f.name)}[h] = {zv};")
+      }
+      j = j + 1
+    }
+    self.line("return h;")
+    self.indent = self.indent - 1
+    self.line("}")
     self.indent = self.indent - 1
     self.line("}")
     self.line("")
