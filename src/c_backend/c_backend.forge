@@ -13,6 +13,8 @@ forge c_backend {
     "spawn_captures redirect variable references to (*_ctx->name)"
     "in_generator redirects variable references to _gen->name"
     "mut params: emit_value returns (*name) for all types, StAssign targets (*name)"
+    "escape_printf doubles % in f-string literal text for C printf format strings"
+    "field_to_string_expr must NOT use f-strings with format specs — use string concat to avoid escape_printf double-escaping"
   }
 
   doc "Architecture" {
