@@ -836,7 +836,11 @@ forge checker {
           for a in t.type_args {
             append(new_args, substitute_type(a, bindings))
           }
-          return Type { kind: t.kind, bits: t.bits, type_args: new_args }
+          let result = Type { kind: t.kind, bits: t.bits, type_args: new_args }
+          if name == "DictEntry" {
+            eprintln(f"  -> substituted to {len(result.type_args)} args")
+          }
+          return result
         }
         return t
       }
@@ -1955,7 +1959,16 @@ forge checker {
         let rname = sym_to_string(f.receiver_type!)
         let recv_info = self.registry.lookup(rname)
         if recv_info != nil {
-          self.scope.define("self", recv_info!.type_val)
+          // Build self type with TypeVar type_args for generic classes
+          let mut self_type = recv_info!.type_val
+          if len(recv_info!.type_param_names) > 0 {
+            let mut ta: [Type] = []
+            for tpn in recv_info!.type_param_names {
+              append(ta, make_typevar_type(tpn))
+            }
+            self_type = Type { kind: self_type.kind, bits: self_type.bits, type_args: ta }
+          }
+          self.scope.define("self", self_type)
         }
         self.check_func_body(f)
         self.pop_scope()
@@ -2004,7 +2017,16 @@ forge checker {
         if m.body == nil { continue }
         self.push_scope()
         if class_info != nil {
-          self.scope.define("self", class_info!.type_val)
+          // Build self type with TypeVar type_args for generic classes
+          let mut self_type = class_info!.type_val
+          if len(class_info!.type_param_names) > 0 {
+            let mut ta: [Type] = []
+            for tpn in class_info!.type_param_names {
+              append(ta, make_typevar_type(tpn))
+            }
+            self_type = Type { kind: self_type.kind, bits: self_type.bits, type_args: ta }
+          }
+          self.scope.define("self", self_type)
         }
         // Register class type params
         let ctparams = c.ctp_children()
@@ -2658,6 +2680,17 @@ forge checker {
       }
       Lt | Le | Gt | Ge => { return make_bool_type() }
       And | Or => { return make_bool_type() }
+      Add => {
+        // String concatenation: string + string → string
+        if lt.kind is String && rt.kind is String {
+          return make_string_type()
+        }
+        // Slice concatenation: [T] + [T] → [T]
+        if lt.kind is Sequence && rt.kind is Sequence {
+          return lt
+        }
+        return coerce_numeric(lt, rt)
+      }
       _ => {
         return coerce_numeric(lt, rt)
       }
@@ -3501,7 +3534,7 @@ forge checker {
   }
 
   func Checker.check_list_method(self, elem: Type, method: string) -> Type? {
-    if method == "push" || method == "append" || method == "sort" || method == "remove" {
+    if method == "push" || method == "append" || method == "sort" || method == "remove" || method == "extend" {
       return make_void_type()
     }
     if method == "pop" { return elem }

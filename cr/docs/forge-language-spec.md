@@ -613,6 +613,21 @@ Classes have deterministic destruction via `.destroy()`. Destructor bodies are
 auto-generated from `owns` relations — destroying a parent cascades to children.
 `destructor` blocks in interfaces inject cleanup code into concrete classes.
 
+**`final` function**: Classes may declare a `final` function, called immediately
+before the auto-generated destructor runs. Use for resource cleanup (file handles,
+network connections) that must happen before relation teardown:
+
+```forge
+class Connection {
+    fd: i32
+    final func cleanup(self) {
+        close_fd(self.fd)
+    }
+}
+```
+
+Execution order on `.destroy()`: `final` → auto-destructor (cascade + unlink) → free slot.
+
 ### No Inheritance
 
 Forge does not support classical inheritance. Subtype relationships are expressed
@@ -784,7 +799,31 @@ relation HashedList Dict<V>:d owns [DictEntry<V>:d]
 ```forge
 let x = 42              // immutable, type inferred
 let mut y: i32 = 0      // mutable, type annotated
+let ref view = data[5:10]     // immutable view (no copy, shared backing)
+let mut ref buf = packet[0:16] // mutable view (write through, no copy)
 ```
+
+**Copy-on-assign**: Assignment always copies for all value types (primitives, structs,
+tuples, slices). `let mut y = x` creates an independent mutable copy of `x`.
+
+**`ref` bindings**: `let ref x = expr` creates a zero-copy view into existing data
+instead of copying. The source data must outlive the `ref` binding (enforced by
+the no-escape rule). `let mut ref` allows writing through the view — essential for
+serialization, cryptography, and zero-copy buffer assembly.
+
+**Binding grammar**: `let [mut] [ref] name [: Type] = expr`
+
+| Binding | Semantics |
+|---------|-----------|
+| `let x = expr` | Immutable copy |
+| `let mut x = expr` | Mutable copy |
+| `let ref x = expr` | Immutable view (shared, no copy) |
+| `let mut ref x = expr` | Mutable view (write-through, no copy) |
+
+**Parameter passing vs assignment**: Assignment copies; parameter passing shares.
+Passing a slice to a function does NOT copy — the function receives a view into
+the caller's backing data. This distinction ensures zero-copy performance at
+function boundaries while maintaining value semantics for local reasoning.
 
 **Top-level constants** inside `forge` blocks:
 ```forge
@@ -1572,18 +1611,23 @@ specialized code for each concrete binding.
 ### No GC, No Borrow Checker, No Garbage
 
 Forge's memory model:
+- **Slab allocation** for classes → 32-bit index handles, cache-friendly, no malloc/free
 - **Relations** declare ownership → compiler generates destructors
 - **Cascade deletion** through `owns` relations → no leaks
 - **Back-pointers** maintained automatically → no dangling references
+- **Ref counting** for non-owned classes → automatic deallocation when last ref dies
+- **`destroys` annotation** → compiler infers which functions may destroy instances, statically prevents use-after-free
+- **`mut resize` annotation** → compiler prevents accessing array elements during resize
+- **Copy-on-assign** for value types → no aliasing surprises for local variables
+- **`ref` bindings** for zero-copy views → opt-in sharing when performance demands it
+- **`trusted` blocks** → manual ref/unref for stdlib containers that manage their own memory
+- **Safe iterators** → destroy-during-iteration without ConcurrentModificationException
 - **Deterministic destruction** → predictable latency (no GC pauses)
 - **No borrow checker** → no lifetime annotations, no fighting the compiler
 
 The cost: you must declare your ownership graph via relations. But you were going
 to design that ownership graph anyway — Forge just makes it explicit and verifiable
 rather than implicit and error-prone.
-
-For the rare case of shared ownership without a clear parent, ref-counting is
-available (deferred — not yet implemented).
 
 ### The Result
 

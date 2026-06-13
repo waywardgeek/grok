@@ -25,6 +25,9 @@
 #include <ctype.h>
 #include <unistd.h>
 #include <dirent.h>
+
+/* Slab allocator block size */
+#define FORGE_SLAB_BLOCK 256
 #include <sys/stat.h>
 
 
@@ -62,6 +65,26 @@
 
 /* Pop the last element (returns it). Caller must check len > 0. */
 #define forge_pop(slice_ptr) ((slice_ptr)->data[--(slice_ptr)->len])
+
+/* Extend: append all elements from src slice to dst slice.
+ * Both must be the same slice type. Grows dst as needed. */
+#define forge_extend(dst_ptr, src, SliceName) do { \
+    for (int32_t _i = 0; _i < (src).len; _i++) { \
+        forge_push(dst_ptr, (src).data[_i], SliceName); \
+    } \
+} while(0)
+
+/* Concatenate two slices, returning a new slice (heap-allocated). */
+#define forge_slice_concat(a, b, SliceName) ({ \
+    int32_t _total = (a).len + (b).len; \
+    SliceName _result; \
+    _result.data = malloc(sizeof(*(a).data) * (_total > 0 ? _total : 1)); \
+    _result.len = _total; \
+    _result.cap = _total; \
+    if ((a).len > 0) memcpy(_result.data, (a).data, sizeof(*(a).data) * (a).len); \
+    if ((b).len > 0) memcpy(_result.data + (a).len, (b).data, sizeof(*(b).data) * (b).len); \
+    _result; \
+})
 
 /* Sub-slice: creates a new slice view [low:high). Shares underlying data. */
 #define forge_subslice(slice, low, high, SliceName) ({ \

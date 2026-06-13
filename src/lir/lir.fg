@@ -128,6 +128,8 @@ forge lir {
     ExFuncRef
     ExFuncLit
     ExFormat
+    ExSlabGet
+    ExSlabAlloc
   }
 
   class LExpr {
@@ -162,6 +164,8 @@ forge lir {
     func_ref: LFuncRefData?
     func_lit: LFuncLitData?
     format: LFormatData?
+    slab_get: LSlabGetData?
+    slab_alloc: LSlabAllocData?
   }
 
   enum LBinOpKind {
@@ -344,6 +348,30 @@ forge lir {
     body: [LStmt?]
   }
 
+  // Slab allocator data types (memory management pass)
+  struct LSlabGetData {
+    class_name: string
+    field: string
+    handle: LValue?
+  }
+
+  struct LSlabAllocData {
+    class_name: string
+    fields: [LFieldInit]
+  }
+
+  struct LSlabSetData {
+    class_name: string
+    field: string
+    handle: LValue?
+    value: LValue?
+  }
+
+  struct LSlabFreeData {
+    class_name: string
+    handle: LValue?
+  }
+
   // ==========================================================================
   // LIR Statements
   // ==========================================================================
@@ -373,6 +401,8 @@ forge lir {
     StSideEffect
     StMultiAssign
     StTypeSwitch
+    StSlabSet
+    StSlabFree
   }
 
   class LStmt {
@@ -400,6 +430,8 @@ forge lir {
     side_effect: LSideEffectData?
     multi_assign: LMultiAssignData?
     type_switch: LTypeSwitchData?
+    slab_set: LSlabSetData?
+    slab_free: LSlabFreeData?
   }
 
   struct LTempDef {
@@ -637,6 +669,7 @@ forge lir {
     type_defs: [LTypeDef]
     class_renames: Dict<Sym, string>?
     impl_method_renames: Dict<Sym, string>?
+    slab_mode: bool
   }
 
 }

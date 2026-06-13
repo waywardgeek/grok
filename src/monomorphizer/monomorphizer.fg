@@ -835,6 +835,17 @@ func MonoPass.build_class_rename_map(self, subst: Dict<Sym, LType?>?) -> Dict<Sy
 // Phase 4: Rewrite call sites
 // ---------------------------------------------------------------------------
 
+func MonoPass.rewrite_value(self, v: LValue?) {
+  if isnull(v) { return }
+  v!.typ = self.subst_type_remove_vars(v!.typ)
+  if !isnull(v!.collection) {
+    self.rewrite_value(v!.collection!)
+  }
+  if !isnull(v!.index) {
+    self.rewrite_value(v!.index!)
+  }
+}
+
 func MonoPass.rewrite_stmts(self, stmts: [LStmt?]) {
   let mut i = 0
   while i < len(stmts) {
@@ -862,7 +873,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
         let mut vd = s.var_decl!
         vd.typ = self.subst_type_remove_vars(vd.typ)
         if !isnull(vd.init) {
-          vd.init!.typ = self.subst_type_remove_vars(vd.init!.typ)
+          self.rewrite_value(vd.init)
           // Sync VarDecl type from init when init has a more specific mangled type.
           if !isnull(vd.init!.typ) && !isnull(vd.typ) {
             let init_t = vd.init!.typ!
@@ -883,17 +894,17 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     StAssign => {
       if !isnull(s.assign) {
         if !isnull(s.assign!.value) {
-          s.assign!.value!.typ = self.subst_type_remove_vars(s.assign!.value!.typ)
+          self.rewrite_value(s.assign!.value)
         }
       }
     }
     StStructSet => {
       if !isnull(s.struct_set) {
         if !isnull(s.struct_set!.receiver) {
-          s.struct_set!.receiver!.typ = self.subst_type_remove_vars(s.struct_set!.receiver!.typ)
+          self.rewrite_value(s.struct_set!.receiver)
         }
         if !isnull(s.struct_set!.value) {
-          s.struct_set!.value!.typ = self.subst_type_remove_vars(s.struct_set!.value!.typ)
+          self.rewrite_value(s.struct_set!.value)
         }
       }
     }
@@ -902,7 +913,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
         // Copy-out/modify/write-back: class_set is optional struct on class LStmt
         let mut cs = s.class_set!
         if !isnull(cs.handle) {
-          cs.handle!.typ = self.subst_type_remove_vars(cs.handle!.typ)
+          self.rewrite_value(cs.handle)
           if !isnull(cs.handle!.typ) {
             if cs.handle!.typ!.kind is TyClassHandle {
               cs.class_name = cs.handle!.typ!.name
@@ -910,7 +921,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
           }
         }
         if !isnull(cs.value) {
-          cs.value!.typ = self.subst_type_remove_vars(cs.value!.typ)
+          self.rewrite_value(cs.value)
         }
         s.class_set = cs
       }
@@ -918,13 +929,13 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     StIndexSet => {
       if !isnull(s.index_set) {
         if !isnull(s.index_set!.collection) {
-          s.index_set!.collection!.typ = self.subst_type_remove_vars(s.index_set!.collection!.typ)
+          self.rewrite_value(s.index_set!.collection)
         }
         if !isnull(s.index_set!.index) {
-          s.index_set!.index!.typ = self.subst_type_remove_vars(s.index_set!.index!.typ)
+          self.rewrite_value(s.index_set!.index)
         }
         if !isnull(s.index_set!.value) {
-          s.index_set!.value!.typ = self.subst_type_remove_vars(s.index_set!.value!.typ)
+          self.rewrite_value(s.index_set!.value)
         }
       }
     }
@@ -933,7 +944,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
         let mut i = 0
         while i < len(s.ret!.values) {
           if !isnull(s.ret!.values[i]) {
-            s.ret!.values[i]!.typ = self.subst_type_remove_vars(s.ret!.values[i]!.typ)
+            self.rewrite_value(s.ret!.values[i])
           }
           i = i + 1
         }
@@ -942,7 +953,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     StIf => {
       if !isnull(s.if_data) {
         if !isnull(s.if_data!.cond) {
-          s.if_data!.cond!.typ = self.subst_type_remove_vars(s.if_data!.cond!.typ)
+          self.rewrite_value(s.if_data!.cond)
         }
         self.rewrite_stmts(s.if_data!.then_body)
         self.rewrite_stmts(s.if_data!.else_body)
@@ -952,7 +963,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
       if !isnull(s.while_data) {
         self.rewrite_stmts(s.while_data!.cond_block)
         if !isnull(s.while_data!.cond_var) {
-          s.while_data!.cond_var!.typ = self.subst_type_remove_vars(s.while_data!.cond_var!.typ)
+          self.rewrite_value(s.while_data!.cond_var)
         }
         self.rewrite_stmts(s.while_data!.body)
       }
@@ -963,7 +974,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
         let mut fd = s.for_data!
         fd.var_type = self.subst_type_remove_vars(fd.var_type)
         if !isnull(fd.collection) {
-          fd.collection!.typ = self.subst_type_remove_vars(fd.collection!.typ)
+          self.rewrite_value(fd.collection)
         }
         s.for_data = fd
         self.rewrite_stmts(s.for_data!.body)
@@ -972,7 +983,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     StSwitch => {
       if !isnull(s.switch_data) {
         if !isnull(s.switch_data!.tag) {
-          s.switch_data!.tag!.typ = self.subst_type_remove_vars(s.switch_data!.tag!.typ)
+          self.rewrite_value(s.switch_data!.tag)
         }
         let mut i = 0
         while i < len(s.switch_data!.cases) {
@@ -984,7 +995,7 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     StTypeSwitch => {
       if !isnull(s.type_switch) {
         if !isnull(s.type_switch!.value) {
-          s.type_switch!.value!.typ = self.subst_type_remove_vars(s.type_switch!.value!.typ)
+          self.rewrite_value(s.type_switch!.value)
         }
         let mut j = 0
         while j < len(s.type_switch!.cases) {
@@ -1028,10 +1039,10 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
         let mut i = 0
         while i < len(s.select_data!.cases) {
           if !isnull(s.select_data!.cases[i].channel) {
-            s.select_data!.cases[i].channel!.typ = self.subst_type_remove_vars(s.select_data!.cases[i].channel!.typ)
+            self.rewrite_value(s.select_data!.cases[i].channel)
           }
           if !isnull(s.select_data!.cases[i].value) {
-            s.select_data!.cases[i].value!.typ = self.subst_type_remove_vars(s.select_data!.cases[i].value!.typ)
+            self.rewrite_value(s.select_data!.cases[i].value)
           }
           self.rewrite_stmts(s.select_data!.cases[i].body)
           i = i + 1
@@ -1051,10 +1062,10 @@ func MonoPass.rewrite_stmt(self, s: LStmt) {
     StSend => {
       if !isnull(s.send_data) {
         if !isnull(s.send_data!.channel) {
-          s.send_data!.channel!.typ = self.subst_type_remove_vars(s.send_data!.channel!.typ)
+          self.rewrite_value(s.send_data!.channel)
         }
         if !isnull(s.send_data!.value) {
-          s.send_data!.value!.typ = self.subst_type_remove_vars(s.send_data!.value!.typ)
+          self.rewrite_value(s.send_data!.value)
         }
       }
     }
@@ -1077,7 +1088,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
         let mut i = 0
         while i < len(e.call!.args) {
           if !isnull(e.call!.args[i]) {
-            e.call!.args[i]!.typ = self.subst_type_remove_vars(e.call!.args[i]!.typ)
+            self.rewrite_value(e.call!.args[i])
           }
           i = i + 1
         }
@@ -1087,7 +1098,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
       if !isnull(e.method_call) {
         let mc = e.method_call!
         if !isnull(mc.receiver) {
-          mc.receiver!.typ = self.subst_type_remove_vars(mc.receiver!.typ)
+          self.rewrite_value(mc.receiver)
           if !isnull(mc.receiver!.typ) {
             if mc.receiver!.typ!.kind is TyClassHandle {
               let has_inst = self.class_instances!.get(sym(inst_key(mc.receiver!.typ!.name, "")))
@@ -1124,7 +1135,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
         let mut i = 0
         while i < len(mc.args) {
           if !isnull(mc.args[i]) {
-            mc.args[i]!.typ = self.subst_type_remove_vars(mc.args[i]!.typ)
+            self.rewrite_value(mc.args[i])
           }
           i = i + 1
         }
@@ -1155,7 +1166,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
         let mut i = 0
         while i < len(e.class_alloc!.fields) {
           if !isnull(e.class_alloc!.fields[i].value) {
-            e.class_alloc!.fields[i].value!.typ = self.subst_type_remove_vars(e.class_alloc!.fields[i].value!.typ)
+            self.rewrite_value(e.class_alloc!.fields[i].value)
           }
           i = i + 1
         }
@@ -1174,7 +1185,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
     ExUnOp => {
       if !isnull(e.un_op) {
         if !isnull(e.un_op!.operand) {
-          e.un_op!.operand!.typ = self.subst_type_remove_vars(e.un_op!.operand!.typ)
+          self.rewrite_value(e.un_op!.operand)
         }
       }
     }
@@ -1182,7 +1193,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
       if !isnull(e.cast) {
         e.cast!.target = self.subst_type_remove_vars(e.cast!.target)
         if !isnull(e.cast!.operand) {
-          e.cast!.operand!.typ = self.subst_type_remove_vars(e.cast!.operand!.typ)
+          self.rewrite_value(e.cast!.operand)
         }
       }
     }
@@ -1191,7 +1202,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
         let mut i = 0
         while i < len(e.builtin!.args) {
           if !isnull(e.builtin!.args[i]) {
-            e.builtin!.args[i]!.typ = self.subst_type_remove_vars(e.builtin!.args[i]!.typ)
+            self.rewrite_value(e.builtin!.args[i])
           }
           i = i + 1
         }
@@ -1211,21 +1222,21 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
     ExWrapOptional => {
       if !isnull(e.wrap_opt) {
         if !isnull(e.wrap_opt!.value) {
-          e.wrap_opt!.value!.typ = self.subst_type_remove_vars(e.wrap_opt!.value!.typ)
+          self.rewrite_value(e.wrap_opt!.value)
         }
       }
     }
     ExUnwrapOptional => {
       if !isnull(e.unwrap_opt) {
         if !isnull(e.unwrap_opt!.value) {
-          e.unwrap_opt!.value!.typ = self.subst_type_remove_vars(e.unwrap_opt!.value!.typ)
+          self.rewrite_value(e.unwrap_opt!.value)
         }
       }
     }
     ExIsNull => {
       if !isnull(e.is_null) {
         if !isnull(e.is_null!.value) {
-          e.is_null!.value!.typ = self.subst_type_remove_vars(e.is_null!.value!.typ)
+          self.rewrite_value(e.is_null!.value)
         }
       }
     }
@@ -1234,7 +1245,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
         let mut i = 0
         while i < len(e.variant_construct!.fields) {
           if !isnull(e.variant_construct!.fields[i]) {
-            e.variant_construct!.fields[i]!.typ = self.subst_type_remove_vars(e.variant_construct!.fields[i]!.typ)
+            self.rewrite_value(e.variant_construct!.fields[i])
           }
           i = i + 1
         }
@@ -1243,21 +1254,21 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
     ExVariantData => {
       if !isnull(e.variant_data) {
         if !isnull(e.variant_data!.value) {
-          e.variant_data!.value!.typ = self.subst_type_remove_vars(e.variant_data!.value!.typ)
+          self.rewrite_value(e.variant_data!.value)
         }
       }
     }
     ExVariantTag => {
       if !isnull(e.variant_tag) {
         if !isnull(e.variant_tag!.value) {
-          e.variant_tag!.value!.typ = self.subst_type_remove_vars(e.variant_tag!.value!.typ)
+          self.rewrite_value(e.variant_tag!.value)
         }
       }
     }
     ExSlice => {
       if !isnull(e.slice_data) {
         if !isnull(e.slice_data!.collection) {
-          e.slice_data!.collection!.typ = self.subst_type_remove_vars(e.slice_data!.collection!.typ)
+          self.rewrite_value(e.slice_data!.collection)
         }
       }
     }
@@ -1266,7 +1277,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
         let mut i = 0
         while i < len(e.struct_lit!.fields) {
           if !isnull(e.struct_lit!.fields[i].value) {
-            e.struct_lit!.fields[i].value!.typ = self.subst_type_remove_vars(e.struct_lit!.fields[i].value!.typ)
+            self.rewrite_value(e.struct_lit!.fields[i].value)
           }
           i = i + 1
         }
@@ -1275,50 +1286,52 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
     ExStructField => {
       if !isnull(e.struct_field) {
         if !isnull(e.struct_field!.receiver) {
-          e.struct_field!.receiver!.typ = self.subst_type_remove_vars(e.struct_field!.receiver!.typ)
+          self.rewrite_value(e.struct_field!.receiver)
         }
       }
     }
     ExClassGet => {
       if !isnull(e.class_get) {
-        if !isnull(e.class_get!.handle) {
-          e.class_get!.handle!.typ = self.subst_type_remove_vars(e.class_get!.handle!.typ)
-          if !isnull(e.class_get!.handle!.typ) {
-            if e.class_get!.handle!.typ!.kind is TyClassHandle {
-              e.class_get!.class_name = e.class_get!.handle!.typ!.name
-            }
+        // Copy-out/modify/write-back: class_get is optional struct on class LExpr
+        let mut cg = e.class_get!
+        if !isnull(cg.handle) {
+          self.rewrite_value(cg.handle)
+          // Invariant: class_name must equal handle.typ.name after monomorphization.
+          if !isnull(cg.handle!.typ) && cg.handle!.typ!.kind is TyClassHandle {
+            cg.class_name = cg.handle!.typ!.name
           }
         }
+        e.class_get = cg
       }
     }
     ExIndexGet => {
       if !isnull(e.index_get) {
         if !isnull(e.index_get!.collection) {
-          e.index_get!.collection!.typ = self.subst_type_remove_vars(e.index_get!.collection!.typ)
+          self.rewrite_value(e.index_get!.collection)
         }
         if !isnull(e.index_get!.index) {
-          e.index_get!.index!.typ = self.subst_type_remove_vars(e.index_get!.index!.typ)
+          self.rewrite_value(e.index_get!.index)
         }
       }
     }
     ExExtractValue => {
       if !isnull(e.extract_value) {
         if !isnull(e.extract_value!.value) {
-          e.extract_value!.value!.typ = self.subst_type_remove_vars(e.extract_value!.value!.typ)
+          self.rewrite_value(e.extract_value!.value)
         }
       }
     }
     ExExtractError => {
       if !isnull(e.extract_error) {
         if !isnull(e.extract_error!.value) {
-          e.extract_error!.value!.typ = self.subst_type_remove_vars(e.extract_error!.value!.typ)
+          self.rewrite_value(e.extract_error!.value)
         }
       }
     }
     ExMakeResult => {
       if !isnull(e.make_result) {
         if !isnull(e.make_result!.value) {
-          e.make_result!.value!.typ = self.subst_type_remove_vars(e.make_result!.value!.typ)
+          self.rewrite_value(e.make_result!.value)
         }
         if !isnull(e.make_result!.err) {
           e.make_result!.err!.typ = self.subst_type_remove_vars(e.make_result!.err!.typ)
@@ -1331,7 +1344,7 @@ func MonoPass.rewrite_expr(self, e: LExpr) {
         while i < len(e.format!.parts) {
           if !e.format!.parts[i].is_literal {
             if !isnull(e.format!.parts[i].value) {
-              e.format!.parts[i].value!.typ = self.subst_type_remove_vars(e.format!.parts[i].value!.typ)
+              self.rewrite_value(e.format!.parts[i].value)
             }
           }
           i = i + 1
@@ -1761,9 +1774,19 @@ func clone_stmt(s: LStmt, subst: Dict<Sym, LType?>?) -> LStmt? {
         if !isnull(s.class_set!.value) {
           v = clone_value(s.class_set!.value!, subst)
         }
+        // Derive mangled class_name from the cloned handle's type.
+        let mut cname = s.class_set!.class_name
+        if !isnull(h) && !isnull(h!.typ) && h!.typ!.kind is TyClassHandle {
+          let ht = h!.typ!
+          if len(ht.type_args) > 0 && !has_type_vars(ht.type_args) {
+            cname = mangle_name(ht.name, ht.type_args)
+          } else {
+            cname = ht.name
+          }
+        }
         return LStmt {
           kind: StClassSet,
-          class_set: LClassSetData { handle: h, class_name: s.class_set!.class_name, field: s.class_set!.field, value: v },
+          class_set: LClassSetData { handle: h, class_name: cname, field: s.class_set!.field, value: v },
           temp_def: nil, var_decl: nil, assign: nil, struct_set: nil,
           index_set: nil, if_data: nil, while_data: nil, for_data: nil,
           switch_data: nil, block: nil, ret: nil, expr_stmt: nil,
@@ -2226,10 +2249,21 @@ func clone_expr(e: LExpr?, subst: Dict<Sym, LType?>?) -> LExpr? {
         if !isnull(e!.class_get!.handle) {
           h = clone_value(e!.class_get!.handle!, subst)
         }
+        // Derive mangled class_name from the cloned handle's type.
+        // clone_value uses subst_type (substitutes vars) but doesn't mangle — do it here.
+        let mut cname = e!.class_get!.class_name
+        if !isnull(h) && !isnull(h!.typ) && h!.typ!.kind is TyClassHandle {
+          let ht = h!.typ!
+          if len(ht.type_args) > 0 && !has_type_vars(ht.type_args) {
+            cname = mangle_name(ht.name, ht.type_args)
+          } else {
+            cname = ht.name
+          }
+        }
         return LExpr {
           kind: ExClassGet,
           typ: typ,
-          class_get: LClassGetData { handle: h, class_name: e!.class_get!.class_name, field: e!.class_get!.field },
+          class_get: LClassGetData { handle: h, class_name: cname, field: e!.class_get!.field },
           bin_op: nil, un_op: nil, cast: nil, struct_field: nil,
           index_get: nil, slice_data: nil, call: nil, method_call: nil, builtin: nil,
           struct_lit: nil, class_alloc: nil, make_channel: nil, wrap_opt: nil,

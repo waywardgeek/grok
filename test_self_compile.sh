@@ -18,6 +18,7 @@ BOOTSTRAP_FILES=(
   src/lowerer/lowerer.fg
   src/optimizer/optimizer.fg
   src/monomorphizer/monomorphizer.fg
+  src/memory/memory.fg
   src/c_backend/c_backend.fg
   src/main/main.fg
 )

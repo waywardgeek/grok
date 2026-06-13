@@ -304,7 +304,8 @@ forge lowerer {
       return LType { kind: TyUnit, name: "", bits: 0, is_exported: false }
     }
     if !isnull(e!.resolved_type) {
-      return self.lower_type(e!.resolved_type)
+      let result = self.lower_type(e!.resolved_type)
+      return result
     }
     // Fallback: infer from expression shape
     match e!.kind {
@@ -2598,10 +2599,10 @@ forge lowerer {
 
     // Slice/list methods
     if !isnull(recv_type) && recv_type!.kind is TySlice {
-      if method_name == "len" || method_name == "push" || method_name == "append" || method_name == "pop" || method_name == "clear" || method_name == "contains" || method_name == "reverse" || method_name == "join" {
+      if method_name == "len" || method_name == "push" || method_name == "append" || method_name == "pop" || method_name == "clear" || method_name == "contains" || method_name == "reverse" || method_name == "join" || method_name == "extend" {
         // For mutating methods on class field receivers, use a reference
         // to avoid the copy-then-discard problem with value-type slice headers.
-        let is_mutating = method_name == "push" || method_name == "append" || method_name == "pop" || method_name == "clear" || method_name == "reverse"
+        let is_mutating = method_name == "push" || method_name == "append" || method_name == "pop" || method_name == "clear" || method_name == "reverse" || method_name == "extend"
         let mut slice_val = recv
         if is_mutating && !isnull(receiver) && receiver!.kind is FieldAccess {
           match receiver!.kind {

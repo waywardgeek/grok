@@ -308,6 +308,23 @@ func escape_c(s: string) -> string {
   return sb.to_string()
 }
 
+// Like escape_c but also escapes % → %% for printf format strings
+func escape_printf(s: string) -> string {
+  let escaped = escape_c(s)
+  let sb = new_string_builder()
+  let mut i = 0
+  while i < len(escaped) {
+    let c = escaped[i]
+    if c == '%' as u8 {
+      sb.write("%%")
+    } else {
+      sb.write_byte(c)
+    }
+    i = i + 1
+  }
+  return sb.to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Binary/Unary operators
 // ---------------------------------------------------------------------------
@@ -616,6 +633,26 @@ func CGen.is_class_optional(self, t: LType?) -> bool {
   )
 }
 
+// Resolve class name — name is pre-mangled by the monomorphizer; just pass through.
+// The invariant is: for any ExClassGet/StClassSet, class_name == handle.typ.name
+// after monomorphization. The C backend is a dumb emitter.
+func CGen.resolve_class_name(self, name: string, caller: string) -> string {
+  return name
+}
+
+// Resolve class name from a type (handles Optional<ClassHandle> too)
+func CGen.resolve_class_name_from_type(self, t: LType?, caller: string) -> string {
+  if isnull(t) { return "unknown" }
+  if t!.kind is TyClassHandle {
+    return self.resolve_class_name(t!.name, caller)
+  }
+  if t!.kind is TyOptional && !isnull(t!.elem) && t!.elem!.kind is TyClassHandle {
+    return self.resolve_class_name(t!.elem!.name, caller)
+  }
+  return "unknown"
+}
+
+
 func CGen.contains_type_var(self, t: LType?) -> bool {
   if isnull(t) {
     return false
@@ -775,6 +812,11 @@ func CGen.zero_value(self, t: LType?) -> string {
   }
 }
 
+func CGen.emit_class_msg_data(self, v: LValue?, class_name: string) -> string {
+  let val = self.emit_value(v)
+  return f"(const char*){val}->msg.data"
+}
+
 func CGen.emit_value_as_cstr(self, v: LValue?) -> string {
   if isnull(v) {
     return "\"<null>\""
@@ -790,7 +832,7 @@ func CGen.emit_value_as_cstr(self, v: LValue?) -> string {
         return self.emit_value(v)
       }
       if ty_entry!.value!.kind is TyClassHandle {
-        return f"(const char*){self.emit_value(v)}->msg.data"
+        return self.emit_class_msg_data(v, ty_entry!.value!.name)
       }
     }
   }
@@ -803,7 +845,7 @@ func CGen.emit_value_as_cstr(self, v: LValue?) -> string {
         return self.emit_value(v)
       }
       if vt_entry!.value!.kind is TyClassHandle {
-        return f"(const char*){self.emit_value(v)}->msg.data"
+        return self.emit_class_msg_data(v, vt_entry!.value!.name)
       }
     }
   }
@@ -814,7 +856,7 @@ func CGen.emit_value_as_cstr(self, v: LValue?) -> string {
         return self.emit_value(v)
       }
       if ty_entry!.value!.kind is TyClassHandle {
-        return f"(const char*){self.emit_value(v)}->msg.data"
+        return self.emit_class_msg_data(v, ty_entry!.value!.name)
       }
     }
   }
@@ -1218,7 +1260,7 @@ func CGen.emit_format(self, d: LFormatData?) -> string {
   while i < len(d!.parts) {
     let p = d!.parts[i]
     if p.is_literal {
-      fmt_sb.write(escape_c(p.text))
+      fmt_sb.write(escape_printf(p.text))
     } else {
       let result = self.printf_spec_and_arg(p.value)
       fmt_sb.write(result._0)
@@ -1274,6 +1316,14 @@ func CGen.emit_builtin(self, d: LBuiltinData?) -> string {
       let dst_arg = self.emit_value(args[0])
       let src_arg = self.emit_value(args[1])
       return f"({{ forge_push_bytes(&{dst_arg}, {src_arg}); {dst_arg}; }})"
+    }
+  }
+  if name == "slice_extend" {
+    if len(args) >= 2 {
+      let dst_arg = self.emit_value(args[0])
+      let src_arg = self.emit_value(args[1])
+      let slice_type = self.slice_type_name_from_value(args[0])
+      return f"({{ forge_extend(&{dst_arg}, {src_arg}, {slice_type}); {dst_arg}; }})"
     }
   }
   if name == "pop" || name == "slice_pop" {
@@ -1803,6 +1853,49 @@ func CGen.emit_expr_str(self, e: LExpr?) -> string {
       let d = e!.env_get!
       return f"{self.emit_value(d.env)}.{d.field}"
     }
+    ExSlabGet => {
+      let d = e!.slab_get!
+      let ref = self.emit_value(d.handle)
+      return f"{ref}->{d.field}"
+    }
+    ExSlabAlloc => {
+      let d = e!.slab_alloc!
+      let cname = self.resolve_class_name(d.class_name, "ExSlabAlloc")
+      if len(d.fields) == 0 {
+        return f"_forge_slab_alloc_{cname}()"
+      }
+      // Has inline field inits (from slab_rewrite_expr path): emit compound stmt expr
+      let mut class_fields: [LField] = []
+      let c_entry = self.class_by_name!.get(sym(cname))
+      if !isnull(c_entry) {
+        class_fields = c_entry!.value.fields
+      }
+      let sb = new_string_builder()
+      sb.write(f"({{ {cname}* _p = _forge_slab_alloc_{cname}(); ")
+      let mut j = 0
+      while j < len(d.fields) {
+        let f = d.fields[j]
+        let mut val = self.emit_value(f.value)
+        let field_type = self.find_class_field(class_fields, f.name)
+        if !isnull(field_type) && field_type!.kind is TyOptional {
+          if !isnull(field_type!.elem) && field_type!.elem!.kind is TyClassHandle {
+            if !isnull(f.value) && f.value!.kind is ValLitNull {
+              val = "NULL"
+            }
+          } else if !isnull(f.value) && f.value!.kind is ValLitNull {
+            let opt_n = self.opt_type_name(field_type!.elem)
+            val = f"forge_none({opt_n})"
+          } else if isnull(f.value) || isnull(f.value!.typ) || !(f.value!.typ!.kind is TyOptional) {
+            let opt_n = self.opt_type_name(field_type!.elem)
+            val = f"forge_some({val}, {opt_n})"
+          }
+        }
+        sb.write(f"_p->{lc_first(f.name)} = {val}; ")
+        j = j + 1
+      }
+      sb.write("_p; })")
+      return sb.to_string()
+    }
     _ => {
       return "/* unknown expr */"
     }
@@ -2044,6 +2137,13 @@ func CGen.emit_bin_op_expr(self, e: LExpr?) -> string {
       return f"forge_str_concat({left}, {right})"
     }
   }
+  // Slice concatenation
+  if !isnull(d.left) && !isnull(d.left!.typ) && d.left!.typ!.kind is TySlice {
+    if d.op is BinAdd {
+      let slice_type = self.c_type(d.left!.typ)
+      return f"forge_slice_concat({left}, {right}, {slice_type})"
+    }
+  }
   // Optional null comparison
   if (d.op is BinEq || d.op is BinNe) && (!isnull(d.right) && d.right!.kind is ValLitNull || !isnull(d.left) && d.left!.kind is ValLitNull) {
     let mut opt_val = left
@@ -2067,8 +2167,14 @@ func CGen.emit_bin_op_expr(self, e: LExpr?) -> string {
 func CGen.emit_struct_field_expr(self, e: LExpr?) -> string {
   let d = e!.struct_field!
   let recv_type = self.resolve_value_type(d.receiver)
-  if !isnull(recv_type) && recv_type!.kind is TyClassHandle {
-    return f"{self.emit_value(d.receiver)}->{d.field}"
+  // Unwrap optional to get the inner type for class handle check
+  let mut inner_type = recv_type
+  if !isnull(inner_type) && inner_type!.kind is TyOptional && !isnull(inner_type!.elem) {
+    inner_type = inner_type!.elem
+  }
+  if !isnull(inner_type) && inner_type!.kind is TyClassHandle {
+    let recv = self.emit_value(d.receiver)
+    return f"{recv}->{d.field}"
   }
   if !isnull(recv_type) && recv_type!.kind is TyErrorResult {
     let field = d.field
@@ -2260,6 +2366,13 @@ func CGen.emit_side_effect(self, e: LExpr?) -> string {
       let dst_arg = self.emit_value(d.args[0])
       let src_arg = self.emit_value(d.args[1])
       self.line(f"forge_push_bytes(&{dst_arg}, {src_arg});")
+      return ""
+    }
+    if d.name == "slice_extend" && len(d.args) >= 2 {
+      let dst_arg = self.emit_value(d.args[0])
+      let src_arg = self.emit_value(d.args[1])
+      let slice_type = self.slice_type_name_from_value(d.args[0])
+      self.line(f"forge_extend(&{dst_arg}, {src_arg}, {slice_type});")
       return ""
     }
   }
@@ -2476,6 +2589,38 @@ func CGen.emit_stmt(self, s: LStmt?) {
         ci = ci + 1
       }
       self.line(f"{self.emit_value(d.handle)}->{d.field} = {wrapped_val};")
+    }
+    StSlabSet => {
+      let d = s!.slab_set!
+      let ref = self.emit_value(d.handle)
+      let val = self.emit_value(d.value)
+      // Auto-wrap non-optional value when field type is optional struct
+      let mut wrapped_val = val
+      let classes = self.prog!.classes
+      let mut ci = 0
+      while ci < len(classes) {
+        if classes[ci].name == d.class_name {
+          let field_type = self.find_class_field(classes[ci].fields, d.field)
+          if !isnull(field_type) && field_type!.kind is TyOptional && !self.is_class_optional(field_type) {
+            let val_type = self.resolve_value_type(d.value)
+            if isnull(val_type) || !(val_type!.kind is TyOptional) {
+              if !isnull(d.value) && !(d.value!.kind is ValLitNull) {
+                let opt_name = self.opt_type_name(field_type!.elem)
+                wrapped_val = f"forge_some({val}, {opt_name})"
+              }
+            }
+          }
+          break
+        }
+        ci = ci + 1
+      }
+      self.line(f"{ref}->{lc_first(d.field)} = {wrapped_val};")
+    }
+    StSlabFree => {
+      let d = s!.slab_free!
+      let ref = self.emit_value(d.handle)
+      let cname = self.resolve_class_name(d.class_name, "field_to_string")
+      self.line(f"_forge_slab_free_{cname}({ref});")
     }
     StIndexSet => {
       let d = s!.index_set!
@@ -3248,6 +3393,16 @@ func CGen.infer_expr_type(self, e: LExpr?) -> LType? {
       }
     }
   }
+  // SlabGet — same as ClassGet
+  if e!.kind is ExSlabGet {
+    let d = e!.slab_get!
+    if !isnull(d.handle) && !isnull(d.handle!.typ) {
+      let field_type = self.resolve_field_type(d.handle!.typ, d.field)
+      if !isnull(field_type) {
+        return field_type
+      }
+    }
+  }
   // StructField
   if e!.kind is ExStructField {
     let d = e!.struct_field!
@@ -3295,13 +3450,13 @@ func CGen.to_string_expr(self, v: LValue?) -> string {
   }
   match t!.kind {
     TyBool => { return f"({val} ? FORGE_STR(\"true\") : FORGE_STR(\"false\"))" }
-    TyI8 | TyI16 | TyI32 | TyPlatformInt => { return f"forge_sprintf(\"%%d\", {val})" }
-    TyI64 => { return f"forge_sprintf(\"%%lld\", (long long){val})" }
-    TyU8 | TyU16 | TyU32 | TyPlatformUint => { return f"forge_sprintf(\"%%u\", (unsigned){val})" }
-    TyU64 => { return f"forge_sprintf(\"%%llu\", (unsigned long long){val})" }
-    TyF32 => { return f"forge_sprintf(\"%%g\", (double){val})" }
-    TyF64 => { return f"forge_sprintf(\"%%g\", {val})" }
-    TyString => { return f"forge_sprintf(\"\\\"%%.*s\\\"\", (int){val}.len, (const char*){val}.data)" }
+    TyI8 | TyI16 | TyI32 | TyPlatformInt => { return "forge_sprintf(\"%d\", " + val + ")" }
+    TyI64 => { return "forge_sprintf(\"%lld\", (long long)" + val + ")" }
+    TyU8 | TyU16 | TyU32 | TyPlatformUint => { return "forge_sprintf(\"%u\", (unsigned)" + val + ")" }
+    TyU64 => { return "forge_sprintf(\"%llu\", (unsigned long long)" + val + ")" }
+    TyF32 => { return "forge_sprintf(\"%g\", (double)" + val + ")" }
+    TyF64 => { return "forge_sprintf(\"%g\", " + val + ")" }
+    TyString => { return "forge_sprintf(\"\\\"%.*s\\\"\", (int)" + val + ".len, (const char*)" + val + ".data)" }
     TyTaggedUnion => { return f"{t!.name}_to_string({val})" }
     TyStruct => { return f"{t!.name}_to_string({val})" }
     TyClassHandle => { return f"({val} == NULL ? FORGE_STR(\"null\") : {t!.name}_to_string({val}))" }
@@ -3343,13 +3498,13 @@ func CGen.field_to_string_expr(self, t: LType?, val: string) -> string {
   }
   match t!.kind {
     TyBool => { return f"({val} ? FORGE_STR(\"true\") : FORGE_STR(\"false\"))" }
-    TyI8 | TyI16 | TyI32 | TyPlatformInt => { return f"forge_sprintf(\"%%d\", {val})" }
-    TyI64 => { return f"forge_sprintf(\"%%lld\", (long long){val})" }
-    TyU8 | TyU16 | TyU32 | TyPlatformUint => { return f"forge_sprintf(\"%%u\", (unsigned){val})" }
-    TyU64 => { return f"forge_sprintf(\"%%llu\", (unsigned long long){val})" }
-    TyF32 => { return f"forge_sprintf(\"%%g\", (double){val})" }
-    TyF64 => { return f"forge_sprintf(\"%%g\", {val})" }
-    TyString => { return f"forge_sprintf(\"\\\"%%.*s\\\"\", (int){val}.len, (const char*){val}.data)" }
+    TyI8 | TyI16 | TyI32 | TyPlatformInt => { return "forge_sprintf(\"%d\", " + val + ")" }
+    TyI64 => { return "forge_sprintf(\"%lld\", (long long)" + val + ")" }
+    TyU8 | TyU16 | TyU32 | TyPlatformUint => { return "forge_sprintf(\"%u\", (unsigned)" + val + ")" }
+    TyU64 => { return "forge_sprintf(\"%llu\", (unsigned long long)" + val + ")" }
+    TyF32 => { return "forge_sprintf(\"%g\", (double)" + val + ")" }
+    TyF64 => { return "forge_sprintf(\"%g\", " + val + ")" }
+    TyString => { return "forge_sprintf(\"\\\"%.*s\\\"\", (int)" + val + ".len, (const char*)" + val + ".data)" }
     TyTaggedUnion => {
       let name = self.resolve_type_name(t!.name)
       return f"{name}_to_string({val})"
@@ -3812,7 +3967,7 @@ func CGen.emit_struct_decl(self, s: LStructDecl) {
 func CGen.emit_class_decl(self, c: LClassDecl) {
   self.line(f"struct {c.name} {{")
   self.indent = self.indent + 1
-  if len(c.fields) == 0 {
+  if len(c.fields) == 0 && !self.prog!.slab_mode {
     self.line("int _empty;")
   }
   let mut i = 0
@@ -3820,9 +3975,87 @@ func CGen.emit_class_decl(self, c: LClassDecl) {
     self.line(f"{self.c_field_decl(c.fields[i].typ, c.fields[i].name)};")
     i = i + 1
   }
+  if self.prog!.slab_mode {
+    // Free-list linkage: forge_next at end so field offsets are unchanged
+    self.line(f"struct {c.name}* forge_next;")
+  }
   self.indent = self.indent - 1
   self.line("};")
   self.line("")
+}
+
+// Emit slab allocator infrastructure for all classes
+// Emit slab allocator infrastructure for all classes (AoS block-based).
+// Class handles are ClassName* pointers (NULL = none).
+// Each block holds FORGE_SLAB_BLOCK objects; blocks form a linked list.
+// forge_next field in each struct serves as the free-list link.
+func CGen.emit_slab_infrastructure(self, classes: [LClassDecl]) {
+  self.line("/* Slab allocator infrastructure (AoS block-based) */")
+
+  // Block type + slab type + global for each class
+  let mut i = 0
+  while i < len(classes) {
+    let name = classes[i].name
+    // Block struct: array of objects + next pointer + used count
+    self.line(f"typedef struct ForgeSlab_{name}_Block {{")
+    self.indent = self.indent + 1
+    self.line(f"struct {name} data[FORGE_SLAB_BLOCK];")
+    self.line(f"struct ForgeSlab_{name}_Block* next;")
+    self.line("int32_t used;")
+    self.indent = self.indent - 1
+    self.line(f"}} ForgeSlab_{name}_Block;")
+    // Slab control: current block + free-list head
+    self.line(f"typedef struct {{ ForgeSlab_{name}_Block* cur; {name}* free; }} ForgeSlab_{name};")
+    self.line(f"static ForgeSlab_{name} _forge_slab_{name} = {{0}};")
+    self.line("")
+    i = i + 1
+  }
+
+  // Alloc function for each class (returns ClassName*)
+  i = 0
+  while i < len(classes) {
+    let name = classes[i].name
+    self.line(f"static {name}* _forge_slab_alloc_{name}(void) {{")
+    self.indent = self.indent + 1
+    // Check free list first
+    self.line(f"if (_forge_slab_{name}.free) {{")
+    self.indent = self.indent + 1
+    self.line(f"{name}* p = _forge_slab_{name}.free;")
+    self.line(f"_forge_slab_{name}.free = p->forge_next;")
+    self.line(f"memset(p, 0, sizeof({name}));")
+    self.line("return p;")
+    self.indent = self.indent - 1
+    self.line("}")
+    // Allocate new block if current is full or missing
+    self.line(f"if (!_forge_slab_{name}.cur || _forge_slab_{name}.cur->used == FORGE_SLAB_BLOCK) {{")
+    self.indent = self.indent + 1
+    self.line(f"ForgeSlab_{name}_Block* b = (ForgeSlab_{name}_Block*)calloc(1, sizeof(ForgeSlab_{name}_Block));")
+    self.line(f"b->next = _forge_slab_{name}.cur;")
+    self.line(f"_forge_slab_{name}.cur = b;")
+    self.indent = self.indent - 1
+    self.line("}")
+    // Allocate from current block
+    self.line(f"return &_forge_slab_{name}.cur->data[_forge_slab_{name}.cur->used++];")
+    self.indent = self.indent - 1
+    self.line("}")
+    self.line("")
+    i = i + 1
+  }
+
+  // Free function for each class (takes ClassName*)
+  i = 0
+  while i < len(classes) {
+    let name = classes[i].name
+    self.line(f"static void _forge_slab_free_{name}({name}* p) {{")
+    self.indent = self.indent + 1
+    self.line("if (!p) return;")
+    self.line(f"p->forge_next = _forge_slab_{name}.free;")
+    self.line(f"_forge_slab_{name}.free = p;")
+    self.indent = self.indent - 1
+    self.line("}")
+    self.line("")
+    i = i + 1
+  }
 }
 
 func CGen.emit_simple_enum_decl(self, e: LEnumDecl) {
@@ -4048,9 +4281,15 @@ func CGen.emit_to_string_functions(self) {
       // skip
       continue
     }
-    self.line(f"static forge_string {name}_to_string({name}* v) {{")
-    self.indent = self.indent + 1
-    self.emit_field_dump_to_string(name, classes[i].fields, "v->")
+    if self.prog!.slab_mode {
+      self.line(f"static forge_string {name}_to_string({name}* v) {{")
+      self.indent = self.indent + 1
+      self.emit_field_dump_to_string(name, classes[i].fields, "v->")
+    } else {
+      self.line(f"static forge_string {name}_to_string({name}* v) {{")
+      self.indent = self.indent + 1
+      self.emit_field_dump_to_string(name, classes[i].fields, "v->")
+    }
     self.indent = self.indent - 1
     self.line("}")
     self.line("")
@@ -4211,6 +4450,13 @@ func collect_expr_vars(e: LExpr?, used: Dict<Sym, bool>?) {
       let d = e!.class_get!
       collect_val_vars(d.handle, used)
     }
+    ExSlabGet => {
+      let d = e!.slab_get!
+      collect_val_vars(d.handle, used)
+    }
+    ExSlabAlloc => {
+      // No vars to collect — alloc takes no arguments
+    }
     ExIndexGet => {
       let d = e!.index_get!
       collect_val_vars(d.collection, used)
@@ -4308,6 +4554,15 @@ func collect_used_vars_stmts(stmts: [LStmt?], used: Dict<Sym, bool>?) {
         let d = s!.class_set!
         collect_val_vars(d.handle, used)
         collect_val_vars(d.value, used)
+      }
+      StSlabSet => {
+        let d = s!.slab_set!
+        collect_val_vars(d.handle, used)
+        collect_val_vars(d.value, used)
+      }
+      StSlabFree => {
+        let d = s!.slab_free!
+        collect_val_vars(d.handle, used)
       }
       StIndexSet => {
         let d = s!.index_set!
@@ -4589,6 +4844,11 @@ pub func emit_c(prog: LProgram?) -> string {
   while i < len(classes) {
     g.emit_class_decl(classes[i])
     i = i + 1
+  }
+
+  // Emit slab infrastructure (after class struct definitions)
+  if prog_ref.slab_mode {
+    g.emit_slab_infrastructure(classes)
   }
 
   // Emit channel type definitions

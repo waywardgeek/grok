@@ -225,6 +225,22 @@ forge string_utils {
 
   // --- Join ---
 
+  // Concatenate two strings. Returns a new string containing all bytes of a followed by all
+  // bytes of b. Since string = [u8], this is simple byte-level concatenation with no encoding
+  // assumptions. Equivalent to a StringBuilder write(a) + write(b), or the Go a + b idiom.
+  //
+  // Usage:
+  //   let s = str_concat("hello ", "world")   // → "hello world"
+  //   let path = str_concat(dir, "/file.fg")
+  //
+  // For joining more than two strings, use a StringBuilder or str_join.
+  pub func str_concat(a: string, b: string) -> string {
+    let buf = new_string_builder()
+    buf.write(a)
+    buf.write(b)
+    return buf.to_string()
+  }
+
   // Join a slice of strings with a separator
   pub func str_join(parts: [string], sep: string) -> string {
     let buf = new_string_builder()

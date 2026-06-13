@@ -1,0 +1,6 @@
+PASS  test_string_concat
+PASS  test_slice_concat
+PASS  test_slice_extend
+PASS  test_string_extend
+
+4 tests, 4 passed, 0 failed

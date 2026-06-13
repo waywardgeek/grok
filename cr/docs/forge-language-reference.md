@@ -147,6 +147,80 @@ fn(T1, T2) -> R     // function type
 chan T               // channel
 ```
 
+## Slices
+
+Slices are dynamic arrays: a fat pointer with `data`, `len`, and `cap`. Type syntax: `[T]`.
+
+```forge
+let xs: [i32] = [1, 2, 3]
+let empty: [string] = []
+```
+
+**Indexing and slicing:**
+```forge
+xs[0]               // element access (0-indexed)
+xs[1:3]             // sub-slice [low:high) — shares underlying data
+```
+
+**Builtin functions:**
+```forge
+len(xs)             // length
+append(xs, 42)      // returns new slice with element appended
+```
+
+**Methods:**
+```forge
+xs.push(elem)       // append in-place (mutates xs)
+xs.pop()             // remove and return last element
+xs.len()             // same as len(xs)
+xs.contains(elem)    // linear search, returns bool
+xs.index_of(elem)    // returns i32 index, -1 if not found
+xs.first()           // returns T? (nil if empty)
+xs.last()            // returns T? (nil if empty)
+xs.is_empty()        // returns bool
+xs.sort()            // in-place sort
+xs.reverse()         // in-place reverse
+xs.remove(elem)      // remove first occurrence
+xs.join(sep)         // join string slice with separator → string
+```
+
+**Mutating methods** (`.push`, `.pop`, `.sort`, `.reverse`, `.remove`, `.clear`) modify the receiver in-place. When called on a class field (`obj.items.push(x)`), the compiler automatically uses a reference to avoid the copy-then-discard problem.
+
+## Strings
+
+Strings are `[u8]` byte slices. String literals create `forge_string` values (length-prefixed, with hidden trailing `\0` for C interop).
+
+```forge
+let s = "hello"
+let ch = s[0]          // u8 (104)
+let sub = s[1:4]       // "ell" — sub-slice, shares data
+```
+
+**Concatenation:**
+```forge
+let s = "hello" + " world"   // returns new string
+push_bytes(dst, src)          // append src bytes to dst in-place
+```
+
+**Methods:**
+```forge
+s.len()              // byte length (i32)
+s.contains(needle)   // bool
+s.has_prefix(p)      // bool
+s.has_suffix(p)      // bool
+s.index_of(needle)   // i32 (-1 if not found)
+s.is_empty()         // bool
+s.trim()             // strip whitespace from both ends → new string
+s.to_lower()         // → new string
+s.to_upper()         // → new string
+s.replace(old, new)  // replace all occurrences → new string
+s.repeat(n)          // repeat n times → new string
+s.split(sep)         // → [string]
+s.char_at(i)         // → string (single-byte string)
+```
+
+**Stdlib** (`string.fg`): `str_concat(a, b)`, `str_split_n(s, sep, n)`, `str_trim_left(s)`, `str_trim_right(s)`, `str_replace(s, old, new)`, `str_repeat(s, n)`, `str_join(parts, sep)`, `str_has_prefix(s, p)`, `str_has_suffix(s, p)`, `str_index_of(s, needle)`, `str_to_upper(s)`, `str_to_lower(s)`.
+
 ## Structs (Value Types)
 
 ```forge
@@ -302,7 +376,15 @@ type Callback = fn(i32) -> bool
 ```forge
 let x = 42              // immutable
 let mut y: i32 = 0      // mutable, typed
+let ref view = data[5:10]     // immutable view (no copy, shared backing)
+let mut ref buf = packet[0:16] // mutable view (write through, no copy)
 ```
+
+**Copy-on-assign**: Assignment always copies for value types (primitives, structs, tuples, slices). `let mut y = x` creates an independent mutable copy.
+
+**`ref` bindings**: `let ref` creates a zero-copy view into existing data instead of copying. Useful for parsing, serialization, and crypto. The source must outlive the `ref` binding. `let mut ref` allows writing through the view.
+
+**Binding grammar**: `let [mut] [ref] name [: Type] = expr`
 
 **Top-level constants** can be declared directly inside `forge` blocks:
 
@@ -671,15 +753,34 @@ Child must implement `hash_key(self) -> u64`. Functions: `hash_insert`, `hash_lo
 
 ## Builtins
 
-**Core:** `len(x)`, `append(slice, elem)`, `println(x)`, `print(x)`, `eprint(x)`, `eprintln(x)`, `isnull(x)`, `push_bytes(slice, bytes)`.
+**Core:**
+- `len(x)` — length of slice, string, or map
+- `append(slice, elem)` — returns new slice with element appended
+- `push_bytes(dst, src)` — append string `src` bytes to string `dst` in-place
+- `println(x)`, `print(x)`, `eprint(x)`, `eprintln(x)` — output (auto `to_string`)
+- `isnull(x)` — test if optional/class is nil
 
-**Strings:** `hash_string(s) -> u64`, `itoa(n) -> string`, `atoi(s) -> (i64, bool)`, `char_to_string(b) -> string`.
+**Strings:**
+- `hash_string(s) -> u64`
+- `itoa(n) -> string` — integer to string
+- `atoi(s) -> (i64, bool)` — string to integer
+- `char_to_string(b) -> string` — single byte to string
 
-**IO/OS:** `read_file(path) -> (string, bool)`, `write_file(path, content) -> bool`, `os_args() -> [string]`, `os_exit(code)`, `os_getwd() -> string`, `exec_command(name, args) -> (string, bool)`, `path_join(a, b)`, `path_dir(p)`, `path_base(p)`, `path_ext(p)`, `list_dir(path) -> ([string], bool)`, `file_exists(path) -> bool`, `mkdtemp() -> string`.
+**IO/OS:**
+- `read_file(path) -> (string, bool)`, `write_file(path, content) -> bool`
+- `os_args() -> [string]`, `os_exit(code)`, `os_getwd() -> string`
+- `exec_command(name, args) -> (string, bool)`
+- `path_join(a, b)`, `path_dir(p)`, `path_base(p)`, `path_ext(p)`
+- `list_dir(path) -> ([string], bool)`, `file_exists(path) -> bool`, `mkdtemp() -> string`
 
 **Testing:** `assert(cond, msg)`, `assert_eq(actual, expected, msg)`. See [Testing](#testing).
 
-**Operators:** `x!` unwrap optional, `expr as T` cast, `x[i]` index, `x[lo:hi]` slice.
+**Operators:**
+- `x!` — unwrap optional (panic if nil)
+- `expr as T` — type cast
+- `x[i]` — index into slice/string/map
+- `x[lo:hi]` — sub-slice
+- `+` — addition for numerics; concatenation for strings (returns new string)
 
 ## Testing
 
@@ -765,11 +866,16 @@ lock(mutex) { ... }
 
 ## Memory Model
 
-- **Structs** — stack, copied by value.
-- **Classes** — heap, passed by reference (pointer).
-- **Slices `[T]`** — fat pointer (data + len + cap). Copied by value but shares backing array. Grown via `append()`.
-- **Relations** — ownership graph. `.destroy()` cascades through `owns` relations.
-- **No GC** — deterministic destruction via ownership.
+- **Primitives** — registers/stack, copied by value.
+- **Structs/Tuples** — stack, copied on assign. `mut` params pass by reference (scoped, cannot escape).
+- **Classes** — slab-allocated (u32 index handles). Owned classes destroyed by owner; non-owned classes ref-counted. `destroy()` cascades through `owns` relations, auto-unlinks from `refs`.
+- **Slices `[T]`** — fat pointer (data + len + cap). Assignment copies backing data. Parameter passing shares backing data (no copy). `let ref` creates a zero-copy view.
+- **Relations** — ownership graph. `owns` = cascade destroy, `refs` = auto-unlink on destroy. No dangling references.
+- **`final`** — optional pre-destroy hook on classes, called before auto-generated destructor.
+- **`trusted`** — blocks/functions where manual `ref(x)`/`unref(x)` is allowed and auto ref-counting is disabled. For stdlib containers.
+- **`destroys`** — compiler-inferred annotation on functions that may destroy class instances. References become dead after such calls.
+- **`mut resize`** — annotation on parameters that may grow/shrink a slice. Prevents use while element references exist.
+- **No GC** — deterministic destruction via ownership + ref counting.
 
 ## Design Annotations
 
